@@ -6,7 +6,15 @@ import { renderKey } from "../src/render.mjs";
 
 const width = 72;
 const height = 72;
-const buf = await renderKey({ width, height, state: "working", label: "prescription-rounds-pr3" });
+const buf = await renderKey({
+  width,
+  height,
+  state: "busy",
+  label: "prescription-rounds-pr3",
+  accent: "#4fc3f7",
+  project: "claude-streamdeck",
+  progress: { current: 2, total: 5 },
+});
 
 const expected = width * height * 4;
 if (buf.length !== expected) {

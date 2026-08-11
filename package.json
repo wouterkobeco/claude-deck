@@ -10,6 +10,7 @@
     "start": "node src/index.mjs",
     "render-check": "node scripts/render-check.mjs",
     "slots-check": "node scripts/slots-check.mjs",
+    "usage-check": "node scripts/usage-check.mjs",
     "tasks-check": "node scripts/tasks-check.mjs"
   },
   "keywords": [],

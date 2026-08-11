@@ -38,10 +38,22 @@ function wrapLabel(label, width, fontSize) {
   });
 }
 
+/** Uppercases a project name and truncates it to what fits the accent bar. */
+function fitCaps(project, width, fontSize) {
+  // 0.66 covers uppercase + the letter-spacing below; 0.9 keeps a side margin.
+  const maxChars = Math.max(3, Math.floor((width * 0.9) / (fontSize * 0.66)));
+  const upper = project.toUpperCase();
+  return upper.length <= maxChars ? upper : upper.slice(0, maxChars - 1) + "…";
+}
+
 /** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, progress }) {
+export async function renderKey({ width, height, state, label, accent, project, progress }) {
   const color = STATE_COLORS[state] ?? STATE_COLORS.idle;
-  const barHeight = accent ? Math.round(height * 0.12) : 0;
+  // The bar is wider when it carries the project name than when it's a plain stripe.
+  const barHeight = accent ? Math.round(height * (project ? 0.16 : 0.12)) : 0;
+  const capSize = Math.round(barHeight * 0.65);
+  // Accents are all light, so the caps go dark rather than white.
+  const caps = project ? fitCaps(project, width, capSize) : "";
   const fontSize = Math.round(height * 0.21);
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
@@ -74,6 +86,13 @@ export async function renderKey({ width, height, state, label, accent, progress 
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="${color}" />
       ${accent ? `<rect width="${width}" height="${barHeight}" fill="${accent}" />` : ""}
+      ${
+        caps
+          ? `<text x="50%" y="${barHeight / 2}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
+                   dominant-baseline="middle">${escapeXml(caps)}</text>`
+          : ""
+      }
       <text font-family="sans-serif" font-size="${fontSize}" fill="#ffffff"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
       ${
@@ -92,6 +111,51 @@ export async function renderKey({ width, height, state, label, accent, progress 
     .ensureAlpha()
     .raw()
     .toBuffer();
+}
+
+/** Green under half, amber past that, red once a window is nearly spent. */
+function usageColor(pct) {
+  return pct >= 90 ? "#c62828" : pct >= 70 ? "#e6a700" : "#2e7d32";
+}
+
+/**
+ * Usage key: the two rate-limit windows Claude Code's /usage reports, stacked.
+ * `session` / `week` are percentages, or null while unknown.
+ */
+export async function renderUsage({ width, height, session, week }) {
+  const half = height / 2;
+  const rows = [
+    { caps: "SESSION", pct: session, top: 0 },
+    { caps: "WEEK", pct: week, top: half },
+  ];
+  const capSize = Math.round(height * 0.11);
+  const pctSize = Math.round(height * 0.26);
+
+  const body = rows
+    .map(({ caps, pct, top }) => {
+      const known = typeof pct === "number";
+      const shown = known ? Math.min(100, Math.max(0, Math.round(pct))) : 0;
+      const barY = top + half - 7;
+      return `
+        <text x="50%" y="${top + half * 0.26}" font-family="sans-serif" font-size="${capSize}"
+              font-weight="bold" letter-spacing="0.5" fill="#ffffff99" text-anchor="middle"
+              dominant-baseline="middle">${caps}</text>
+        <text x="50%" y="${top + half * 0.62}" font-family="sans-serif" font-size="${pctSize}"
+              fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${known ? shown + "%" : "—"}</text>
+        <rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#ffffff22" />
+        <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2"
+              fill="${usageColor(shown)}" />`;
+    })
+    .join("");
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="#1b1b1b" />
+      <rect y="${half - 1}" width="${width}" height="1" fill="#ffffff22" />
+      ${body}
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
 }
 
 /** Blank/off key, used to clear unassigned slots. */

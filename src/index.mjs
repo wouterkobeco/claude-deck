@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage } from "./render.mjs";
+import { getUsage } from "./usage.mjs";
 
 const POLL_MS = 2000;
 const RECONNECT_MS = 5000;
@@ -122,6 +123,16 @@ export function assignSlots(sessions, slots) {
   });
 }
 
+// The bottom-right key is the usage readout rather than a session, so it is
+// left out of `buttons` before slots are assigned.
+async function drawUsage(deck, btn) {
+  const { session, week } = await getUsage();
+  const drawn = `usage ${session} ${week}`;
+  if (btn.drawn === drawn) return;
+  await deck.fillKeyBuffer(btn.index, await renderUsage({ ...btn, session, week }), { format: "rgba" });
+  btn.drawn = drawn;
+}
+
 async function refresh(deck, buttons, slots) {
   const sessions = await getLiveSessions();
   assignSlots(sessions, slots);
@@ -149,12 +160,13 @@ async function refresh(deck, buttons, slots) {
       // Skip the re-encode when nothing visible changed — most polls are
       // no-ops once a board has settled.
       const accent = accentFor(session.folder);
+      const project = session.folder.split("/").filter(Boolean).pop() ?? "";
       const progress = session.progress;
-      const drawn = `${session.state} ${accent} ${progress?.current}/${progress?.total} ${label}`;
+      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${label}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(
         btn.index,
-        await renderKey({ ...btn, state: session.state, label, accent, progress }),
+        await renderKey({ ...btn, state: session.state, label, accent, project, progress }),
         { format: "rgba" }
       );
       btn.drawn = drawn;
@@ -170,13 +182,18 @@ async function run() {
   const deck = await openStreamDeck(devices[0].path);
   console.log(`Connected to ${deck.PRODUCT_NAME}`);
 
-  const buttons = deck.CONTROLS.filter((c) => c.type === "button").map((c) => ({
-    index: c.index,
-    width: c.pixelSize.width,
-    height: c.pixelSize.height,
-    assigned: null,
-    drawn: null,
-  }));
+  const allButtons = deck.CONTROLS.filter((c) => c.type === "button")
+    .sort((a, b) => a.index - b.index)
+    .map((c) => ({
+      index: c.index,
+      width: c.pixelSize.width,
+      height: c.pixelSize.height,
+      assigned: null,
+      drawn: null,
+    }));
+  // Keys are row-major, so the highest index is the bottom-right one.
+  const usageButton = allButtons.pop();
+  const buttons = allButtons;
   const slots = new Array(buttons.length).fill(null);
 
   let disconnected = false;
@@ -193,6 +210,7 @@ async function run() {
   while (!disconnected) {
     try {
       await refresh(deck, buttons, slots);
+      await drawUsage(deck, usageButton);
     } catch (err) {
       console.error("refresh failed:", err.message);
     }
