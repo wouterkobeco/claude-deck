@@ -83,16 +83,66 @@ async function readLatestAiTitle(transcriptPath) {
 }
 
 /**
+ * Works out "task X of Y" for a list of tasks.
+ *
+ * Two numbering schemes, because a list's own numbering can disagree with its
+ * length: a plan whose items are named "Task 4..Task 10" is eight files long,
+ * so its in-progress item sits at position 3 while everyone involved calls it
+ * task 6. When the subjects carry explicit numbers those win; otherwise the
+ * position in the list is used.
+ *
+ * X is the in-progress task, or the furthest-along completed one when nothing
+ * is running, so the pair stays on one scheme instead of flipping.
+ */
+export function taskCounter(tasks) {
+  const numbers = tasks.map((t) => {
+    const match = /^\s*task\s+(\d+)/i.exec(t.subject ?? "");
+    return match ? Number(match[1]) : null;
+  });
+  const numbered = numbers.filter((n) => n !== null);
+  const useSubjects = numbered.length >= Math.ceil(tasks.length / 2);
+  const numberAt = (i) => (useSubjects && numbers[i] !== null ? numbers[i] : i + 1);
+
+  const active = tasks.findIndex((t) => t.status === "in_progress");
+  const doneIndexes = tasks.map((t, i) => (t.status === "completed" ? i : -1)).filter((i) => i >= 0);
+
+  const current =
+    active >= 0 ? numberAt(active) : doneIndexes.length ? Math.max(...doneIndexes.map(numberAt)) : 0;
+  const total = useSubjects ? Math.max(...numbered) : tasks.length;
+
+  return { current, total: Math.max(current, total) };
+}
+
+/**
  * Task progress for a session, from the per-task JSON files Claude Code keeps
  * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
  * tasks at all, so the button can stay clean rather than showing "0/0".
  */
 async function readTaskProgress(sessionId) {
-  const tasks = await readJsonFiles(join(TASKS_DIR, sessionId));
+  const dir = join(TASKS_DIR, sessionId);
+  let names;
+  try {
+    names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
+  } catch {
+    return null;
+  }
+  if (names.length === 0) return null;
+
+  // Task files are named by numeric id; sort numerically so list position
+  // matches the order they were created in, not "10" before "2".
+  names.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
+  const tasks = [];
+  for (const name of names) {
+    try {
+      tasks.push(JSON.parse(await readFile(join(dir, name), "utf8")));
+    } catch {
+      // mid-write — skip
+    }
+  }
   if (tasks.length === 0) return null;
-  const done = tasks.filter((t) => t.status === "completed").length;
-  const active = tasks.find((t) => t.status === "in_progress") ?? null;
-  return { done, total: tasks.length, active: active?.subject ?? null };
+
+  return { ...taskCounter(tasks), active: tasks.find((t) => t.status === "in_progress")?.subject ?? null };
 }
 
 /**

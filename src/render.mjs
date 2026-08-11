@@ -68,7 +68,7 @@ export async function renderKey({ width, height, state, label, accent, progress 
     .map((line, i) => `<tspan x="50%" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
 
-  const done = progress ? Math.round((progress.done / Math.max(1, progress.total)) * width) : 0;
+  const done = progress ? Math.round((progress.current / Math.max(1, progress.total)) * width) : 0;
 
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -82,7 +82,7 @@ export async function renderKey({ width, height, state, label, accent, progress 
              <rect y="${height - 3}" width="${done}" height="3" fill="#ffffffcc" />
              <text x="50%" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
                    font-size="${progressSize}" fill="#ffffffdd" text-anchor="middle"
-                   dominant-baseline="middle">${progress.done}/${progress.total}</text>`
+                   dominant-baseline="middle">${progress.current}/${progress.total}</text>`
           : ""
       }
     </svg>`;

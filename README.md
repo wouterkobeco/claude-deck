@@ -37,6 +37,7 @@ npm start
 ```
 npm run render-check   # SVG -> key image pipeline, writes a sample PNG
 npm run slots-check    # project grouping / slot assignment
+npm run tasks-check    # "task X of Y" numbering
 ```
 
 ## Where the data comes from
@@ -67,6 +68,11 @@ All read-only, all maintained by Claude Code itself:
   switch the active editor.
 - **Stripe colors** are assigned per VS Code window in first-seen order, so
   they stay put while running rather than reshuffling when a window appears.
+- **"Task X of Y" follows the plan's own numbering.** A plan whose items are
+  named `Task 4`..`Task 10` is eight files long, so its in-progress item is at
+  list position 3 while everyone calls it task 6 — the subject numbers win
+  when present, list position is the fallback. When nothing is in progress it
+  shows the furthest completed task, so the pair never switches schemes.
 - **Buttons are grouped by project.** All sessions for one VS Code window sit
   in a contiguous block sharing a stripe colour. This costs full stickiness:
   a new session inserts into its project's block, pushing later projects along

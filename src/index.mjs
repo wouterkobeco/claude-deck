@@ -150,7 +150,7 @@ async function refresh(deck, buttons, slots) {
       // no-ops once a board has settled.
       const accent = accentFor(session.folder);
       const progress = session.progress;
-      const drawn = `${session.state} ${accent} ${progress?.done}/${progress?.total} ${label}`;
+      const drawn = `${session.state} ${accent} ${progress?.current}/${progress?.total} ${label}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(
         btn.index,
