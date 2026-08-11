@@ -38,9 +38,9 @@ function wrapLabel(label, width, fontSize) {
 /** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
 export async function renderKey({ width, height, state, label }) {
   const color = STATE_COLORS[state] ?? STATE_COLORS.idle;
-  const fontSize = Math.round(height * 0.15);
+  const fontSize = Math.round(height * 0.21);
   const lineHeight = fontSize * 1.15;
-  const maxLines = Math.max(1, Math.floor(height / lineHeight));
+  const maxLines = 4;
 
   let lines = wrapLabel(label, width, fontSize);
   if (lines.length > maxLines) {
