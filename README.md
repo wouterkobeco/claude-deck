@@ -17,6 +17,10 @@ Key colour is the session's own status:
 
 Design: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 
+Roadmap: `docs/roadmap-reveal-terminal.md` — pressing a button raises the right
+window but not the right *terminal* inside it. Investigated; needs a small
+VS Code extension.
+
 ## Setup
 
 1. `npm install`
