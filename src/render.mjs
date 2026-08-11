@@ -1,8 +1,11 @@
 import sharp from "sharp";
 
+// Keyed by the session registry's own status vocabulary.
 const STATE_COLORS = {
-  working: "#2e7d32", // green
-  needs_input: "#e6a700", // amber
+  busy: "#2e7d32", // green — actively working
+  requires_action: "#c62828", // red — blocked on you
+  waiting: "#e6a700", // amber — waiting on input
+  shell: "#1565c0", // blue — dropped to a shell
   idle: "#555555", // gray
 };
 
@@ -36,13 +39,16 @@ function wrapLabel(label, width, fontSize) {
 }
 
 /** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent }) {
+export async function renderKey({ width, height, state, label, accent, progress }) {
   const color = STATE_COLORS[state] ?? STATE_COLORS.idle;
   const barHeight = accent ? Math.round(height * 0.12) : 0;
   const fontSize = Math.round(height * 0.21);
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
-  const maxLines = 4;
+  const progressSize = Math.round(height * 0.19);
+  // The count needs a line of its own, so the title gives one up for it.
+  const footHeight = progress ? progressSize * 1.15 : 0;
+  const maxLines = progress ? 3 : 4;
 
   let lines = wrapLabel(label, width, fontSize);
   if (lines.length > maxLines) {
@@ -54,11 +60,15 @@ export async function renderKey({ width, height, state, label, accent }) {
     lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
   }
 
-  // Centre the text in what's left below the accent bar, not the whole key.
-  const startY = barHeight + (height - barHeight) / 2 - ((lines.length - 1) * lineHeight) / 2;
+  // Centre the title in what's left between the accent bar and the count.
+  const bodyTop = barHeight;
+  const bodyHeight = height - barHeight - footHeight;
+  const startY = bodyTop + bodyHeight / 2 - ((lines.length - 1) * lineHeight) / 2;
   const tspans = lines
     .map((line, i) => `<tspan x="50%" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
+
+  const done = progress ? Math.round((progress.done / Math.max(1, progress.total)) * width) : 0;
 
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -66,6 +76,15 @@ export async function renderKey({ width, height, state, label, accent }) {
       ${accent ? `<rect width="${width}" height="${barHeight}" fill="${accent}" />` : ""}
       <text font-family="sans-serif" font-size="${fontSize}" fill="#ffffff"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
+      ${
+        progress
+          ? `<rect y="${height - 3}" width="${width}" height="3" fill="#00000055" />
+             <rect y="${height - 3}" width="${done}" height="3" fill="#ffffffcc" />
+             <text x="50%" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
+                   font-size="${progressSize}" fill="#ffffffdd" text-anchor="middle"
+                   dominant-baseline="middle">${progress.done}/${progress.total}</text>`
+          : ""
+      }
     </svg>`;
 
   return sharp(Buffer.from(svg))

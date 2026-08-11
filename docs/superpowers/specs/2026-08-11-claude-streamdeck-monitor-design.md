@@ -2,6 +2,14 @@
 
 Date: 2026-08-11
 
+> **Partly superseded — kept as the record of how the design was reached.**
+> The hook-based status reporter described below was replaced: Claude Code's
+> own session registry (`~/.claude/sessions/<pid>.json`) already carries a
+> `status` field with a richer vocabulary (`busy`, `idle`, `waiting`,
+> `requires_action`, `shell`), so the hooks and their `settings.json` entry
+> were removed. Window focus also changed twice — see the README for what
+> ships today.
+
 ## Problem
 
 Multiple Claude Code sessions run at once across different VS Code windows/worktrees.

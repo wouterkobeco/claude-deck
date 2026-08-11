@@ -146,14 +146,17 @@ async function refresh(deck, buttons, slots) {
       // session) or a future Claude Code version changes format.
       const label = session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
 
-      // Skip the re-encode when nothing visible changed — with sticky slots
-      // most polls are no-ops.
+      // Skip the re-encode when nothing visible changed — most polls are
+      // no-ops once a board has settled.
       const accent = accentFor(session.folder);
-      const drawn = `${session.state} ${accent} ${label}`;
+      const progress = session.progress;
+      const drawn = `${session.state} ${accent} ${progress?.done}/${progress?.total} ${label}`;
       if (btn.drawn === drawn) return;
-      await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, state: session.state, label, accent }), {
-        format: "rgba",
-      });
+      await deck.fillKeyBuffer(
+        btn.index,
+        await renderKey({ ...btn, state: session.state, label, accent, progress }),
+        { format: "rgba" }
+      );
       btn.drawn = drawn;
     })
   );

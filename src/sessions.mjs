@@ -2,11 +2,52 @@ import { open, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const STATUS_DIR = join(homedir(), ".claude", "session-status");
-const IDE_DIR = join(homedir(), ".claude", "ide");
-const SESSIONS_DIR = join(homedir(), ".claude", "sessions");
-const STALE_SECONDS = 6 * 60 * 60; // see docs/superpowers/specs — deliberately long, not a recency filter
+const CLAUDE_DIR = join(homedir(), ".claude");
+const IDE_DIR = join(CLAUDE_DIR, "ide");
+const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
+const TASKS_DIR = join(CLAUDE_DIR, "tasks");
+const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const TITLE_TAIL_BYTES = 65536;
+
+async function readJsonFiles(dir, suffixes = [".json"]) {
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const results = [];
+  for (const name of names) {
+    if (!suffixes.some((s) => name.endsWith(s))) continue;
+    try {
+      results.push(JSON.parse(await readFile(join(dir, name), "utf8")));
+    } catch {
+      // partial write or corrupt file — skip it, not a crash
+    }
+  }
+  return results;
+}
+
+function isUnder(path, folder) {
+  return path === folder || path.startsWith(folder.endsWith("/") ? folder : folder + "/");
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0); // signal 0 only tests for existence
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Claude Code stores a session's transcript under a directory named after its
+ * cwd, with every `/` and `.` flattened to `-`.
+ */
+function transcriptPathFor({ cwd, sessionId }) {
+  return join(PROJECTS_DIR, cwd.replace(/[/.]/g, "-"), `${sessionId}.jsonl`);
+}
 
 /**
  * Claude Code writes an `aiTitle` field (an AI-generated summary, the same
@@ -16,7 +57,6 @@ const TITLE_TAIL_BYTES = 65536;
  * backwards for the most recent occurrence.
  */
 async function readLatestAiTitle(transcriptPath) {
-  if (!transcriptPath) return null;
   let fh;
   try {
     fh = await open(transcriptPath, "r");
@@ -42,62 +82,53 @@ async function readLatestAiTitle(transcriptPath) {
   }
 }
 
-async function readJsonFiles(dir) {
-  let names;
-  try {
-    names = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const results = [];
-  for (const name of names) {
-    if (!name.endsWith(".json") && !name.endsWith(".lock")) continue;
-    try {
-      results.push(JSON.parse(await readFile(join(dir, name), "utf8")));
-    } catch {
-      // partial write or corrupt file — skip it, not a crash
-    }
-  }
-  return results;
-}
-
-function isUnder(cwd, folder) {
-  return cwd === folder || cwd.startsWith(folder.endsWith("/") ? folder : folder + "/");
+/**
+ * Task progress for a session, from the per-task JSON files Claude Code keeps
+ * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
+ * tasks at all, so the button can stay clean rather than showing "0/0".
+ */
+async function readTaskProgress(sessionId) {
+  const tasks = await readJsonFiles(join(TASKS_DIR, sessionId));
+  if (tasks.length === 0) return null;
+  const done = tasks.filter((t) => t.status === "completed").length;
+  const active = tasks.find((t) => t.status === "in_progress") ?? null;
+  return { done, total: tasks.length, active: active?.subject ?? null };
 }
 
 /**
- * Live local sessions: have a fresh status file AND a cwd that falls under
- * some open VS Code workspace folder (i.e. a real local IDE window exists).
- * Returns sessions sorted most-recently-active first, each annotated with
- * the workspace folder it matched (used for `code -r`) and, where available,
- * the human-readable session name Claude Code itself assigns (the one shown
- * in VS Code's terminal list) — pulled from its own session registry, not
- * derived from the worktree path, since the two can differ.
+ * Live local sessions: interactive, process still running, and working in a
+ * folder some open VS Code window has in its workspace.
+ *
+ * State comes from the registry's own `status` field rather than being
+ * inferred from hooks — it distinguishes "waiting" and "requires_action"
+ * (blocked on you) from plain "busy", which guessing from hook events can't.
  */
 export async function getLiveSessions() {
-  const [statuses, locks, registry] = await Promise.all([
-    readJsonFiles(STATUS_DIR),
-    readJsonFiles(IDE_DIR),
-    readJsonFiles(SESSIONS_DIR),
-  ]);
+  const [registry, locks] = await Promise.all([readJsonFiles(SESSIONS_DIR), readJsonFiles(IDE_DIR, [".lock"])]);
 
-  const now = Math.floor(Date.now() / 1000);
   const folders = locks.flatMap((l) => l.workspaceFolders ?? []);
-  const namesById = new Map(registry.filter((r) => r.sessionId && r.name).map((r) => [r.sessionId, r.name]));
 
   const matched = [];
-  for (const s of statuses) {
-    if (!s.session_id || !s.cwd || !s.state || !s.ts) continue;
-    if (now - s.ts > STALE_SECONDS) continue;
+  for (const s of registry) {
+    if (s.kind !== "interactive" || !s.sessionId || !s.cwd || !s.pid) continue;
+    if (!isAlive(s.pid)) continue;
     const folder = folders.find((f) => isUnder(s.cwd, f));
-    if (!folder) continue; // no live local IDE window for this session
-    matched.push({ ...s, folder, name: namesById.get(s.session_id) ?? null });
+    if (!folder) continue; // no live local VS Code window for this session
+    matched.push({
+      session_id: s.sessionId,
+      cwd: s.cwd,
+      folder,
+      name: s.name ?? null,
+      state: s.status ?? "idle",
+      ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),
+    });
   }
 
-  const sessions = await Promise.all(
-    matched.map(async (s) => ({ ...s, aiTitle: await readLatestAiTitle(s.transcript_path) }))
+  return Promise.all(
+    matched.map(async (s) => ({
+      ...s,
+      aiTitle: await readLatestAiTitle(transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })),
+      progress: await readTaskProgress(s.session_id),
+    }))
   );
-
-  sessions.sort((a, b) => b.ts - a.ts);
-  return sessions;
 }

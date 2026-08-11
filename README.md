@@ -1,20 +1,30 @@
 # claude-streamdeck
 
 Shows active local Claude Code sessions on a dedicated Stream Deck MK.2 — one
-button per session, colored by state (green = working, amber = needs input,
-gray = idle), with a stripe along the top identifying which VS Code window the
-session belongs to. Pressing a button focuses that window.
+button per session, with a stripe along the top identifying which VS Code
+window it belongs to and, for sessions using tasks, a `done/total` count and
+progress bar. Pressing a button focuses that window.
+
+Key colour is the session's own status:
+
+| Colour | Status | Meaning |
+|---|---|---|
+| green | `busy` | actively working |
+| red | `requires_action` | blocked on you |
+| amber | `waiting` | waiting on input |
+| blue | `shell` | dropped to a shell |
+| gray | `idle` | idle |
 
 Design: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 
 ## Setup
 
-1. Hooks are already wired into `~/.claude/settings.json` (global), pointing at
-   `bin/streamdeck-status.sh`. Confirmed live: they fire for already-running
-   sessions too, not just ones started after the hooks were added.
-2. `npm install`
-3. Plug in the Stream Deck MK.2 (nothing else — no Elgato Stream Deck app —
+1. `npm install`
+2. Plug in the Stream Deck MK.2 (nothing else — no Elgato Stream Deck app —
    should be using it; this takes exclusive HID access).
+
+No configuration, and nothing to install into Claude Code: everything is read
+from files Claude Code already maintains under `~/.claude/`.
 
 ## Run
 
@@ -25,13 +35,27 @@ npm start
 ## Checks
 
 ```
-npm run self-check     # hook script's read-stdin -> write-file logic
 npm run render-check   # SVG -> key image pipeline, writes a sample PNG
-npm run slots-check    # sticky button slot assignment
+npm run slots-check    # project grouping / slot assignment
 ```
+
+## Where the data comes from
+
+All read-only, all maintained by Claude Code itself:
+
+| Path | Gives |
+|---|---|
+| `~/.claude/sessions/<pid>.json` | session id, cwd, name, **status**, liveness (pid) |
+| `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
+| `~/.claude/projects/<cwd>/<id>.jsonl` | `aiTitle` — the title VS Code's terminal list shows |
+| `~/.claude/tasks/<id>/*.json` | one file per task, with `status` → `done/total` |
 
 ## Notes
 
+- **No hooks, no permissions, no config.** An earlier version wrote session
+  state from Claude Code hooks into `~/.claude/settings.json`; the registry's
+  own `status` field turned out to be both richer (it distinguishes
+  `waiting` / `requires_action`) and free, so the hooks are gone.
 - **No macOS permissions required.** Focusing a window opens a file from the
   target folder via LaunchServices; VS Code routes it to the window whose
   workspace contains it. Earlier attempts needed Accessibility ("control your
