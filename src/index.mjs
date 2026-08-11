@@ -106,8 +106,26 @@ async function focusWindow(folder) {
 // the daemon's lifetime, and within a project sessions stay in arrival order.
 // Nothing re-sorts by activity.
 export function assignSlots(sessions, slots, nestedBySlot = []) {
-  const real = sessions.filter((s) => !s.nested);
-  const nested = sessions.filter((s) => s.nested);
+  let real = sessions.filter((s) => !s.nested);
+  let nested = sessions.filter((s) => s.nested);
+
+  // A folder with no real session at all would otherwise vanish from the
+  // board entirely — no primary button to attach its nested sessions to.
+  // The common cause is an interactive session that simply cd'd into a
+  // worktree rather than a background helper spawned by one; there's no way
+  // to tell those apart from the data available, so the earliest-seen
+  // nested session for such a folder is promoted to stand in as its
+  // primary, rather than losing the folder's only button.
+  const realFolders = new Set(real.map((s) => s.folder));
+  const orphanFolders = new Set(nested.map((s) => s.folder).filter((f) => !realFolders.has(f)));
+  for (const folder of orphanFolders) {
+    const candidates = nested
+      .filter((s) => s.folder === folder)
+      .sort((a, b) => (nestedOrder.get(a.session_id) ?? Infinity) - (nestedOrder.get(b.session_id) ?? Infinity));
+    const promoted = candidates[0];
+    real = [...real, promoted];
+    nested = nested.filter((s) => s.session_id !== promoted.session_id);
+  }
 
   for (const s of real) {
     if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);

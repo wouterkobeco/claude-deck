@@ -96,4 +96,41 @@ eq(
   "nested session order survives being reported in a different order"
 );
 
+// A folder with only nested sessions and no real one at all (e.g. an
+// interactive session that cd'd into a worktree) would otherwise vanish from
+// the board entirely — the earliest-seen nested session is promoted to stand
+// in as the primary instead.
+const C = "/projects/gamma";
+const nestedBySlot4 = new Array(5).fill(null);
+assignSlots([s("w1", C, true)], slots, nestedBySlot4);
+eq(slots, ["w1", null, null, null, null], "orphaned nested session is promoted to a real button");
+eq(nestedBySlot4[0], [], "promoted session has no nested siblings of its own");
+
+// Two orphaned nested sessions in the same folder: the earliest-seen one is
+// promoted, the other still shows as its nested child.
+const D = "/projects/delta";
+const nestedBySlot5 = new Array(5).fill(null);
+assignSlots([s("w1", D, true), s("w2", D, true)], slots, nestedBySlot5);
+eq(slots, ["w1", null, null, null, null], "earliest nested session promoted when none is real");
+eq(
+  nestedBySlot5[0],
+  [{ session_id: "w2", folder: D, nested: true }],
+  "remaining nested session becomes the promoted button's child"
+);
+
+// Self-healing: once a genuine real session shows up for a previously
+// orphaned folder, it takes over as primary and the promoted stand-in
+// reverts to being an ordinary nested child.
+const E = "/projects/epsilon";
+const nestedBySlot6 = new Array(5).fill(null);
+assignSlots([s("w1", E, true)], slots, nestedBySlot6);
+eq(slots, ["w1", null, null, null, null], "orphaned nested session promoted (before a real session exists)");
+assignSlots([s("e1", E), s("w1", E, true)], slots, nestedBySlot6);
+eq(slots, ["e1", null, null, null, null], "real session takes over as primary once it appears");
+eq(
+  nestedBySlot6[0],
+  [{ session_id: "w1", folder: E, nested: true }],
+  "previously-promoted session reverts to an ordinary nested child"
+);
+
 console.log("OK: project grouping");

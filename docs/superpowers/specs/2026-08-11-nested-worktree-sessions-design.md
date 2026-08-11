@@ -151,13 +151,21 @@ be more disruptive than one gap.
   color as the parent project, so the overlay still visually reads as
   belonging to it.
 
-## Known limitation (accepted)
+## Amendment: orphaned folders (2026-08-11, post-ship)
 
-If a project's VS Code window has *zero* real sessions but does have nested
-ones, there is no primary button left to carry the indicator, and those
-nested sessions won't surface on the deck at all — no regression from today
-(there was never a useful action to take on them either way), just silent
-instead of phantom.
+The "known limitation" originally accepted here — a folder with zero real
+sessions losing its button entirely — turned out to bite in practice within
+hours of shipping: an actively-`busy` interactive session cd'd into a
+worktree mid-task (not a background helper at all), and its whole project
+vanished from the board. There's no data available to distinguish "a
+background worktree helper" from "the session you're sitting in front of,
+which just happens to be checked out in a worktree right now" — so
+`assignSlots` now promotes the earliest-seen nested session of an otherwise
+real-session-less folder to stand in as its primary button. If a genuine
+real session later appears for that folder, it takes over as primary and the
+promoted stand-in reverts to an ordinary nested child (self-healing, no
+special-casing needed on the way back). See `slots-check.mjs`'s
+"orphaned nested session" cases.
 
 ## Testing
 
