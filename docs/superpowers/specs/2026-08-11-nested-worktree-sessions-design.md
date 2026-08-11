@@ -93,19 +93,38 @@ does slotting).
   Every other button in the block gets `[]`.
 - Press handling adds a third view alongside `sessions` and the existing
   `statsMode`: a per-folder **nested overlay**.
-  - Track the last press as `{ index, session_id }` (no timeout).
+  - Track the last press as `{ index, session_id | null }`, updated
+    unconditionally on *every* physical key-down — session buttons, the
+    usage key, and presses ignored while `statsMode` is on — not just ones
+    that result in a focus action. This is what makes "press it again" mean
+    literally the next key-down on the same button: anything else pressed
+    in between (checking stats, pressing a different project) breaks the
+    chain, same as a real double-press gesture would expect.
   - Pressing a primary button (one with `nestedSessions.length > 0`) whose
     immediately preceding press was that same `{index, session_id}` pair
     opens the overlay for its folder instead of refocusing. Any other press
-    on it — first press ever, or the session at that slot changed since the
-    last press — focuses VS Code as today and records the press.
+    on it — first press ever, a different key pressed in between, or the
+    session at that slot changed since the last press — focuses VS Code as
+    today and records the press.
   - While the overlay is showing, pressing *any* key (including the usage
     key) exits back to the normal board. The overlay has no in-place
     actions.
-  - `pulse()` (the `requires_action` flasher) and the main poll loop treat
-    "overlay active" the same way they already treat `statsMode`: suspended
-    while it's showing, so they don't redraw over it or read stale
-    `renderParams`.
+  - `pulse()` (the `requires_action` flasher) treats "overlay active" the
+    same way it already treats `statsMode`: suspended while it's showing, so
+    it doesn't redraw over it or read stale `renderParams`. The main poll
+    loop does *not* suspend for the overlay the way it does for `statsMode`
+    — see below, it keeps refreshing the overlay's own content.
+
+**Overlay refresh:** while showing, the overlay redraws on the same 2s poll
+as the main board, from a fresh `getLiveSessions()` call each tick, rather
+than a static snapshot taken at open time — a nested session's state or
+title can change while you're looking. Tile *positions* are fixed for the
+duration of the visit: order is captured once, at the moment the overlay
+opens (first-seen, same rule as the main board's `folderOrder`), and never
+re-sorted while it's showing. A nested session that finishes mid-visit goes
+blank in its slot rather than causing the remaining tiles to shift — you're
+mid-glance at a specific tile, and re-flowing everyone else around it would
+be more disruptive than one gap.
 
 ### 3. Rendering (`src/render.mjs`)
 
@@ -116,6 +135,14 @@ does slotting).
   being silently dropped — reusing the existing pulse tick (`bright` in
   `index.mjs`'s `pulse()`), extended to also redraw buttons carrying an
   overflow marker, not just `requires_action` ones.
+- Whenever `nestedCount > 0`, the margin column's width is reserved out of
+  the label text's layout, not just visually overlaid on top of it: the
+  width passed into `wrapLabel` for that button's body text is
+  `width - marginWidth` instead of the full key `width`, so wrapped lines
+  stay clear of the square column instead of centering across the whole key
+  and potentially running through it. `fitCaps` and the caps row are
+  unaffected — the squares start below the title bar, so there's no overlap
+  to guard there.
 - The overlay reuses `renderKey` unchanged for each nested session's tile —
   same label/state/progress rendering as a normal button — except the
   "project" caps show the nested folder's own basename (e.g.
@@ -138,5 +165,7 @@ instead of phantom.
   match; most-specific ancestor wins among multiple; a session with no
   matching folder at all is still dropped.
 - `render-check`: cases for the nested-count square column at a few counts
-  (zero, a few, more than fit) and for the overlay tile's caps using the
-  nested folder's basename instead of the project name.
+  (zero, a few, more than fit), for the overlay tile's caps using the
+  nested folder's basename instead of the project name, and for a long
+  label on a button with `nestedCount > 0` wrapping inside the margin
+  instead of centering across the full key width.
