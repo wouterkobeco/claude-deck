@@ -6,9 +6,29 @@ import { renderKey, renderBlank } from "./render.mjs";
 const POLL_MS = 2000;
 const RECONNECT_MS = 5000;
 
+// Raises the VS Code window whose title contains the workspace folder's
+// basename, via System Events. Deliberately not `code -r`: that flag reuses
+// *some* already-open window and replaces its content with the target
+// folder — if it doesn't pick the window that already has that folder open,
+// it silently kills whatever was running there. AXRaise only ever looks for
+// an existing window; if none matches, it does nothing. It cannot destroy
+// anything.
 function focusWindow(folder) {
-  execFile("code", ["-r", folder], (err) => {
-    if (err) console.error(`focus failed for ${folder}:`, err.message);
+  const basename = folder.split("/").filter(Boolean).pop() ?? folder;
+  const escaped = basename.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const script = `
+    tell application "Visual Studio Code" to activate
+    tell application "System Events"
+      tell process "Code"
+        set matches to (every window whose name contains "${escaped}")
+        if (count of matches) > 0 then
+          perform action "AXRaise" of item 1 of matches
+        end if
+      end tell
+    end tell
+  `;
+  execFile("osascript", ["-e", script], (err, _stdout, stderr) => {
+    if (err) console.error(`focus failed for ${folder}:`, stderr || err.message);
   });
 }
 
