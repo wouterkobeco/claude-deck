@@ -71,8 +71,9 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // consistent left edge across the whole board. When more markers would fit
   // than the column has vertical room for, the last visible one flashes
   // (driven by `pulse`) instead of being dropped.
-  const squareSize = 4;
-  const squarePitch = 5; // squareSize + 1px gap
+  const squareWidth = 2;
+  const squareHeight = 4;
+  const squarePitch = 5; // squareHeight + 1px gap
   const marginWidth = 8;
   const squaresTop = barHeight + 2;
   const squaresBottom = height - footHeight - 2;
@@ -88,7 +89,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
     .map((isShell, i) => {
       const dim = i === visibleMarkers - 1 && overflowMarker && !pulse;
       const fill = isShell ? `${SHELL_DOT}${dim ? "55" : ""}` : `#ffffff${dim ? "33" : "ee"}`;
-      return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareSize}" height="${squareSize}" fill="${fill}" />`;
+      return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareWidth}" height="${squareHeight}" fill="${fill}" />`;
     })
     .join("");
 
