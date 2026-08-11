@@ -47,7 +47,7 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedCount }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
@@ -74,13 +74,38 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const footHeight = progress ? progressSize * 1.15 : 0;
   const maxLines = progress ? 3 : 4;
 
+  // Nested-session indicator: a column of small squares in the left margin,
+  // one per nested (worktree) session sharing this button's project folder,
+  // so background work hidden behind the window still shows at a glance.
+  // When more squares would fit than the column has vertical room for, the
+  // last visible one flashes (driven by `pulse`) instead of being dropped.
+  const squareSize = 2;
+  const squarePitch = 3; // squareSize + 1px gap
+  const marginWidth = nestedCount ? 8 : 0;
+  const squaresTop = barHeight + 2;
+  const squaresBottom = height - footHeight - 2;
+  const maxSquares = Math.max(0, Math.floor((squaresBottom - squaresTop) / squarePitch));
+  const visibleSquares = Math.min(nestedCount ?? 0, maxSquares);
+  const overflowSquare = (nestedCount ?? 0) > maxSquares;
+  const squares = Array.from({ length: visibleSquares }, (_, i) => {
+    const dim = i === visibleSquares - 1 && overflowSquare && !pulse;
+    return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareSize}" height="${squareSize}"
+                  fill="#ffffff${dim ? "33" : "ee"}" />`;
+  }).join("");
+
+  // The label's wrap width and horizontal center both make room for the
+  // margin column above — not just drawn on top of it — so a long line
+  // can't run through the squares.
+  const textWidth = width - marginWidth;
+  const textCenterX = marginWidth + textWidth / 2;
+
   // Lowercase body against the header's uppercase caps, so the two rows read
   // as distinct typographic levels rather than fighting for the same weight.
-  let lines = wrapLabel(label.toLowerCase(), width, fontSize);
+  let lines = wrapLabel(label.toLowerCase(), textWidth, fontSize);
   if (lines.length > maxLines) {
     // aiTitle can be a full sentence; anything past what the key can show
     // vertically gets cut, with the last visible line ellipsized.
-    const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.6)));
+    const maxChars = Math.max(3, Math.floor(textWidth / (fontSize * 0.6)));
     lines = lines.slice(0, maxLines);
     const last = lines[maxLines - 1];
     lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
@@ -91,7 +116,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const bodyHeight = height - barHeight - footHeight;
   const startY = bodyTop + bodyHeight / 2 - ((lines.length - 1) * lineHeight) / 2;
   const tspans = lines
-    .map((line, i) => `<tspan x="50%" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
+    .map((line, i) => `<tspan x="${textCenterX}" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
 
   const done = progress ? Math.round((progress.current / Math.max(1, progress.total)) * width) : 0;
@@ -120,6 +145,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
       }
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
+      ${squares}
       ${
         progress
           ? `<rect y="${height - 3}" width="${width}" height="3" fill="#00000055" />
