@@ -56,20 +56,37 @@ function transcriptPathFor({ cwd, sessionId }) {
 // that. This is the literal tag Claude Code writes for it.
 const CLEAR_MARKER = "<command-name>/clear</command-name>";
 
+// A denied-by-auto-mode tool result comes back as an ordinary `type:"user"`
+// line (it's a tool_result, so it's on the user turn) carrying this field.
+// Every transcript line's own top-level `type` is written before any nested
+// `message.type`, so this substring reliably means *this* line, not some
+// tool_use/tool_result payload mentioning "user" inside its content.
+const USER_LINE_MARKER = '"type":"user"';
+
 /**
- * Claude Code writes an `aiTitle` field (an AI-generated summary, the same
- * string VS Code's terminal list shows) onto transcript lines repeatedly as
- * a session progresses. Reading the whole transcript to find the latest one
- * doesn't scale, so this reads only the last chunk of the file and scans
- * backwards for the most recent occurrence — stopping at the most recent
- * `/clear`, if any, since a title from before it describes a conversation
+ * Two things read from the same tail scan of a session's transcript, since
+ * reading the whole file to find either doesn't scale:
+ *
+ * `aiTitle` — Claude Code writes this field (an AI-generated summary, the
+ * same string VS Code's terminal list shows) onto transcript lines repeatedly
+ * as a session progresses; this is the most recent one. `clearedEmpty` is
+ * true when a `/clear` was crossed before any aiTitle was found scanning
+ * backwards: nothing has happened in the session since, as far as this tail
+ * window can see, so a title from before it would describe a conversation
  * that's gone.
  *
- * `clearedEmpty` is true when a `/clear` was crossed before any aiTitle was
- * found: nothing has happened in the session since, as far as this tail
- * window can see.
+ * `blockedOnDenial` — true when the most recent `type:"user"` line (newest
+ * first) is a tool-call denied by the auto-mode classifier, with nothing from
+ * the human since. Claude Code's own session status goes "idle" once that
+ * turn ends, identical to any other turn that ended cleanly — this is the one
+ * way we can tell that idle actually means "asked you for permission and is
+ * waiting," not "waiting for whatever's next." It's a narrow signal, not
+ * proof: an assistant that recovers and keeps working without another human
+ * line in between would also match, until it either says something (ending
+ * the turn, but by then it's usually done exactly what this flags) or you
+ * reply. Good enough for a key that just needs your attention, not a promise.
  */
-export async function readLatestAiTitle(transcriptPath) {
+export async function readTranscriptSignals(transcriptPath) {
   let fh;
   try {
     fh = await open(transcriptPath, "r");
@@ -78,20 +95,43 @@ export async function readLatestAiTitle(transcriptPath) {
     const buffer = Buffer.alloc(size - start);
     const { bytesRead } = await fh.read({ buffer, position: start });
     const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].includes("aiTitle")) {
-        try {
-          const obj = JSON.parse(lines[i]);
-          if (typeof obj.aiTitle === "string" && obj.aiTitle) return { aiTitle: obj.aiTitle, clearedEmpty: false };
-        } catch {
-          // truncated line at the start of the tail slice — keep scanning
+
+    let aiTitle = null,
+      clearedEmpty = false,
+      titleResolved = false;
+    let blockedOnDenial = false,
+      denialResolved = false;
+
+    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved); i--) {
+      const line = lines[i];
+
+      if (!titleResolved) {
+        if (line.includes("aiTitle")) {
+          try {
+            const obj = JSON.parse(line);
+            if (typeof obj.aiTitle === "string" && obj.aiTitle) {
+              aiTitle = obj.aiTitle;
+              titleResolved = true;
+            }
+          } catch {
+            // truncated line at the start of the tail slice — keep scanning
+          }
+        }
+        if (!titleResolved && line.includes(CLEAR_MARKER)) {
+          clearedEmpty = true;
+          titleResolved = true;
         }
       }
-      if (lines[i].includes(CLEAR_MARKER)) return { aiTitle: null, clearedEmpty: true };
+
+      if (!denialResolved && line.includes(USER_LINE_MARKER)) {
+        blockedOnDenial = line.includes("toolDenialKind");
+        denialResolved = true;
+      }
     }
-    return { aiTitle: null, clearedEmpty: false };
+
+    return { aiTitle, clearedEmpty, blockedOnDenial };
   } catch {
-    return { aiTitle: null, clearedEmpty: false };
+    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false };
   } finally {
     await fh?.close();
   }
@@ -188,6 +228,12 @@ async function readContext(sessionId) {
  * State comes from the registry's own `status` field rather than being
  * inferred from hooks — it distinguishes "waiting" and "requires_action"
  * (blocked on you) from plain "busy", which guessing from hook events can't.
+ * One narrow exception: an "idle" session whose last turn ended right after
+ * an auto-mode permission denial is promoted to "requires_action" too — see
+ * `readTranscriptSignals`'s `blockedOnDenial`. The registry reports that
+ * exact case as a plain completed turn, same as any other idle session, so
+ * without this a session that just asked you for a permission rule reads on
+ * the deck as no different from one that's simply caught up.
  */
 export async function getLiveSessions() {
   const [registry, locks] = await Promise.all([readJsonFiles(SESSIONS_DIR), readJsonFiles(IDE_DIR, [".lock"])]);
@@ -211,11 +257,17 @@ export async function getLiveSessions() {
   }
 
   return Promise.all(
-    matched.map(async (s) => ({
-      ...s,
-      ...(await readLatestAiTitle(transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }))),
-      progress: await readTaskProgress(s.session_id),
-      context: await readContext(s.session_id),
-    }))
+    matched.map(async (s) => {
+      const { blockedOnDenial, ...signals } = await readTranscriptSignals(
+        transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })
+      );
+      return {
+        ...s,
+        ...signals,
+        state: s.state === "idle" && blockedOnDenial ? "requires_action" : s.state,
+        progress: await readTaskProgress(s.session_id),
+        context: await readContext(s.session_id),
+      };
+    })
   );
 }

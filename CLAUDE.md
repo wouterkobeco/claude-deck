@@ -37,26 +37,35 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   local window is dropped), then enriches with `aiTitle` (tail-scanned from the
   transcript jsonl), task progress, and context usage. Every file read is wrapped in try/catch
   that skips rather than throws: these files are written by another process and
-  a poll can land mid-write. `readLatestAiTitle` also stops that scan at the
-  most recent `/clear` — see the invariant below.
+  a poll can land mid-write. `readTranscriptSignals` reads `aiTitle` and two
+  more things from that same tail scan — see the two invariants below.
 - `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`
   and `accentFor` for the checks; the `import.meta.url === argv[1]` guard at the
   bottom is what keeps importing it from starting a daemon. Also owns the
   session/stats view toggle (`statsMode`, local to `run()`) — pressing the
   usage key flips it; the other 14 buttons redraw as sessions or stat tiles
   depending on which is current. The stats board's top-left pair ("Session
-  reset in" / "Week reset in") isn't from stats.mjs — it's `usage.mjs`'s
+  reset" / "Week reset") isn't from stats.mjs — it's `usage.mjs`'s
   `sessionResetsAt`/`weekResetsAt` reduced to hours/days, prepended in
   `index.mjs` because they change by the hour/day while the all-time totals
   barely move.
 - **`/clear` reuses the transcript file.** It's written as an ordinary line
   (`<command-name>/clear</command-name>`) into the same `.jsonl`, not a new
   file, so a naive backward scan for `aiTitle` would keep surfacing the
-  pre-clear summary. `readLatestAiTitle` stops at the most recent `/clear`
+  pre-clear summary. `readTranscriptSignals` stops at the most recent `/clear`
   instead; if nothing's been said since, it reports `clearedEmpty: true` and
   `index.mjs` shows a blank body rather than falling back to the session name
   or cwd — those would look like a real answer when the honest one is
   "nothing yet".
+- **"idle" can mean "asked you for permission and is waiting."** Claude
+  Code's session `status` reports a turn that ends right after an auto-mode
+  permission denial exactly the same as any other completed turn: `idle`.
+  `readTranscriptSignals`'s `blockedOnDenial` catches the one case that
+  matters — the newest `type:"user"` line in the tail is a denied tool result
+  with no human reply after it — and `getLiveSessions()` promotes that session
+  to `requires_action`. It's a narrow signal, not certainty (an assistant that
+  quietly recovers and keeps working would also match, briefly); good enough
+  for a key that needs to catch your eye, not a guarantee.
 - **Requires-action keys pulse.** `pulse()` in `index.mjs` is a second loop
   alongside the main poll, ticking every `PULSE_MS` (400ms) — the 2s poll is
   far too slow to read as animation. It redraws only `requires_action` keys,
