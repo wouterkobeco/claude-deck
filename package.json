@@ -13,8 +13,8 @@
     "usage-check": "node scripts/usage-check.mjs",
     "tasks-check": "node scripts/tasks-check.mjs"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["claude-code", "stream-deck", "macos"],
+  "author": "wouterkobeco",
   "license": "ISC",
   "type": "module",
   "private": true,
