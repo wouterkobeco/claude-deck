@@ -6,7 +6,7 @@ import { renderKey } from "../src/render.mjs";
 
 const width = 72;
 const height = 72;
-const buf = await renderKey({ width, height, state: "working", label: "kob-trace" });
+const buf = await renderKey({ width, height, state: "working", label: "prescription-rounds-pr3" });
 
 const expected = width * height * 4;
 if (buf.length !== expected) {
