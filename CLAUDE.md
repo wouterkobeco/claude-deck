@@ -122,6 +122,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - **MK.2 hardcoded-ish**: 15 keys, 72×72, macOS only, exclusive HID (the Elgato
   app cannot run alongside). Extra sessions past the key count are dropped
   silently, by design.
+- **Nested (worktree) sessions don't get their own button.** `sessions.mjs`
+  flags a session `nested: true` when its cwd sits inside — but isn't equal
+  to — its matched VS Code window's folder (a background worktree checkout).
+  `assignSlots` in `index.mjs` keeps those off the board's own slots entirely;
+  instead they're grouped by folder onto the first button of that project's
+  block, drawn as a small indicator square. A second press of that same
+  button — tracked as a global "was this the immediately preceding press"
+  check, not a timeout, so any other key in between breaks the chain — opens
+  `refreshNested`'s overlay: live-refreshing content on a tile order fixed at
+  the moment it opened (`nestedView.order`), not re-sorted while it's up.
+  Pressing any key closes the overlay and returns to the normal board.
 
 ## Docs
 

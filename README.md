@@ -22,6 +22,12 @@ Key colour is the session's own status:
 | blue | `shell` | dropped to a shell |
 | gray | `idle` | idle |
 
+A session running in a background worktree checkout of a project doesn't get
+its own button — it shows as a small square on its parent project's key
+instead. Press that key twice in a row to open an overlay listing those
+worktree sessions; any key press, including one of the overlay's own tiles,
+closes it and returns to the normal board.
+
 Design: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 
 Roadmap: `docs/roadmap-reveal-terminal.md` — pressing a button raises the right

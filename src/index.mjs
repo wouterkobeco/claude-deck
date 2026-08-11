@@ -275,7 +275,7 @@ async function refreshNested(deck, buttons, nestedView) {
       const project = session.cwd.split("/").filter(Boolean).pop() ?? "";
       const progress = session.progress;
 
-      const drawn = `nested ${session.state} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label}`;
+      const drawn = `nested ${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label}`;
       if (btn.drawn === drawn) return;
       const buf = await renderKey({ ...btn, state: session.state, label, accent, project, progress, context: session.context });
       await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
