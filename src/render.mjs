@@ -39,8 +39,19 @@ function wrapLabel(label, width, fontSize) {
 export async function renderKey({ width, height, state, label }) {
   const color = STATE_COLORS[state] ?? STATE_COLORS.idle;
   const fontSize = Math.round(height * 0.15);
-  const lines = wrapLabel(label, width, fontSize);
   const lineHeight = fontSize * 1.15;
+  const maxLines = Math.max(1, Math.floor(height / lineHeight));
+
+  let lines = wrapLabel(label, width, fontSize);
+  if (lines.length > maxLines) {
+    // aiTitle can be a full sentence; anything past what the key can show
+    // vertically gets cut, with the last visible line ellipsized.
+    const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.58)));
+    lines = lines.slice(0, maxLines);
+    const last = lines[maxLines - 1];
+    lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
+  }
+
   const startY = height / 2 - ((lines.length - 1) * lineHeight) / 2;
   const tspans = lines
     .map((line, i) => `<tspan x="50%" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)

@@ -8,13 +8,15 @@ mkdir -p "$STATUS_DIR"
 
 write_status() {
   local state="$1" input="$2"
-  local session_id cwd ts
+  local session_id cwd transcript_path ts
   session_id=$(jq -r '.session_id // empty' <<<"$input")
   cwd=$(jq -r '.cwd // empty' <<<"$input")
+  transcript_path=$(jq -r '.transcript_path // empty' <<<"$input")
   [ -z "$session_id" ] && return 0
   ts=$(date +%s)
-  jq -n --arg session_id "$session_id" --arg cwd "$cwd" --arg state "$state" --argjson ts "$ts" \
-    '{session_id: $session_id, cwd: $cwd, state: $state, ts: $ts}' \
+  jq -n --arg session_id "$session_id" --arg cwd "$cwd" --arg transcript_path "$transcript_path" \
+        --arg state "$state" --argjson ts "$ts" \
+    '{session_id: $session_id, cwd: $cwd, transcript_path: $transcript_path, state: $state, ts: $ts}' \
     > "$STATUS_DIR/$session_id.json"
 }
 
@@ -28,13 +30,15 @@ end_status() {
 self_check() {
   local fake_id="selfcheck-$$"
   local fake_input
-  fake_input=$(jq -n --arg session_id "$fake_id" --arg cwd "/tmp" '{session_id: $session_id, cwd: $cwd}')
+  fake_input=$(jq -n --arg session_id "$fake_id" --arg cwd "/tmp" --arg transcript_path "/tmp/fake.jsonl" \
+    '{session_id: $session_id, cwd: $cwd, transcript_path: $transcript_path}')
   local f="$STATUS_DIR/$fake_id.json"
 
   write_status "working" "$fake_input"
   if [ ! -f "$f" ]; then echo "self-check FAILED: status file not written" >&2; exit 1; fi
   if [ "$(jq -r '.state' "$f")" != "working" ]; then echo "self-check FAILED: state mismatch" >&2; exit 1; fi
   if [ "$(jq -r '.cwd' "$f")" != "/tmp" ]; then echo "self-check FAILED: cwd mismatch" >&2; exit 1; fi
+  if [ "$(jq -r '.transcript_path' "$f")" != "/tmp/fake.jsonl" ]; then echo "self-check FAILED: transcript_path mismatch" >&2; exit 1; fi
 
   end_status "$fake_input"
   if [ -f "$f" ]; then echo "self-check FAILED: status file not deleted on end" >&2; exit 1; fi

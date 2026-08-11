@@ -26,12 +26,12 @@ async function refresh(deck, buttons) {
         if (prev) await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
         return;
       }
-      // Prefer Claude Code's own human-readable session name (the one shown
-      // in VS Code's terminal list) — it's assigned per-session and can
-      // differ from the worktree name. Fall back to the cwd's basename if
-      // the session registry doesn't have an entry (e.g. registry format
-      // changes in a future Claude Code version).
-      const label = session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
+      // Prefer the AI-generated title (the exact string VS Code's terminal
+      // list shows), then Claude Code's short session name, then the cwd's
+      // basename — each a fallback for when the one before it isn't
+      // available yet (e.g. aiTitle hasn't been generated this early in a
+      // session) or a future Claude Code version changes format.
+      const label = session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
       const buf = await renderKey({ ...btn, state: session.state, label });
       await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
     })
