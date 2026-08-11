@@ -137,8 +137,6 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   nestedBySlot.fill(null);
 
   const visible = ordered.slice(0, slots.length);
-  const hasAnyNested = nested.length > 0;
-
   visible.forEach((s, i) => {
     slots[i] = s.session_id;
     // Only the first button of a project's contiguous block carries its
@@ -148,15 +146,9 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     // particular poll happened to report them in.
     const isPrimary = i === 0 || visible[i - 1].folder !== s.folder;
     if (isPrimary) {
-      const folderNested = nested
+      nestedBySlot[i] = nested
         .filter((n) => n.folder === s.folder)
         .sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
-      // If there are nested sessions somewhere but not for this folder,
-      // leave nestedBySlot[i] as null. If there are no nested sessions
-      // anywhere, all primary buttons get an empty array.
-      if (!hasAnyNested || folderNested.length > 0) {
-        nestedBySlot[i] = folderNested;
-      }
     }
   });
 }
