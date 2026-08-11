@@ -162,7 +162,7 @@ assignSlots([s("a1", A), s("a2", A), s("w1", A, true), s("b1", B)], slots, neste
 eq(slots, ["a1", "a2", "b1", null, null], "nested session claims no slot");
 eq(nestedBySlot[0], [{ session_id: "w1", folder: A, nested: true }], "nested session attaches to the block's first button");
 eq(nestedBySlot[1], null, "sibling real session in the same block gets no nested list");
-eq(nestedBySlot[2], null, "unrelated project's button gets no nested list");
+eq(nestedBySlot[2], [], "unrelated project's primary button gets an empty (not null) nested list");
 
 // A folder with no nested sessions at all: its primary button gets an empty
 // list, not null — callers can treat "primary button" and "has a list" the
