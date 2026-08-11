@@ -86,11 +86,11 @@ export async function renderKey({ width, height, state, label, accent, project, 
                   fill="#ffffff${dim ? "33" : "ee"}" />`;
   }).join("");
 
-  // The label's wrap width and horizontal center both make room for the
-  // margin column above — not just drawn on top of it — so a long line
-  // can't run through the squares.
+  // The label's wrap width and left edge both make room for the margin
+  // column above — not just drawn on top of it — so a long line can't run
+  // through the squares.
   const textWidth = width - marginWidth;
-  const textCenterX = marginWidth + textWidth / 2;
+  const textLeftX = marginWidth + 3;
 
   // Lowercase body against the header's uppercase caps, so the two rows read
   // as distinct typographic levels rather than fighting for the same weight.
@@ -109,7 +109,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const bodyHeight = height - barHeight - footHeight;
   const startY = bodyTop + bodyHeight / 2 - ((lines.length - 1) * lineHeight) / 2;
   const tspans = lines
-    .map((line, i) => `<tspan x="${textCenterX}" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
+    .map((line, i) => `<tspan x="${textLeftX}" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
 
   const done = progress ? Math.round((progress.current / Math.max(1, progress.total)) * width) : 0;
@@ -137,7 +137,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
           : ""
       }
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
-            text-anchor="middle" dominant-baseline="middle">${tspans}</text>
+            text-anchor="start" dominant-baseline="middle">${tspans}</text>
       ${squares}
       ${
         progress
@@ -149,9 +149,9 @@ export async function renderKey({ width, height, state, label, accent, project, 
           : ""
       }
       ${
-        // Drawn last so it sits on top of the progress bar's top pixel rather
-        // than under it.
-        shellDot ? `<circle cx="8" cy="${height - 5}" r="3" fill="${SHELL_DOT}" />` : ""
+        // Centred on the same line as the counter, so the two ends of the foot
+        // row sit level — which also lifts it clear of the progress bar.
+        shellDot ? `<circle cx="11" cy="${height - footHeight / 2 - 2}" r="6" fill="${SHELL_DOT}" />` : ""
       }
     </svg>`;
 
