@@ -188,15 +188,16 @@ async function refreshStats(deck, buttons, stats) {
   );
 }
 
-async function refresh(deck, buttons, slots) {
+async function refresh(deck, buttons, slots, nestedBySlot) {
   const sessions = await getLiveSessions();
-  assignSlots(sessions, slots);
+  assignSlots(sessions, slots, nestedBySlot);
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
 
   await Promise.all(
     buttons.map(async (btn, slot) => {
       const session = slots[slot] ? byId.get(slots[slot]) : null;
       btn.assigned = session ?? null;
+      btn.nestedSessions = nestedBySlot[slot] ?? [];
 
       if (!session) {
         btn.renderParams = null;
@@ -222,16 +223,62 @@ async function refresh(deck, buttons, slots) {
       const accent = accentFor(session.folder);
       const project = session.folder.split("/").filter(Boolean).pop() ?? "";
       const progress = session.progress;
+      const nestedCount = btn.nestedSessions.length;
       // Cached every poll (not just on change) so the pulse loop below can
       // redraw a requires_action key between polls without re-deriving it
       // from a fresh getLiveSessions() call.
-      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context };
+      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context, nestedCount };
 
       // Skip the re-encode when nothing visible changed — most polls are
       // no-ops once a board has settled.
-      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label}`;
+      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label} ${nestedCount}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...btn.renderParams }), { format: "rgba" });
+      btn.drawn = drawn;
+    })
+  );
+}
+
+// The nested-session overlay: same rendering and blank/diffing conventions
+// as refresh(), but drawn from a fixed set of session ids captured once at
+// the moment the overlay opened (nestedView.order) rather than a fresh
+// assignSlots pass — order stays put for the visit even as content updates.
+async function refreshNested(deck, buttons, nestedView) {
+  const sessions = await getLiveSessions();
+  const byId = new Map(sessions.map((s) => [s.session_id, s]));
+  const accent = accentFor(nestedView.folder);
+
+  await Promise.all(
+    buttons.map(async (btn, i) => {
+      const sessionId = nestedView.order[i];
+      const session = sessionId ? byId.get(sessionId) : null;
+      btn.assigned = null; // nested tiles have no window to focus
+      // pulse() is paused while the overlay shows (see the run() change
+      // below), but the instant it's dismissed, pulse resumes on its own
+      // 400ms tick and reads whatever btn.renderParams already holds —
+      // which, without this, would still be each button's pre-overlay data,
+      // stale by however long the overlay was open. Nulling it here means
+      // pulse's filter (state/nestedCount) finds nothing to redraw until the
+      // next refresh() repopulates it, at most 2s later.
+      btn.renderParams = null;
+
+      if (!session) {
+        if (btn.drawn !== null) {
+          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
+          btn.drawn = null;
+        }
+        return;
+      }
+      const label = session.clearedEmpty
+        ? ""
+        : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
+      const project = session.cwd.split("/").filter(Boolean).pop() ?? "";
+      const progress = session.progress;
+
+      const drawn = `nested ${session.state} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label}`;
+      if (btn.drawn === drawn) return;
+      const buf = await renderKey({ ...btn, state: session.state, label, accent, project, progress, context: session.context });
+      await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
       btn.drawn = drawn;
     })
   );
@@ -251,7 +298,7 @@ async function pulse(deck, buttons, isStatsMode, isDisconnected) {
       try {
         await Promise.all(
           buttons
-            .filter((btn) => btn.renderParams?.state === "requires_action")
+            .filter((btn) => btn.renderParams?.state === "requires_action" || (btn.renderParams?.nestedCount ?? 0) > 0)
             .map(async (btn) => {
               const buf = await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
@@ -286,29 +333,56 @@ async function run() {
   const usageButton = allButtons.pop();
   const buttons = allButtons;
   const slots = new Array(buttons.length).fill(null);
+  const nestedBySlot = new Array(buttons.length).fill(null);
 
   let disconnected = false;
   // Toggled by pressing the usage key; the key itself keeps rendering the
   // same either way — it's the 14 session buttons that switch content.
   let statsMode = false;
+  // { folder, order: [session_id, ...] } while the nested-session overlay is
+  // showing, otherwise null. `order` is captured once when the overlay opens
+  // and never re-sorted — see refreshNested.
+  let nestedView = null;
+  // The immediately preceding key-down, updated on every press regardless of
+  // what it did — this is what makes a second press on the same button mean
+  // "again", and any other key in between break that chain.
+  let lastPress = null;
   deck.on("error", (err) => {
     console.error("Stream Deck error:", err);
     disconnected = true;
   });
   deck.on("down", (control) => {
     if (control.type !== "button") return;
-    if (control.index === usageButton.index) {
-      statsMode = !statsMode;
+    const btn = control.index === usageButton.index ? null : buttons[control.index];
+    const sessionId = btn?.assigned?.session_id ?? null;
+
+    if (nestedView) {
+      nestedView = null;
+      lastPress = { index: control.index, session_id: sessionId };
       return;
     }
-    if (statsMode) return; // stat tiles aren't clickable
-    const btn = buttons[control.index];
-    if (btn?.assigned) focusWindow(btn.assigned.folder);
+    if (control.index === usageButton.index) {
+      statsMode = !statsMode;
+      lastPress = { index: control.index, session_id: null };
+      return;
+    }
+    if (statsMode) {
+      lastPress = { index: control.index, session_id: sessionId };
+      return; // stat tiles aren't clickable
+    }
+
+    const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
+    if (isRepeat && btn.nestedSessions?.length) {
+      nestedView = { folder: btn.assigned.folder, order: btn.nestedSessions.map((s) => s.session_id) };
+    } else if (btn?.assigned) {
+      focusWindow(btn.assigned.folder);
+    }
+    lastPress = { index: control.index, session_id: sessionId };
   });
 
   // Runs alongside the poll loop below, not inside it — it needs a much
   // faster beat than the 2s poll to read as a pulse.
-  pulse(deck, buttons, () => statsMode, () => disconnected);
+  pulse(deck, buttons, () => statsMode || !!nestedView, () => disconnected);
 
   while (!disconnected) {
     try {
@@ -324,8 +398,10 @@ async function run() {
           { label: "Week reset", value: weekDays === null ? "—" : `${weekDays}d` },
         ];
         await refreshStats(deck, buttons, [...resetTiles, ...(await getStats())]);
+      } else if (nestedView) {
+        await refreshNested(deck, buttons, nestedView);
       } else {
-        await refresh(deck, buttons, slots);
+        await refresh(deck, buttons, slots, nestedBySlot);
       }
       await drawUsage(deck, usageButton);
     } catch (err) {
