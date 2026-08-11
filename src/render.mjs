@@ -36,10 +36,12 @@ function wrapLabel(label, width, fontSize) {
 }
 
 /** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label }) {
+export async function renderKey({ width, height, state, label, accent }) {
   const color = STATE_COLORS[state] ?? STATE_COLORS.idle;
+  const barHeight = accent ? Math.round(height * 0.12) : 0;
   const fontSize = Math.round(height * 0.21);
-  const lineHeight = fontSize * 1.15;
+  // Tighter than typographic ideal so four lines still fit under the bar.
+  const lineHeight = fontSize * 1.05;
   const maxLines = 4;
 
   let lines = wrapLabel(label, width, fontSize);
@@ -52,7 +54,8 @@ export async function renderKey({ width, height, state, label }) {
     lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
   }
 
-  const startY = height / 2 - ((lines.length - 1) * lineHeight) / 2;
+  // Centre the text in what's left below the accent bar, not the whole key.
+  const startY = barHeight + (height - barHeight) / 2 - ((lines.length - 1) * lineHeight) / 2;
   const tspans = lines
     .map((line, i) => `<tspan x="50%" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
@@ -60,6 +63,7 @@ export async function renderKey({ width, height, state, label }) {
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="${color}" />
+      ${accent ? `<rect width="${width}" height="${barHeight}" fill="${accent}" />` : ""}
       <text font-family="sans-serif" font-size="${fontSize}" fill="#ffffff"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
     </svg>`;

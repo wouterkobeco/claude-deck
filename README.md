@@ -2,7 +2,8 @@
 
 Shows active local Claude Code sessions on a dedicated Stream Deck MK.2 — one
 button per session, colored by state (green = working, amber = needs input,
-gray = idle). Pressing a button focuses that session's VS Code window.
+gray = idle), with a stripe along the top identifying which VS Code window the
+session belongs to. Pressing a button focuses that window.
 
 Design: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 
@@ -31,10 +32,17 @@ npm run slots-check    # sticky button slot assignment
 
 ## Notes
 
-- **No macOS permissions required.** Focusing a window opens a stable file
-  from the target folder via LaunchServices; VS Code routes it to the window
-  whose workspace contains it. Earlier attempts needed Accessibility
-  ("control your computer", granted to the whole terminal app) — that's gone.
+- **No macOS permissions required.** Focusing a window opens a file from the
+  target folder via LaunchServices; VS Code routes it to the window whose
+  workspace contains it. Earlier attempts needed Accessibility ("control your
+  computer", granted to the whole terminal app) — that's gone.
+- **Focusing doesn't disturb the window.** It opens a file that window
+  *already has open*, read from VS Code's own `state.vscdb`, so no tab is
+  added and normally nothing visibly changes. If that state can't be read it
+  falls back to a static anchor file (`package.json` and friends), which does
+  switch the active editor.
+- **Stripe colors** are assigned per VS Code window in first-seen order, so
+  they stay put while running rather than reshuffling when a window appears.
 - **Button positions are sticky.** A session keeps its button until it ends;
   new sessions take the lowest free slot, so the board never reshuffles
   while you're looking at it.
