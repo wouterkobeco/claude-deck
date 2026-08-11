@@ -11,6 +11,8 @@
     "render-check": "node scripts/render-check.mjs",
     "slots-check": "node scripts/slots-check.mjs",
     "usage-check": "node scripts/usage-check.mjs",
+    "stats-check": "node scripts/stats-check.mjs",
+    "title-check": "node scripts/title-check.mjs",
     "tasks-check": "node scripts/tasks-check.mjs"
   },
   "keywords": ["claude-code", "stream-deck", "macos"],

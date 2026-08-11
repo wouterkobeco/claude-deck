@@ -14,6 +14,7 @@ const buf = await renderKey({
   accent: "#4fc3f7",
   project: "claude-streamdeck",
   progress: { current: 2, total: 5 },
+  context: 74,
 });
 
 const expected = width * height * 4;

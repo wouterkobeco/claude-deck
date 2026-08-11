@@ -3,7 +3,14 @@
 Shows active local Claude Code sessions on a dedicated Stream Deck MK.2 — one
 button per session, with a stripe along the top identifying which VS Code
 window it belongs to and, for sessions using tasks, a `done/total` count and
-progress bar. Pressing a button focuses that window.
+progress bar. Pressing a button focuses that window. The bottom-right key
+leaves the rotation and shows how much of your session and weekly limits are
+spent — press it to swap the other 14 keys for an all-time stats board (time
+until each rate-limit window resets, favorite model, total tokens, streaks,
+...), press it again to go back.
+
+The stripe carries the project name in tiny caps, and under it a gauge for that
+session's context window — green, amber past 70%, red past 85%.
 
 Key colour is the session's own status:
 
@@ -27,8 +34,22 @@ VS Code extension.
 2. Plug in the Stream Deck MK.2 (nothing else — no Elgato Stream Deck app —
    should be using it; this takes exclusive HID access).
 
-No configuration, and nothing to install into Claude Code: everything is read
-from files Claude Code already maintains under `~/.claude/`.
+That's everything except the context gauge, which needs one block in your
+status line — Claude Code reports a session's context percentage there and
+nowhere else. Add this near the top of `~/.claude/statusline-command.sh`
+(assumes the usual `input=$(cat)` first line):
+
+```bash
+ctx_dir="$HOME/.claude/ctx"
+sid=$(echo "$input" | jq -r '.session_id // empty')
+if [ -n "$sid" ]; then
+  mkdir -p "$ctx_dir"
+  echo "$input" | jq -c '{context: .context_window.used_percentage}' > "$ctx_dir/$sid.json.tmp" &&
+    mv "$ctx_dir/$sid.json.tmp" "$ctx_dir/$sid.json"
+fi
+```
+
+Skip it and every other feature still works; the gauge just never draws.
 
 ## Run
 
@@ -42,6 +63,8 @@ npm start
 npm run render-check   # SVG -> key image pipeline, writes a sample PNG
 npm run slots-check    # project grouping / slot assignment
 npm run tasks-check    # "task X of Y" numbering
+npm run usage-check    # rate-limit parse (--live prints the raw API response)
+npm run stats-check    # stats board formatting (--live prints the real tiles)
 ```
 
 ## Where the data comes from
@@ -54,6 +77,9 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
 | `~/.claude/projects/<cwd>/<id>.jsonl` | `aiTitle` — the title VS Code's terminal list shows |
 | `~/.claude/tasks/<id>/*.json` | one file per task, with `status` → `done/total` |
+| `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
+| `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit %, for the bottom-right key |
+| `~/.claude/stats-cache.json` | all-time totals (tokens, sessions, streaks), for the stats board |
 
 ## Notes
 

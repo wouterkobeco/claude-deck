@@ -5,11 +5,15 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage } from "./render.mjs";
-import { getUsage } from "./usage.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat } from "./render.mjs";
+import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
+import { getStats } from "./stats.mjs";
 
 const POLL_MS = 2000;
 const RECONNECT_MS = 5000;
+// ~2.5fps: fast enough to read as a pulse, slow enough not to flood the deck's
+// USB HID link across up to 14 keys at once.
+const PULSE_MS = 400;
 const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore"];
 
 // Accent colours identifying which VS Code window a session belongs to.
@@ -133,6 +137,31 @@ async function drawUsage(deck, btn) {
   btn.drawn = drawn;
 }
 
+// Stats view: the same 14 buttons, repurposed as an all-time stats board.
+// Reuses the `drawn`-signature diffing that `refresh` uses for sessions, so
+// switching modes just redraws everything once (the signatures never match
+// across modes) and needs no explicit invalidation.
+async function refreshStats(deck, buttons, stats) {
+  await Promise.all(
+    buttons.map(async (btn, i) => {
+      const stat = stats[i] ?? null;
+      btn.assigned = null;
+
+      if (!stat) {
+        if (btn.drawn !== null) {
+          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
+          btn.drawn = null;
+        }
+        return;
+      }
+      const drawn = `stat ${stat.label} ${stat.value}`;
+      if (btn.drawn === drawn) return;
+      await deck.fillKeyBuffer(btn.index, await renderStat({ ...btn, ...stat }), { format: "rgba" });
+      btn.drawn = drawn;
+    })
+  );
+}
+
 async function refresh(deck, buttons, slots) {
   const sessions = await getLiveSessions();
   assignSlots(sessions, slots);
@@ -144,6 +173,7 @@ async function refresh(deck, buttons, slots) {
       btn.assigned = session ?? null;
 
       if (!session) {
+        btn.renderParams = null;
         if (btn.drawn !== null) {
           await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
           btn.drawn = null;
@@ -155,23 +185,58 @@ async function refresh(deck, buttons, slots) {
       // basename — each a fallback for when the one before it isn't
       // available yet (e.g. aiTitle hasn't been generated this early in a
       // session) or a future Claude Code version changes format.
-      const label = session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
+      //
+      // clearedEmpty skips that whole chain: /clear reuses the transcript
+      // file, so a title found there would be the pre-clear one, and name/cwd
+      // would look like a real answer when the honest one is "nothing yet".
+      const label = session.clearedEmpty
+        ? ""
+        : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
 
-      // Skip the re-encode when nothing visible changed — most polls are
-      // no-ops once a board has settled.
       const accent = accentFor(session.folder);
       const project = session.folder.split("/").filter(Boolean).pop() ?? "";
       const progress = session.progress;
-      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${label}`;
+      // Cached every poll (not just on change) so the pulse loop below can
+      // redraw a requires_action key between polls without re-deriving it
+      // from a fresh getLiveSessions() call.
+      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context };
+
+      // Skip the re-encode when nothing visible changed — most polls are
+      // no-ops once a board has settled.
+      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label}`;
       if (btn.drawn === drawn) return;
-      await deck.fillKeyBuffer(
-        btn.index,
-        await renderKey({ ...btn, state: session.state, label, accent, project, progress }),
-        { format: "rgba" }
-      );
+      await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...btn.renderParams }), { format: "rgba" });
       btn.drawn = drawn;
     })
   );
+}
+
+// Flashes every requires_action key between its normal red and a brighter
+// red — the one state that's actually blocked on you, so the one worth
+// catching your eye. Runs on its own faster tick alongside the main poll
+// rather than inside it: `refresh` only redraws on change, but a pulse must
+// redraw on a fixed beat regardless. `btn.drawn` is left alone so the next
+// `refresh` still recognises a steady frame as unchanged.
+async function pulse(deck, buttons, isStatsMode, isDisconnected) {
+  let bright = false;
+  while (!isDisconnected()) {
+    bright = !bright;
+    if (!isStatsMode()) {
+      try {
+        await Promise.all(
+          buttons
+            .filter((btn) => btn.renderParams?.state === "requires_action")
+            .map(async (btn) => {
+              const buf = await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
+              await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
+            })
+        );
+      } catch (err) {
+        console.error("pulse failed:", err.message);
+      }
+    }
+    await new Promise((r) => setTimeout(r, PULSE_MS));
+  }
 }
 
 async function run() {
@@ -197,19 +262,45 @@ async function run() {
   const slots = new Array(buttons.length).fill(null);
 
   let disconnected = false;
+  // Toggled by pressing the usage key; the key itself keeps rendering the
+  // same either way — it's the 14 session buttons that switch content.
+  let statsMode = false;
   deck.on("error", (err) => {
     console.error("Stream Deck error:", err);
     disconnected = true;
   });
   deck.on("down", (control) => {
     if (control.type !== "button") return;
+    if (control.index === usageButton.index) {
+      statsMode = !statsMode;
+      return;
+    }
+    if (statsMode) return; // stat tiles aren't clickable
     const btn = buttons[control.index];
     if (btn?.assigned) focusWindow(btn.assigned.folder);
   });
 
+  // Runs alongside the poll loop below, not inside it — it needs a much
+  // faster beat than the 2s poll to read as a pulse.
+  pulse(deck, buttons, () => statsMode, () => disconnected);
+
   while (!disconnected) {
     try {
-      await refresh(deck, buttons, slots);
+      if (statsMode) {
+        // Top-left pair: time left in each rate-limit window, ahead of the
+        // all-time totals — these change by the hour/day, the totals barely
+        // move. Session in hours (it resets within a day), week in days.
+        const { sessionResetsAt, weekResetsAt } = await getUsage();
+        const sessionHours = hoursUntil(sessionResetsAt);
+        const weekDays = daysUntil(weekResetsAt);
+        const resetTiles = [
+          { label: "Session reset", value: sessionHours === null ? "—" : `${sessionHours}h` },
+          { label: "Week reset", value: weekDays === null ? "—" : `${weekDays}d` },
+        ];
+        await refreshStats(deck, buttons, [...resetTiles, ...(await getStats())]);
+      } else {
+        await refresh(deck, buttons, slots);
+      }
       await drawUsage(deck, usageButton);
     } catch (err) {
       console.error("refresh failed:", err.message);

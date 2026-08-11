@@ -9,7 +9,7 @@ const run = promisify(execFile);
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const TTL_MS = 60_000;
 
-let cache = { at: 0, value: { session: null, week: null } };
+let cache = { at: 0, value: { session: null, week: null, sessionResetsAt: null, weekResetsAt: null } };
 let lastError = null;
 
 async function accessToken() {
@@ -17,11 +17,25 @@ async function accessToken() {
   return JSON.parse(stdout).claudeAiOauth?.accessToken ?? null;
 }
 
-/** Raw response → the two percentages the key shows. */
+/** Raw response → the two percentages the key shows, plus when each window turns over. */
 export function parseUsage(json) {
   const pct = (w) => (typeof w?.utilization === "number" ? w.utilization : null);
-  return { session: pct(json?.five_hour), week: pct(json?.seven_day) };
+  return {
+    session: pct(json?.five_hour),
+    week: pct(json?.seven_day),
+    sessionResetsAt: json?.five_hour?.resets_at ?? null,
+    weekResetsAt: json?.seven_day?.resets_at ?? null,
+  };
 }
+
+/** An ISO timestamp -> whole units remaining until it, floored at 0 for an already-passed reset. */
+function until(iso, unitMs, now) {
+  if (!iso) return null;
+  return Math.max(0, Math.ceil((Date.parse(iso) - now) / unitMs));
+}
+
+export const daysUntil = (iso, now = Date.now()) => until(iso, 86_400_000, now);
+export const hoursUntil = (iso, now = Date.now()) => until(iso, 3_600_000, now);
 
 export async function fetchUsage() {
   const token = await accessToken();

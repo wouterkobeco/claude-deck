@@ -20,7 +20,7 @@ non-trivial logic gets a case appended to the matching check, or a new
 
 ## Architecture
 
-A single polling daemon, ~750 lines across four modules. Every 2s it rebuilds
+A single polling daemon, ~950 lines across six modules. Every 2s it rebuilds
 the whole board from disk; there is no event stream and no persisted state.
 
 ```
@@ -35,16 +35,48 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - `src/sessions.mjs` — the only reader of Claude Code's state. Joins the
   session registry against open VS Code workspace folders (a session with no
   local window is dropped), then enriches with `aiTitle` (tail-scanned from the
-  transcript jsonl) and task progress. Every file read is wrapped in try/catch
+  transcript jsonl), task progress, and context usage. Every file read is wrapped in try/catch
   that skips rather than throws: these files are written by another process and
-  a poll can land mid-write.
+  a poll can land mid-write. `readLatestAiTitle` also stops that scan at the
+  most recent `/clear` — see the invariant below.
 - `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`
   and `accentFor` for the checks; the `import.meta.url === argv[1]` guard at the
-  bottom is what keeps importing it from starting a daemon.
+  bottom is what keeps importing it from starting a daemon. Also owns the
+  session/stats view toggle (`statsMode`, local to `run()`) — pressing the
+  usage key flips it; the other 14 buttons redraw as sessions or stat tiles
+  depending on which is current. The stats board's top-left pair ("Session
+  reset in" / "Week reset in") isn't from stats.mjs — it's `usage.mjs`'s
+  `sessionResetsAt`/`weekResetsAt` reduced to hours/days, prepended in
+  `index.mjs` because they change by the hour/day while the all-time totals
+  barely move.
+- **`/clear` reuses the transcript file.** It's written as an ordinary line
+  (`<command-name>/clear</command-name>`) into the same `.jsonl`, not a new
+  file, so a naive backward scan for `aiTitle` would keep surfacing the
+  pre-clear summary. `readLatestAiTitle` stops at the most recent `/clear`
+  instead; if nothing's been said since, it reports `clearedEmpty: true` and
+  `index.mjs` shows a blank body rather than falling back to the session name
+  or cwd — those would look like a real answer when the honest one is
+  "nothing yet".
+- **Requires-action keys pulse.** `pulse()` in `index.mjs` is a second loop
+  alongside the main poll, ticking every `PULSE_MS` (400ms) — the 2s poll is
+  far too slow to read as animation. It redraws only `requires_action` keys,
+  reusing `btn.renderParams` (cached every poll in `refresh()`, not just on
+  change) rather than re-deriving from a fresh session read. It never touches
+  `btn.drawn`, so the next `refresh()` still recognises a steady frame as
+  unchanged and leaves the button alone.
 - `src/render.mjs` — builds an SVG string per key and rasterizes with sharp.
   Pure: takes geometry + data, returns a buffer. Text fitting is hand-rolled
   character-width estimation, so layout changes need `render-check` looked at,
   not just run.
+- `src/usage.mjs` — the two rate-limit windows for the bottom-right key. These
+  numbers exist only server-side, so it reads the CLI's own OAuth token from the
+  login keychain and asks the API, cached 60s. The only outbound network call in
+  the project, and the only credential it touches.
+- `src/stats.mjs` — all-time stats board (favorite model, total tokens,
+  streaks, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
+  validated against a real screenshot of the source tool's own output (see the
+  pinned `formatDuration` case in `stats-check`); don't change the formatting
+  helpers without re-checking against a real cache file.
 - `src/vscode-state.mjs` — best-effort reader of VS Code's `state.vscdb` via the
   `sqlite3` CLI, to find a file the target window already has open. Reads an
   undocumented internal format, so *every* failure path returns `null` and the
@@ -60,9 +92,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - **Redraw is diffed** on the `btn.drawn` signature string in `refresh()`. Any
   new visual input must be added to that string or it will not appear until
   something else changes.
-- **Read-only, zero-install.** No hooks, no `settings.json` writes, no config
-  file, no permissions. The daemon only ever reads `~/.claude/` and VS Code's
-  storage. An earlier hook-based version was deleted; don't reintroduce one.
+- **Read-only, near-zero-install.** No hooks, no `settings.json` writes, no
+  config file. The daemon itself only reads — from `~/.claude/`, VS Code's
+  storage, and the usage endpoint. An earlier hook-based version was deleted;
+  don't reintroduce one.
+- **One install step, in the status line.** Context usage is the exception to
+  the above: Claude Code hands a session's context percentage to the status
+  line and nowhere else, so `~/.claude/statusline-command.sh` writes it to
+  `~/.claude/ctx/<session id>.json` for the daemon to read. That block is
+  quoted in `README.md`. If a machine has no status line, or the block is
+  dropped, the gauge simply doesn't draw — never make a missing file an error.
+  Don't be tempted by the transcript's `usage` totals instead: the percentage
+  needs the model's window size (1M on some, 200k on others), which the
+  transcript doesn't record.
 - **Window focus must not disturb the window.** The current route (open a file
   the window already has open) was chosen because `code -r`, `open -a Code
   <folder>` and `vscode://` all either replace a window's content or spawn an

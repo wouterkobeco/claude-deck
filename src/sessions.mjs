@@ -6,6 +6,7 @@ const CLAUDE_DIR = join(homedir(), ".claude");
 const IDE_DIR = join(CLAUDE_DIR, "ide");
 const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
 const TASKS_DIR = join(CLAUDE_DIR, "tasks");
+const CTX_DIR = join(CLAUDE_DIR, "ctx");
 const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const TITLE_TAIL_BYTES = 65536;
 
@@ -49,14 +50,26 @@ function transcriptPathFor({ cwd, sessionId }) {
   return join(PROJECTS_DIR, cwd.replace(/[/.]/g, "-"), `${sessionId}.jsonl`);
 }
 
+// /clear writes a plain command line into the same transcript rather than
+// starting a new file, so a naive backward scan for aiTitle would keep
+// surfacing the pre-clear summary as if the fresh context were still about
+// that. This is the literal tag Claude Code writes for it.
+const CLEAR_MARKER = "<command-name>/clear</command-name>";
+
 /**
  * Claude Code writes an `aiTitle` field (an AI-generated summary, the same
  * string VS Code's terminal list shows) onto transcript lines repeatedly as
  * a session progresses. Reading the whole transcript to find the latest one
  * doesn't scale, so this reads only the last chunk of the file and scans
- * backwards for the most recent occurrence.
+ * backwards for the most recent occurrence — stopping at the most recent
+ * `/clear`, if any, since a title from before it describes a conversation
+ * that's gone.
+ *
+ * `clearedEmpty` is true when a `/clear` was crossed before any aiTitle was
+ * found: nothing has happened in the session since, as far as this tail
+ * window can see.
  */
-async function readLatestAiTitle(transcriptPath) {
+export async function readLatestAiTitle(transcriptPath) {
   let fh;
   try {
     fh = await open(transcriptPath, "r");
@@ -66,17 +79,19 @@ async function readLatestAiTitle(transcriptPath) {
     const { bytesRead } = await fh.read({ buffer, position: start });
     const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
-      if (!lines[i].includes("aiTitle")) continue;
-      try {
-        const obj = JSON.parse(lines[i]);
-        if (typeof obj.aiTitle === "string" && obj.aiTitle) return obj.aiTitle;
-      } catch {
-        // truncated line at the start of the tail slice — keep scanning
+      if (lines[i].includes("aiTitle")) {
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (typeof obj.aiTitle === "string" && obj.aiTitle) return { aiTitle: obj.aiTitle, clearedEmpty: false };
+        } catch {
+          // truncated line at the start of the tail slice — keep scanning
+        }
       }
+      if (lines[i].includes(CLEAR_MARKER)) return { aiTitle: null, clearedEmpty: true };
     }
-    return null;
+    return { aiTitle: null, clearedEmpty: false };
   } catch {
-    return null;
+    return { aiTitle: null, clearedEmpty: false };
   } finally {
     await fh?.close();
   }
@@ -146,6 +161,27 @@ async function readTaskProgress(sessionId) {
 }
 
 /**
+ * Context usage for a session, as a percentage of that model's window.
+ *
+ * Claude Code keeps this number to itself — it isn't in the registry or the
+ * transcript — but it hands it to the status line on every render, so
+ * ~/.claude/statusline-command.sh drops it here for us. Returns null when the
+ * status line hasn't written for this session (or isn't installed), which
+ * simply leaves the gauge off that key.
+ *
+ * A stale file is fine: context can't change while a session sits idle, and an
+ * active session rewrites this on every render.
+ */
+async function readContext(sessionId) {
+  try {
+    const { context } = JSON.parse(await readFile(join(CTX_DIR, `${sessionId}.json`), "utf8"));
+    return typeof context === "number" ? context : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Live local sessions: interactive, process still running, and working in a
  * folder some open VS Code window has in its workspace.
  *
@@ -177,8 +213,9 @@ export async function getLiveSessions() {
   return Promise.all(
     matched.map(async (s) => ({
       ...s,
-      aiTitle: await readLatestAiTitle(transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })),
+      ...(await readLatestAiTitle(transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }))),
       progress: await readTaskProgress(s.session_id),
+      context: await readContext(s.session_id),
     }))
   );
 }

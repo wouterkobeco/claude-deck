@@ -15,7 +15,7 @@ function escapeXml(s) {
 
 /** Greedily wraps on spaces/hyphens (keeping the hyphen with the prior chunk); hard-breaks anything still too long. */
 function wrapLabel(label, width, fontSize) {
-  const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.58)));
+  const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.6)));
   const words = label.split(/(?<=[\s-])/);
 
   const lines = [];
@@ -47,14 +47,26 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress }) {
-  const color = STATE_COLORS[state] ?? STATE_COLORS.idle;
-  // The bar is wider when it carries the project name than when it's a plain stripe.
-  const barHeight = accent ? Math.round(height * (project ? 0.16 : 0.12)) : 0;
-  const capSize = Math.round(barHeight * 0.65);
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse }) {
+  // requires_action is the one state worth flashing — it's the only one
+  // that's actually blocked on you, so it's the only one that should chase
+  // your eye across the room.
+  const color = pulse && state === "requires_action" ? "#ff5252" : STATE_COLORS[state] ?? STATE_COLORS.idle;
+  const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white.
   const caps = project ? fitCaps(project, width, capSize) : "";
-  const fontSize = Math.round(height * 0.21);
+  // Title zone: 3px of plain accent-coloured pad, an 8px row for the caps
+  // text, a 2px dark border on the bottom edge only — 13px fixed, not derived
+  // from capSize. The gauge, when known, eats that border rather than adding
+  // its own height.
+  const titleTopPad = 1;
+  const titleBorder = 2;
+  const titleTextRow = 8;
+  const titleHeight = project
+    ? titleTopPad + titleBorder + titleTextRow + titleBorder
+    : Math.round(height * 0.12);
+  const barHeight = accent ? titleHeight : 0;
+  const fontSize = Math.round(height * 0.19);
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
   const progressSize = Math.round(height * 0.19);
@@ -62,11 +74,13 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const footHeight = progress ? progressSize * 1.15 : 0;
   const maxLines = progress ? 3 : 4;
 
-  let lines = wrapLabel(label, width, fontSize);
+  // Lowercase body against the header's uppercase caps, so the two rows read
+  // as distinct typographic levels rather than fighting for the same weight.
+  let lines = wrapLabel(label.toLowerCase(), width, fontSize);
   if (lines.length > maxLines) {
     // aiTitle can be a full sentence; anything past what the key can show
     // vertically gets cut, with the last visible line ellipsized.
-    const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.58)));
+    const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.6)));
     lines = lines.slice(0, maxLines);
     const last = lines[maxLines - 1];
     lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
@@ -85,15 +99,26 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="${color}" />
-      ${accent ? `<rect width="${width}" height="${barHeight}" fill="${accent}" />` : ""}
+      ${accent ? `<rect width="${width}" height="${titleHeight}" fill="${accent}" />` : ""}
+      ${
+        // The lower border doubles as the context gauge when known — plain
+        // dark line otherwise. Keeps the header a constant height either way.
+        project
+          ? typeof context === "number"
+            ? `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000cc" />
+               <rect y="${titleHeight - titleBorder}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
+                     height="${titleBorder}" fill="${usageColor(context)}" />`
+            : `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000aa" />`
+          : ""
+      }
       ${
         caps
-          ? `<text x="50%" y="${barHeight / 2}" font-family="sans-serif" font-size="${capSize}"
+          ? `<text x="50%" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
                    font-weight="bold" letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
           : ""
       }
-      <text font-family="sans-serif" font-size="${fontSize}" fill="#ffffff"
+      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
       ${
         progress
@@ -113,9 +138,12 @@ export async function renderKey({ width, height, state, label, accent, project, 
     .toBuffer();
 }
 
-/** Green under half, amber past that, red once a window is nearly spent. */
+/**
+ * Green under half, amber past that, red once a window is nearly spent. Bright
+ * enough to read as a few pixels sitting on a light accent colour.
+ */
 function usageColor(pct) {
-  return pct >= 90 ? "#c62828" : pct >= 70 ? "#e6a700" : "#2e7d32";
+  return pct >= 85 ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
 }
 
 /**
@@ -153,6 +181,42 @@ export async function renderUsage({ width, height, session, week }) {
       <rect width="${width}" height="${height}" fill="#1b1b1b" />
       <rect y="${half - 1}" width="${width}" height="1" fill="#ffffff22" />
       ${body}
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+/**
+ * One tile of the all-time stats board (shown in place of the session grid
+ * while that view is toggled on). A small caps label over a big value,
+ * value wrapped to at most 2 lines.
+ */
+export async function renderStat({ width, height, label, value }) {
+  const capSize = Math.round(height * 0.1);
+  const caps = fitCaps(label, width, capSize);
+  const valueSize = Math.round(height * 0.19);
+
+  let lines = wrapLabel(value, width, valueSize);
+  if (lines.length > 2) {
+    const maxChars = Math.max(3, Math.floor(width / (valueSize * 0.6)));
+    lines = lines.slice(0, 2);
+    lines[1] = lines[1].slice(0, Math.max(1, maxChars - 1)) + "…";
+  }
+  const lineHeight = valueSize * 1.1;
+  const valueTop = height * 0.62;
+  const startY = valueTop - ((lines.length - 1) * lineHeight) / 2;
+  const tspans = lines
+    .map((line, i) => `<tspan x="50%" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
+    .join("");
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="#1b1b1b" />
+      <text x="50%" y="${height * 0.22}" font-family="sans-serif" font-size="${capSize}"
+            font-weight="bold" letter-spacing="0.5" fill="#ffffff99" text-anchor="middle"
+            dominant-baseline="middle">${escapeXml(caps)}</text>
+      <text font-family="sans-serif" font-size="${valueSize}" font-weight="600" fill="#ffab70"
+            text-anchor="middle" dominant-baseline="middle">${tspans}</text>
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
