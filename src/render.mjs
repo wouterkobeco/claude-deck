@@ -1,41 +1,31 @@
 import sharp from "sharp";
 
+const BUSY = "#2e7d32"; // green — actively working
+
 // Keyed by the session registry's own status vocabulary.
 const STATE_COLORS = {
-  busy: "#2e7d32", // green — actively working
+  busy: BUSY,
+  // `shell` is "turn over, but a background shell it started is still
+  // running" — work in flight either way, so it reads as busy rather than as
+  // its own colour. What it isn't is the foot dot's job, below.
+  shell: BUSY,
   requires_action: "#c62828", // red — blocked on you
   waiting: "#e6a700", // amber — waiting on input
-  shell: "#1565c0", // blue — dropped to a shell
   idle: "#555555", // gray
 };
+
+const SHELL_DOT = "#1565c0"; // blue — a background shell is still running
 
 function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }
 
-/** Greedily wraps on spaces/hyphens (keeping the hyphen with the prior chunk); hard-breaks anything still too long. */
+/** Splits into fixed-width chunks — no word-boundary awareness, breaks mid-word. */
 function wrapLabel(label, width, fontSize) {
   const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.6)));
-  const words = label.split(/(?<=[\s-])/);
-
   const lines = [];
-  let current = "";
-  for (const w of words) {
-    if (current && (current + w).trim().length > maxChars) {
-      lines.push(current.trim());
-      current = w;
-    } else {
-      current += w;
-    }
-  }
-  if (current.trim()) lines.push(current.trim());
-
-  return lines.flatMap((line) => {
-    if (line.length <= maxChars) return [line];
-    const chunks = [];
-    for (let i = 0; i < line.length; i += maxChars) chunks.push(line.slice(i, i + maxChars));
-    return chunks;
-  });
+  for (let i = 0; i < label.length; i += maxChars) lines.push(label.slice(i, i + maxChars));
+  return lines;
 }
 
 /** Uppercases a project name and truncates it to what fits the accent bar. */
@@ -46,7 +36,7 @@ function fitCaps(project, width, fontSize) {
   return upper.length <= maxChars ? upper : upper.slice(0, maxChars - 1) + "…";
 }
 
-/** Renders a solid-color key with a centered, word-wrapped label. Returns a raw RGBA buffer. */
+/** Renders a solid-color key with a centered, fixed-width-wrapped label. Returns a raw RGBA buffer. */
 export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedCount }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
@@ -70,9 +60,12 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
   const progressSize = Math.round(height * 0.19);
-  // The count needs a line of its own, so the title gives one up for it.
-  const footHeight = progress ? progressSize * 1.15 : 0;
-  const maxLines = progress ? 3 : 4;
+  // The foot row is reserved by anything that lives in it, and the title gives
+  // up a line for it either way. Counter right, shell dot left — they share
+  // the row rather than competing for it.
+  const shellDot = state === "shell";
+  const footHeight = progress || shellDot ? progressSize * 1.15 : 0;
+  const maxLines = progress || shellDot ? 3 : 4;
 
   // Nested-session indicator: a column of small squares in the left margin,
   // one per nested (worktree) session sharing this button's project folder,
@@ -150,10 +143,15 @@ export async function renderKey({ width, height, state, label, accent, project, 
         progress
           ? `<rect y="${height - 3}" width="${width}" height="3" fill="#00000055" />
              <rect y="${height - 3}" width="${done}" height="3" fill="#ffffffcc" />
-             <text x="50%" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
-                   font-size="${progressSize}" fill="#ffffffdd" text-anchor="middle"
+             <text x="${width - 5}" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
+                   font-size="${progressSize}" fill="#ffffffdd" text-anchor="end"
                    dominant-baseline="middle">${progress.current}/${progress.total}</text>`
           : ""
+      }
+      ${
+        // Drawn last so it sits on top of the progress bar's top pixel rather
+        // than under it.
+        shellDot ? `<circle cx="8" cy="${height - 5}" r="3" fill="${SHELL_DOT}" />` : ""
       }
     </svg>`;
 
