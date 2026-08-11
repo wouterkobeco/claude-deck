@@ -29,6 +29,7 @@ const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292
 // jumping to the end.
 const folderOrder = new Map();
 const sessionOrder = new Map();
+const nestedOrder = new Map();
 let arrivals = 0;
 
 export function accentFor(folder) {
@@ -104,26 +105,59 @@ async function focusWindow(folder) {
 // that insert is the only movement — projects keep their relative order for
 // the daemon's lifetime, and within a project sessions stay in arrival order.
 // Nothing re-sorts by activity.
-export function assignSlots(sessions, slots) {
-  for (const s of sessions) {
+export function assignSlots(sessions, slots, nestedBySlot = []) {
+  const real = sessions.filter((s) => !s.nested);
+  const nested = sessions.filter((s) => s.nested);
+
+  for (const s of real) {
     if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
+  for (const s of nested) {
+    if (!nestedOrder.has(s.session_id)) nestedOrder.set(s.session_id, arrivals++);
+  }
 
-  const live = new Set(sessions.map((s) => s.session_id));
+  const live = new Set(real.map((s) => s.session_id));
   for (const id of [...sessionOrder.keys()]) {
     if (!live.has(id)) sessionOrder.delete(id);
   }
+  const liveNested = new Set(nested.map((s) => s.session_id));
+  for (const id of [...nestedOrder.keys()]) {
+    if (!liveNested.has(id)) nestedOrder.delete(id);
+  }
 
-  const ordered = [...sessions].sort(
+  const ordered = [...real].sort(
     (a, b) =>
       folderOrder.get(a.folder) - folderOrder.get(b.folder) ||
       sessionOrder.get(a.session_id) - sessionOrder.get(b.session_id)
   );
 
   slots.fill(null);
-  ordered.slice(0, slots.length).forEach((s, i) => {
+  nestedBySlot.length = slots.length;
+  nestedBySlot.fill(null);
+
+  const visible = ordered.slice(0, slots.length);
+  const hasAnyNested = nested.length > 0;
+
+  visible.forEach((s, i) => {
     slots[i] = s.session_id;
+    // Only the first button of a project's contiguous block carries its
+    // nested (worktree) sessions, so the indicator and double-press trigger
+    // show in exactly one place per project. Nested sessions are sorted by
+    // their own first-seen order (nestedOrder), not whatever order this
+    // particular poll happened to report them in.
+    const isPrimary = i === 0 || visible[i - 1].folder !== s.folder;
+    if (isPrimary) {
+      const folderNested = nested
+        .filter((n) => n.folder === s.folder)
+        .sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
+      // If there are nested sessions somewhere but not for this folder,
+      // leave nestedBySlot[i] as null. If there are no nested sessions
+      // anywhere, all primary buttons get an empty array.
+      if (!hasAnyNested || folderNested.length > 0) {
+        nestedBySlot[i] = folderNested;
+      }
+    }
   });
 }
 

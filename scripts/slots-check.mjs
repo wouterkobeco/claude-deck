@@ -4,7 +4,7 @@
 // Run: node scripts/slots-check.mjs
 import { assignSlots } from "../src/index.mjs";
 
-const s = (id, folder) => ({ session_id: id, folder });
+const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
   const a = JSON.stringify(got);
   const b = JSON.stringify(want);
@@ -65,5 +65,35 @@ eq(slots, ["a9", "b1", null, null, null], "returning project keeps its place");
 const small = new Array(2).fill(null);
 assignSlots([s("a1", A), s("a2", A), s("b1", B)], small);
 eq(small, ["a1", "a2"], "full board drops extras");
+
+// A nested (worktree) session never claims its own slot, and attaches to
+// the first (earliest-arrived) real session's button in its folder's block.
+const nestedBySlot = new Array(5).fill(null);
+assignSlots([s("a1", A), s("a2", A), s("w1", A, true), s("b1", B)], slots, nestedBySlot);
+eq(slots, ["a1", "a2", "b1", null, null], "nested session claims no slot");
+eq(nestedBySlot[0], [{ session_id: "w1", folder: A, nested: true }], "nested session attaches to the block's first button");
+eq(nestedBySlot[1], null, "sibling real session in the same block gets no nested list");
+eq(nestedBySlot[2], null, "unrelated project's button gets no nested list");
+
+// A folder with no nested sessions at all: its primary button gets an empty
+// list, not null — callers can treat "primary button" and "has a list" the
+// same way without a null check.
+const nestedBySlot2 = new Array(5).fill(null);
+assignSlots([s("a1", A)], slots, nestedBySlot2);
+eq(nestedBySlot2[0], [], "primary button with no nested sessions gets an empty list");
+
+// Nested sessions keep first-seen order too, same as real sessions and
+// folders do (CLAUDE.md: "ordering is first-seen, never activity") —
+// independent of whatever order a given getLiveSessions() poll reports them
+// in.
+const nestedBySlot3 = new Array(5).fill(null);
+assignSlots([s("a1", A), s("w1", A, true), s("w2", A, true)], slots, nestedBySlot3);
+eq(nestedBySlot3[0].map((n) => n.session_id), ["w1", "w2"], "nested sessions ordered first-seen");
+assignSlots([s("a1", A), s("w2", A, true), s("w1", A, true)], slots, nestedBySlot3);
+eq(
+  nestedBySlot3[0].map((n) => n.session_id),
+  ["w1", "w2"],
+  "nested session order survives being reported in a different order"
+);
 
 console.log("OK: project grouping");
