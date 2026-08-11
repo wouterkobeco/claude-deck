@@ -14,6 +14,28 @@ const eq = (got, want, label) => {
   }
 };
 
+import { matchFolder } from "../src/sessions.mjs";
+
+// matchFolder: an exact match beats being nested under another open folder —
+// a worktree opened as its own VS Code window is a real session, not nested.
+eq(matchFolder("/proj/sub", ["/proj", "/proj/sub"]), { folder: "/proj/sub", nested: false }, "exact match wins");
+
+// Among ancestor-only matches, the most specific (longest) folder wins —
+// fixes the old .find()'s arbitrary first-match behavior.
+eq(
+  matchFolder("/proj/sub/deep", ["/proj", "/proj/sub"]),
+  { folder: "/proj/sub", nested: true },
+  "most specific ancestor wins"
+);
+
+// No open folder contains this cwd at all.
+eq(matchFolder("/elsewhere", ["/proj"]), null, "no match");
+
+// A trailing slash on cwd (never seen from Claude Code's own registry, but
+// cheap to guard) must still resolve as an exact match, not fall through to
+// a spurious "nested under itself" ancestor match.
+eq(matchFolder("/proj/", ["/proj"]), { folder: "/proj", nested: false }, "trailing slash still matches exactly");
+
 const A = "/projects/alpha";
 const B = "/projects/beta";
 const slots = new Array(5).fill(null);

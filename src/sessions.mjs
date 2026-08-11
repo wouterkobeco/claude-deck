@@ -33,6 +33,26 @@ function isUnder(path, folder) {
   return path === folder || path.startsWith(folder.endsWith("/") ? folder : folder + "/");
 }
 
+/**
+ * Matches a session's cwd to the open VS Code window it belongs to. An exact
+ * match always wins over an ancestor match — a worktree opened as its own
+ * window is a real session, not a nested one. Among ancestor-only matches,
+ * the most specific (longest) folder wins, so a session nested several
+ * levels deep attaches to its closest open ancestor rather than whichever
+ * folder happened to come first in lock-file order.
+ */
+export function matchFolder(cwd, folders) {
+  // isUnder already tolerates a trailing slash on `folder`; strip one from
+  // `cwd` too so an incidental trailing slash there can't make an exact
+  // match miss and fall through to being misclassified as nested.
+  const target = cwd.length > 1 && cwd.endsWith("/") ? cwd.slice(0, -1) : cwd;
+  if (folders.includes(target)) return { folder: target, nested: false };
+  const ancestors = folders.filter((f) => isUnder(target, f));
+  if (ancestors.length === 0) return null;
+  const folder = ancestors.reduce((best, f) => (f.length > best.length ? f : best));
+  return { folder, nested: true };
+}
+
 function isAlive(pid) {
   try {
     process.kill(pid, 0); // signal 0 only tests for existence
@@ -234,6 +254,10 @@ async function readContext(sessionId) {
  * exact case as a plain completed turn, same as any other idle session, so
  * without this a session that just asked you for a permission rule reads on
  * the deck as no different from one that's simply caught up.
+ *
+ * A session whose cwd is nested inside — but not equal to — the matched
+ * window's folder (a background worktree checkout) is flagged `nested:
+ * true`; index.mjs keeps those off the board's own slots.
  */
 export async function getLiveSessions() {
   const [registry, locks] = await Promise.all([readJsonFiles(SESSIONS_DIR), readJsonFiles(IDE_DIR, [".lock"])]);
@@ -244,12 +268,13 @@ export async function getLiveSessions() {
   for (const s of registry) {
     if (s.kind !== "interactive" || !s.sessionId || !s.cwd || !s.pid) continue;
     if (!isAlive(s.pid)) continue;
-    const folder = folders.find((f) => isUnder(s.cwd, f));
-    if (!folder) continue; // no live local VS Code window for this session
+    const match = matchFolder(s.cwd, folders);
+    if (!match) continue; // no live local VS Code window for this session
     matched.push({
       session_id: s.sessionId,
       cwd: s.cwd,
-      folder,
+      folder: match.folder,
+      nested: match.nested,
       name: s.name ?? null,
       state: s.status ?? "idle",
       ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),
