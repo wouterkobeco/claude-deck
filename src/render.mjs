@@ -7,7 +7,7 @@ const STATE_COLORS = {
   busy: BUSY,
   // `shell` is "turn over, but a background shell it started is still
   // running" — work in flight either way, so it reads as busy rather than as
-  // its own colour. What it isn't is the foot dot's job, below.
+  // its own colour. What it isn't is the margin square's job, below.
   shell: BUSY,
   requires_action: "#c62828", // red — blocked on you
   waiting: "#e6a700", // amber — waiting on input
@@ -36,7 +36,7 @@ function fitCaps(project, width, fontSize) {
   return upper.length <= maxChars ? upper : upper.slice(0, maxChars - 1) + "…";
 }
 
-/** Renders a solid-color key with a centered, fixed-width-wrapped label. Returns a raw RGBA buffer. */
+/** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
 export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedCount }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
@@ -60,31 +60,37 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
   const progressSize = Math.round(height * 0.19);
-  // The foot row is reserved by anything that lives in it, and the title gives
-  // up a line for it either way. Counter right, shell dot left — they share
-  // the row rather than competing for it.
-  const shellDot = state === "shell";
-  const footHeight = progress || shellDot ? progressSize * 1.15 : 0;
-  const maxLines = progress || shellDot ? 3 : 4;
+  const footHeight = progress ? progressSize * 1.15 : 0;
+  const maxLines = progress ? 3 : 4;
 
-  // Nested-session indicator: a column of small squares in the left margin,
-  // one per nested (worktree) session sharing this button's project folder,
-  // so background work hidden behind the window still shows at a glance.
-  // When more squares would fit than the column has vertical room for, the
-  // last visible one flashes (driven by `pulse`) instead of being dropped.
+  // Left-margin indicator column: a blue square when a background shell is
+  // still running, then one white square per nested (worktree) session
+  // sharing this button's project folder — so either kind of hidden
+  // background activity shows at a glance. The margin is always reserved,
+  // whether or not anything is in it, so a key's body text sits at a
+  // consistent left edge across the whole board. When more markers would fit
+  // than the column has vertical room for, the last visible one flashes
+  // (driven by `pulse`) instead of being dropped.
   const squareSize = 4;
   const squarePitch = 5; // squareSize + 1px gap
-  const marginWidth = nestedCount ? 8 : 0;
+  const marginWidth = 8;
   const squaresTop = barHeight + 2;
   const squaresBottom = height - footHeight - 2;
   const maxSquares = Math.max(0, Math.floor((squaresBottom - squaresTop) / squarePitch));
-  const visibleSquares = Math.min(nestedCount ?? 0, maxSquares);
-  const overflowSquare = (nestedCount ?? 0) > maxSquares;
-  const squares = Array.from({ length: visibleSquares }, (_, i) => {
-    const dim = i === visibleSquares - 1 && overflowSquare && !pulse;
-    return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareSize}" height="${squareSize}"
-                  fill="#ffffff${dim ? "33" : "ee"}" />`;
-  }).join("");
+  const shellDot = state === "shell";
+  const totalMarkers = (shellDot ? 1 : 0) + (nestedCount ?? 0);
+  const visibleMarkers = Math.min(totalMarkers, maxSquares);
+  const overflowMarker = totalMarkers > maxSquares;
+  // Shell marker first (it's about this session itself), nested markers
+  // after (children of it) — trimmed to what actually fits.
+  const markers = [...(shellDot ? [true] : []), ...Array(nestedCount ?? 0).fill(false)].slice(0, visibleMarkers);
+  const squares = markers
+    .map((isShell, i) => {
+      const dim = i === visibleMarkers - 1 && overflowMarker && !pulse;
+      const fill = isShell ? `${SHELL_DOT}${dim ? "55" : ""}` : `#ffffff${dim ? "33" : "ee"}`;
+      return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareSize}" height="${squareSize}" fill="${fill}" />`;
+    })
+    .join("");
 
   // The label's wrap width and left edge both make room for the margin
   // column above — not just drawn on top of it — so a long line can't run
@@ -136,22 +142,17 @@ export async function renderKey({ width, height, state, label, accent, project, 
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
           : ""
       }
-      <text font-family="Courier New" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
+      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
             text-anchor="start" dominant-baseline="middle">${tspans}</text>
       ${squares}
       ${
         progress
           ? `<rect y="${height - 3}" width="${width}" height="3" fill="#00000055" />
              <rect y="${height - 3}" width="${done}" height="3" fill="#ffffffcc" />
-             <text x="${width - 5}" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
-                   font-size="${progressSize}" fill="#ffffffdd" text-anchor="end"
+             <text x="50%" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
+                   font-size="${progressSize}" fill="#ffffffdd" text-anchor="middle"
                    dominant-baseline="middle">${progress.current}/${progress.total}</text>`
           : ""
-      }
-      ${
-        // Centred on the same line as the counter, so the two ends of the foot
-        // row sit level — which also lifts it clear of the progress bar.
-        shellDot ? `<circle cx="11" cy="${height - footHeight / 2 - 2}" r="6" fill="${SHELL_DOT}" />` : ""
       }
     </svg>`;
 
