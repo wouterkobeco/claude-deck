@@ -26,10 +26,12 @@ async function refresh(deck, buttons) {
         if (prev) await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
         return;
       }
-      // Label from the session's own cwd, not the matched workspace folder:
-      // multiple worktree sessions can share one open VS Code window (same
-      // folder), so the folder's basename alone wouldn't tell them apart.
-      const label = session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
+      // Prefer Claude Code's own human-readable session name (the one shown
+      // in VS Code's terminal list) — it's assigned per-session and can
+      // differ from the worktree name. Fall back to the cwd's basename if
+      // the session registry doesn't have an entry (e.g. registry format
+      // changes in a future Claude Code version).
+      const label = session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
       const buf = await renderKey({ ...btn, state: session.state, label });
       await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
     })
