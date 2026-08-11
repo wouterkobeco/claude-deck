@@ -79,8 +79,8 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // so background work hidden behind the window still shows at a glance.
   // When more squares would fit than the column has vertical room for, the
   // last visible one flashes (driven by `pulse`) instead of being dropped.
-  const squareSize = 2;
-  const squarePitch = 3; // squareSize + 1px gap
+  const squareSize = 4;
+  const squarePitch = 5; // squareSize + 1px gap
   const marginWidth = nestedCount ? 8 : 0;
   const squaresTop = barHeight + 2;
   const squaresBottom = height - footHeight - 2;
