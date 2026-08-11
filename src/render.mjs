@@ -71,9 +71,9 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // consistent left edge across the whole board. When more markers would fit
   // than the column has vertical room for, the last visible one flashes
   // (driven by `pulse`) instead of being dropped.
-  const squareWidth = 2;
-  const squareHeight = 4;
-  const squarePitch = 5; // squareHeight + 1px gap
+  const squareWidth = 3;
+  const squareHeight = 6;
+  const squarePitch = 7; // squareHeight + 1px gap
   const marginWidth = 8;
   const squaresTop = barHeight + 2;
   const squaresBottom = height - footHeight - 2;
@@ -111,10 +111,11 @@ export async function renderKey({ width, height, state, label, accent, project, 
     lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
   }
 
-  // Centre the title in what's left between the accent bar and the count.
+  // Top-align the body under the accent bar, regardless of how many lines
+  // there are — a short label sits flush at the top rather than centered in
+  // the leftover space, so every key's text starts at the same height.
   const bodyTop = barHeight;
-  const bodyHeight = height - barHeight - footHeight;
-  const startY = bodyTop + bodyHeight / 2 - ((lines.length - 1) * lineHeight) / 2;
+  const startY = bodyTop + 2 + lineHeight / 2;
   const tspans = lines
     .map((line, i) => `<tspan x="${textLeftX}" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
