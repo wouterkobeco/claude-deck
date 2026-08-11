@@ -49,6 +49,11 @@ eq(
 
 // No open folder contains this cwd at all.
 eq(matchFolder("/elsewhere", ["/proj"]), null, "no match");
+
+// A trailing slash on cwd (never seen from Claude Code's own registry, but
+// cheap to guard) must still resolve as an exact match, not fall through to
+// a spurious "nested under itself" ancestor match.
+eq(matchFolder("/proj/", ["/proj"]), { folder: "/proj", nested: false }, "trailing slash still matches exactly");
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -70,8 +75,12 @@ In `src/sessions.mjs`, add this function near `isUnder` (after its definition, a
  * folder happened to come first in lock-file order.
  */
 export function matchFolder(cwd, folders) {
-  if (folders.includes(cwd)) return { folder: cwd, nested: false };
-  const ancestors = folders.filter((f) => isUnder(cwd, f));
+  // isUnder already tolerates a trailing slash on `folder`; strip one from
+  // `cwd` too so an incidental trailing slash there can't make an exact
+  // match miss and fall through to being misclassified as nested.
+  const target = cwd.length > 1 && cwd.endsWith("/") ? cwd.slice(0, -1) : cwd;
+  if (folders.includes(target)) return { folder: target, nested: false };
+  const ancestors = folders.filter((f) => isUnder(target, f));
   if (ancestors.length === 0) return null;
   const folder = ancestors.reduce((best, f) => (f.length > best.length ? f : best));
   return { folder, nested: true };
@@ -128,12 +137,12 @@ git commit -m "feat: classify sessions nested under (not equal to) a window's fo
 ## Task 2: Nested-aware slot assignment (`src/index.mjs`)
 
 **Files:**
-- Modify: `src/index.mjs:107-128` (`assignSlots`)
+- Modify: `src/index.mjs:30-32` (module-level order maps) and `src/index.mjs:107-128` (`assignSlots`)
 - Test: `scripts/slots-check.mjs` (new cases, appended)
 
 **Interfaces:**
 - Consumes: `s.nested` from Task 1's session shape.
-- Produces: `assignSlots(sessions, slots, nestedBySlot = [])` — `nestedBySlot` is filled in place, same length as `slots`. `nestedBySlot[i]` is `null` for any slot that isn't the first button of its project's block, and the array of that folder's nested sessions (possibly empty) for the slot that is.
+- Produces: `assignSlots(sessions, slots, nestedBySlot = [])` — `nestedBySlot` is filled in place, same length as `slots`. `nestedBySlot[i]` is `null` for any slot that isn't the first button of its project's block, and the array of that folder's nested sessions (possibly empty, ordered first-seen) for the slot that is.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -161,16 +170,47 @@ eq(nestedBySlot[2], null, "unrelated project's button gets no nested list");
 const nestedBySlot2 = new Array(5).fill(null);
 assignSlots([s("a1", A)], slots, nestedBySlot2);
 eq(nestedBySlot2[0], [], "primary button with no nested sessions gets an empty list");
+
+// Nested sessions keep first-seen order too, same as real sessions and
+// folders do (CLAUDE.md: "ordering is first-seen, never activity") —
+// independent of whatever order a given getLiveSessions() poll reports them
+// in.
+const nestedBySlot3 = new Array(5).fill(null);
+assignSlots([s("a1", A), s("w1", A, true), s("w2", A, true)], slots, nestedBySlot3);
+eq(nestedBySlot3[0].map((n) => n.session_id), ["w1", "w2"], "nested sessions ordered first-seen");
+assignSlots([s("a1", A), s("w2", A, true), s("w1", A, true)], slots, nestedBySlot3);
+eq(
+  nestedBySlot3[0].map((n) => n.session_id),
+  ["w1", "w2"],
+  "nested session order survives being reported in a different order"
+);
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npm run slots-check`
-Expected: fails — `nestedBySlot[0]` is `undefined` (the third parameter doesn't exist yet), so `eq` reports a mismatch.
+Expected: fails — with today's 2-argument `assignSlots(sessions, slots)`, the extra `nestedBySlot` argument is simply ignored, so it's never written and still holds its initial `fill(null)` value. `nestedBySlot[0]` stays `null`, and `eq` reports a mismatch against the expected array.
 
 - [ ] **Step 3: Implement**
 
-Replace `src/index.mjs:107-128` (the whole current `assignSlots` function) with:
+First, in `src/index.mjs`, find the module-level order maps (currently around line 30):
+
+```js
+const folderOrder = new Map();
+const sessionOrder = new Map();
+let arrivals = 0;
+```
+
+and add a third map for nested-session arrival order:
+
+```js
+const folderOrder = new Map();
+const sessionOrder = new Map();
+const nestedOrder = new Map();
+let arrivals = 0;
+```
+
+Then replace `src/index.mjs:107-128` (the whole current `assignSlots` function) with:
 
 ```js
 export function assignSlots(sessions, slots, nestedBySlot = []) {
@@ -181,10 +221,17 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
+  for (const s of nested) {
+    if (!nestedOrder.has(s.session_id)) nestedOrder.set(s.session_id, arrivals++);
+  }
 
   const live = new Set(real.map((s) => s.session_id));
   for (const id of [...sessionOrder.keys()]) {
     if (!live.has(id)) sessionOrder.delete(id);
+  }
+  const liveNested = new Set(nested.map((s) => s.session_id));
+  for (const id of [...nestedOrder.keys()]) {
+    if (!liveNested.has(id)) nestedOrder.delete(id);
   }
 
   const ordered = [...real].sort(
@@ -202,9 +249,15 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     slots[i] = s.session_id;
     // Only the first button of a project's contiguous block carries its
     // nested (worktree) sessions, so the indicator and double-press trigger
-    // show in exactly one place per project.
+    // show in exactly one place per project. Nested sessions are sorted by
+    // their own first-seen order (nestedOrder), not whatever order this
+    // particular poll happened to report them in.
     const isPrimary = i === 0 || visible[i - 1].folder !== s.folder;
-    if (isPrimary) nestedBySlot[i] = nested.filter((n) => n.folder === s.folder);
+    if (isPrimary) {
+      nestedBySlot[i] = nested
+        .filter((n) => n.folder === s.folder)
+        .sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
+    }
   });
 }
 ```
@@ -537,6 +590,14 @@ async function refreshNested(deck, buttons, nestedView) {
       const sessionId = nestedView.order[i];
       const session = sessionId ? byId.get(sessionId) : null;
       btn.assigned = null; // nested tiles have no window to focus
+      // pulse() is paused while the overlay shows (see the run() change
+      // below), but the instant it's dismissed, pulse resumes on its own
+      // 400ms tick and reads whatever btn.renderParams already holds —
+      // which, without this, would still be each button's pre-overlay data,
+      // stale by however long the overlay was open. Nulling it here means
+      // pulse's filter (state/nestedCount) finds nothing to redraw until the
+      // next refresh() repopulates it, at most 2s later.
+      btn.renderParams = null;
 
       if (!session) {
         if (btn.drawn !== null) {
