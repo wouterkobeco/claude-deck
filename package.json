@@ -1,0 +1,27 @@
+{
+  "name": "claude-streamdeck",
+  "version": "1.0.0",
+  "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
+  "main": "src/index.mjs",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "render-check": "node scripts/render-check.mjs",
+    "self-check": "bash bin/streamdeck-status.sh --self-check"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@elgato-stream-deck/node": "^7.6.3",
+    "sharp": "^0.35.3"
+  },
+  "allowScripts": {
+    "node-hid@3.4.0": true,
+    "@julusian/jpeg-turbo@3.0.1": true
+  }
+}
