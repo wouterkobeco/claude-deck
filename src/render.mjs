@@ -136,7 +136,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
           : ""
       }
-      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
+      <text font-family="Courier New" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
             text-anchor="start" dominant-baseline="middle">${tspans}</text>
       ${squares}
       ${
