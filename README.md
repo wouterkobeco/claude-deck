@@ -43,6 +43,9 @@ npm run slots-check    # sticky button slot assignment
   switch the active editor.
 - **Stripe colors** are assigned per VS Code window in first-seen order, so
   they stay put while running rather than reshuffling when a window appears.
-- **Button positions are sticky.** A session keeps its button until it ends;
-  new sessions take the lowest free slot, so the board never reshuffles
-  while you're looking at it.
+- **Buttons are grouped by project.** All sessions for one VS Code window sit
+  in a contiguous block sharing a stripe colour. This costs full stickiness:
+  a new session inserts into its project's block, pushing later projects along
+  by one. Both project order and within-project order are pinned to first-seen,
+  so that insert is the only movement — nothing re-sorts by activity. A group
+  can wrap across rows; blocks aren't padded to row boundaries.

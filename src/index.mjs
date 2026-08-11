@@ -17,12 +17,17 @@ const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md"
 // telling windows apart is the whole point. Sorting would instead reshuffle
 // existing colours whenever a new window appears.
 const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#a1887f"];
-const folderAccents = new Map();
-function accentFor(folder) {
-  if (!folderAccents.has(folder)) {
-    folderAccents.set(folder, ACCENTS[folderAccents.size % ACCENTS.length]);
-  }
-  return folderAccents.get(folder);
+
+// First-seen order for both grouping and colour, so a project's block and its
+// stripe always agree. Folders are kept after their last session ends: if the
+// project comes back it reclaims its old position and colour instead of
+// jumping to the end.
+const folderOrder = new Map();
+const sessionOrder = new Map();
+let arrivals = 0;
+
+export function accentFor(folder) {
+  return ACCENTS[(folderOrder.get(folder) ?? 0) % ACCENTS.length];
 }
 
 // Picks one stable file inside a folder to use as the focus target. Stable
@@ -85,21 +90,36 @@ async function focusWindow(folder) {
   });
 }
 
-// Slots are sticky: a session keeps its button for its whole life, so the
-// board never reshuffles under you. A slot only frees when its session ends,
-// and a new session takes the lowest free slot — which is the end of the row
-// unless an earlier session has since exited and liberated its spot.
+// Sessions are laid out in contiguous blocks per project, so every button for
+// one VS Code window sits together.
+//
+// This trades away the previous full stickiness, and it has to: keeping a new
+// session next to its siblings means inserting it mid-board, which pushes
+// later projects along by one. Both orderings are pinned to first-seen so
+// that insert is the only movement — projects keep their relative order for
+// the daemon's lifetime, and within a project sessions stay in arrival order.
+// Nothing re-sorts by activity.
 export function assignSlots(sessions, slots) {
-  const live = new Set(sessions.map((s) => s.session_id));
-  for (let i = 0; i < slots.length; i++) {
-    if (slots[i] && !live.has(slots[i])) slots[i] = null;
-  }
   for (const s of sessions) {
-    if (slots.includes(s.session_id)) continue;
-    const free = slots.indexOf(null);
-    if (free === -1) break; // board full — session gets no button
-    slots[free] = s.session_id;
+    if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);
+    if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
+
+  const live = new Set(sessions.map((s) => s.session_id));
+  for (const id of [...sessionOrder.keys()]) {
+    if (!live.has(id)) sessionOrder.delete(id);
+  }
+
+  const ordered = [...sessions].sort(
+    (a, b) =>
+      folderOrder.get(a.folder) - folderOrder.get(b.folder) ||
+      sessionOrder.get(a.session_id) - sessionOrder.get(b.session_id)
+  );
+
+  slots.fill(null);
+  ordered.slice(0, slots.length).forEach((s, i) => {
+    slots[i] = s.session_id;
+  });
 }
 
 async function refresh(deck, buttons, slots) {
@@ -199,4 +219,4 @@ async function main() {
 }
 
 // Only run the daemon when executed directly, so checks can import from here.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

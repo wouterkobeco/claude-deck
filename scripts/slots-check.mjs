@@ -1,9 +1,10 @@
-// Verifies sticky slot assignment: positions never shuffle, ended sessions
-// free their spot, and a new session takes the lowest free slot.
+// Verifies project grouping: sessions for one VS Code window sit in one
+// contiguous block, project order and within-project order are both pinned to
+// first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
 import { assignSlots } from "../src/index.mjs";
 
-const s = (id) => ({ session_id: id });
+const s = (id, folder) => ({ session_id: id, folder });
 const eq = (got, want, label) => {
   const a = JSON.stringify(got);
   const b = JSON.stringify(want);
@@ -13,29 +14,34 @@ const eq = (got, want, label) => {
   }
 };
 
-const slots = new Array(4).fill(null);
+const A = "/projects/alpha";
+const B = "/projects/beta";
+const slots = new Array(5).fill(null);
 
-assignSlots([s("a"), s("b"), s("c")], slots);
-eq(slots, ["a", "b", "c", null], "initial fill");
+assignSlots([s("a1", A), s("b1", B), s("a2", A)], slots);
+eq(slots, ["a1", "a2", "b1", null, null], "groups by project, not arrival");
 
-// Reordered input (e.g. activity changed) must NOT reshuffle the board.
-assignSlots([s("c"), s("a"), s("b")], slots);
-eq(slots, ["a", "b", "c", null], "stable under reorder");
+// Input order must not matter — only first-seen order does.
+assignSlots([s("b1", B), s("a2", A), s("a1", A)], slots);
+eq(slots, ["a1", "a2", "b1", null, null], "stable under reorder");
 
-// A new session appends at the end while all earlier slots are taken.
-assignSlots([s("a"), s("b"), s("c"), s("d")], slots);
-eq(slots, ["a", "b", "c", "d"], "new session appends");
+// A new session joins its own project's block rather than the board's end,
+// pushing later projects along.
+assignSlots([s("a1", A), s("a2", A), s("a3", A), s("b1", B)], slots);
+eq(slots, ["a1", "a2", "a3", "b1", null], "new session joins its project block");
 
-// An ended session frees exactly its own slot; others stay put.
-assignSlots([s("a"), s("c"), s("d")], slots);
-eq(slots, ["a", null, "c", "d"], "ended session frees its slot");
+// A whole project going away closes its gap.
+assignSlots([s("b1", B)], slots);
+eq(slots, ["b1", null, null, null, null], "empty project leaves no gap");
 
-// The next new session reuses that liberated spot, not the end.
-assignSlots([s("a"), s("c"), s("d"), s("e")], slots);
-eq(slots, ["a", "e", "c", "d"], "new session reuses freed slot");
+// ...and returning reclaims its original position ahead of beta, because
+// folder order is remembered.
+assignSlots([s("b1", B), s("a9", A)], slots);
+eq(slots, ["a9", "b1", null, null, null], "returning project keeps its place");
 
-// Board full: an extra session simply gets no button.
-assignSlots([s("a"), s("c"), s("d"), s("e"), s("f")], slots);
-eq(slots, ["a", "e", "c", "d"], "full board drops extras");
+// Board full: extras simply get no button.
+const small = new Array(2).fill(null);
+assignSlots([s("a1", A), s("a2", A), s("b1", B)], small);
+eq(small, ["a1", "a2"], "full board drops extras");
 
-console.log("OK: slot assignment");
+console.log("OK: project grouping");
