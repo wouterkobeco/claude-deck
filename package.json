@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/index.mjs",
     "render-check": "node scripts/render-check.mjs",
-    "self-check": "bash bin/streamdeck-status.sh --self-check"
+    "self-check": "bash bin/streamdeck-status.sh --self-check",
+    "slots-check": "node scripts/slots-check.mjs"
   },
   "keywords": [],
   "author": "",

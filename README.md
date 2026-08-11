@@ -26,4 +26,15 @@ npm start
 ```
 npm run self-check     # hook script's read-stdin -> write-file logic
 npm run render-check   # SVG -> key image pipeline, writes a sample PNG
+npm run slots-check    # sticky button slot assignment
 ```
+
+## Notes
+
+- **No macOS permissions required.** Focusing a window opens a stable file
+  from the target folder via LaunchServices; VS Code routes it to the window
+  whose workspace contains it. Earlier attempts needed Accessibility
+  ("control your computer", granted to the whole terminal app) — that's gone.
+- **Button positions are sticky.** A session keeps its button until it ends;
+  new sessions take the lowest free slot, so the board never reshuffles
+  while you're looking at it.
