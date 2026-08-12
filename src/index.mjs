@@ -394,7 +394,10 @@ async function refreshStats(deck, buttons, stats) {
         }
         return;
       }
-      const drawn = `stat ${stat.label} ${stat.value}`;
+      // `stat` is already the one object rendered below — sign it directly
+      // rather than hand-picking fields into a template string, same reason
+      // as every other refresh*.
+      const drawn = `stat ${JSON.stringify(stat)}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await renderStat({ ...btn, ...stat }), { format: "rgba" });
       btn.drawn = drawn;
@@ -774,16 +777,34 @@ async function run() {
         // when the last one clears, you should leave too — otherwise a
         // drained queue is thirteen dark keys plus a dim CLEAR key,
         // indistinguishable at a glance from the daemon having died.
-        if (attentionCount === 0) setView({ kind: "sessions" });
+        //
+        // Guarded on view.kind still being "attention": refreshAttention just
+        // awaited a live getLiveSessions() call, and a press during that
+        // await can already have moved the view elsewhere (including back
+        // into "attention") — this must only ever close the board it just
+        // drew, never a view a press has since chosen.
+        if (attentionCount === 0 && view.kind === "attention") {
+          setView({ kind: "sessions" });
+          // Draw the board landed on in the same tick — refreshAttention just
+          // blanked every key, and waiting for the next 2s poll to repaint
+          // them is the same "looks dead" problem this exit exists to fix,
+          // just shorter. refresh() already calls getLiveSessions() once;
+          // reuse its return rather than querying again.
+          const sessions = await refresh(deck, buttons, slots, nestedBySlot);
+          attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+        }
       } else if (view.kind === "detail") {
         const detailSessions = await refreshDetail(deck, buttons, view);
-        if (detailSessions === null) {
+        // Same race guard as the attention branch above: only leave the
+        // board this tick was actually drawing.
+        if (detailSessions === null && view.kind === "detail") {
           // The session ended mid-visit; refreshDetail already blanked every
           // tile and nulled renderParams. Leave the board rather than sit on
-          // it forever.
+          // it forever, repainting the same tick for the same reason.
           setView({ kind: "sessions" });
-          attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
-        } else {
+          const sessions = await refresh(deck, buttons, slots, nestedBySlot);
+          attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+        } else if (detailSessions !== null) {
           attentionCount = await drawAttention(deck, attentionButton, detailSessions, false);
         }
       } else {

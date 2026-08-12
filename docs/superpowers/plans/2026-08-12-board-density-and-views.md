@@ -16,7 +16,7 @@
 - **Every file read is wrapped in try/catch that skips rather than throws** — these files are written by another process and a poll can land mid-write.
 - **`btn.drawn` is the redraw diff.** Any new visual input must be added to that signature string or it will not appear until something else changes.
 - **Ordering is first-seen, never activity** — except the attention queue, which sorts by wait time on purpose (Task 2).
-- **Run every check before every commit.** The full list, from `package.json`: `render-check`, `slots-check`, `usage-check`, `stats-check`, `title-check`, `tasks-check`, and (once Task 4 adds it) `transcript-check`. Do not work from a shorter list — `title-check` in particular exercises `readTranscriptSignals` with `assert.deepStrictEqual` against a fixed key set, so *any* new field on that function's return value breaks it, and nothing else in the suite would tell you.
+- **Run every check before every commit.** The full list, from `package.json`: `render-check`, `slots-check`, `usage-check`, `stats-check`, `title-check`, `tasks-check`. (Task 4 originally added its model/effort cases as a separate `transcript-check`; that script was later merged into `title-check` and deleted, so `title-check` now covers both.) Do not work from a shorter list — `title-check` in particular exercises `readTranscriptSignals` with `assert.deepStrictEqual` against a fixed key set, so *any* new field on that function's return value breaks it, and nothing else in the suite would tell you.
 
 ---
 

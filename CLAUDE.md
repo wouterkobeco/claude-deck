@@ -138,23 +138,27 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   every other `refresh*`. Any new visual input must be added to that string or
   it will not appear until something else changes — a real bug twice already
   on the queue tiles (`accent` and `context` drawn but not signed, then
-  `progress` drawn nowhere at all). All three `refresh*` functions now build
-  one `params` object per key and both render and sign it (`` `queue
+  `progress` drawn nowhere at all). All four `refresh*` functions now build
+  one object per key and both render and sign it (`` `queue
   ${JSON.stringify(params)}` ``, etc.) — a field can't be forgotten from one
-  without the other, because there's only the one object. Copy this shape for
-  any new board.
+  without the other, because there's only the one object. `refreshStats` gets
+  this for free: its per-tile `stat` object (`{ label, value }`) already *is*
+  what's spread into `renderStat`, so signing it directly needed no separate
+  `params` variable. Copy this shape for any new board.
 - **Overlay boards must null `btn.renderParams`.** `pulse()` runs on its own
   400ms tick and is frozen while a non-`sessions` board is up, but it resumes
   the instant one is dismissed and redraws from whatever `renderParams` still
   holds — the pre-overlay data, however old. `refreshAttention` and
   `refreshDetail` both null it, so pulse finds nothing to redraw until the next
-  `refresh()` repopulates it, at most 2s later. The attention key has the
-  same problem from the other side: it's the one key `pulse()` still writes
-  to on an overlay board (see below), so it can freeze mid-`bright` the
-  instant the view changes, and its own `btn.drawn` signature won't have
-  changed to force a repaint. `run()`'s `setView()` helper nulls
+  `refresh()` repopulates it, at most 2s later. The attention key has a
+  related problem: `pulse()` only ever touches it while the *sessions* board
+  is showing (the whole body is gated on `isOverlayView()`), but a view
+  change can land between two of its ticks — the view flips away right after
+  pulse mid-tick wrote a bright frame. Nothing then has reason to repaint it:
+  `drawAttention`'s own signature only changes when the queue itself changes,
+  not because pulse wrote something. `run()`'s `setView()` helper nulls
   `attentionButton.drawn` on every transition so the next `drawAttention` call
-  repaints it for real.
+  repaints it for real regardless of what pulse left behind.
 - **Read-only, near-zero-install.** No hooks, no `settings.json` writes, no
   config file. The daemon itself only reads — from `~/.claude/`, VS Code's
   storage, and the usage endpoint. An earlier hook-based version was deleted;
