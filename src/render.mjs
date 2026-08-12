@@ -208,7 +208,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
              <rect y="${height - 3}" width="${done}" height="3" fill="#ffffffcc" />
              <text x="50%" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
                    font-size="${progressSize}" fill="#ffffffdd" text-anchor="middle"
-                   dominant-baseline="middle">${progress.current}/${progress.total}</text>`
+                   dominant-baseline="middle">task ${progress.current}/${progress.total}</text>`
           : ""
       }
     </svg>`;
