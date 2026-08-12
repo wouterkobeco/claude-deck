@@ -229,20 +229,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   folder — never the session's cwd. A worktree agent belongs to its project and
   says so, so two agents in one repo both read `KOB-TRACE` and are told apart
   by their body text, which is the field that actually differs between them.
-- **"compacting" is inferred, not reported.** Nothing on disk says a
-  compaction has started: the registry has no such field, the status-line
-  payload has none, and the transcript only announces it *afterwards*, with a
-  `system`/`compact_boundary` line carrying `trigger`, `durationMs`,
-  `preTokens` and `postTokens`. The lines immediately before that boundary are
-  compaction's own metadata (`relocated`, `mode`, `worktree-state`, `pr-link`),
-  written a second before it finishes — not a start marker.
-  So `getLiveSessions` infers it: the session says `busy`, no tool call is
-  outstanding (`toolPending`), and the transcript hasn't grown for
-  `COMPACT_SILENCE_S`. Real compactions run 70-120s; a turn merely thinking or
-  streaming appends well inside that. `toolPending` is the load-bearing part —
-  a long `npm test` is silent too, but leaves an unanswered `tool_use`. Same
-  narrow-signal contract as `blockedOnDenial`: good enough for a key that says
-  "leave this alone for two minutes", not a promise.
+- **"compacting" means the newest user line is a `/compact` command.** A
+  manual `/compact` writes its command line into the transcript the moment it
+  starts (bare `"/compact"` content or the `<command-name>` form — match the
+  parsed content exactly, never the raw line, which tool results can contain),
+  then writes nothing until the finished `compact_boundary` — so that line
+  *is* the start marker, observed directly. The session must also say `busy`
+  (clears the spinner the instant a `/compact` is canceled) and the marker
+  must be younger than `COMPACT_MAX_S` (clears leftovers `busy` can't). The
+  registry has no compaction field, the status-line payload has none, and
+  auto-triggered compactions write no start marker at all — those are
+  deliberately not detected. **Don't reintroduce the silence heuristic**
+  ("busy + no pending tool + transcript quiet for 25s"): a turn thinking
+  without a tool call is exactly as silent, so it false-fired on every long
+  reasoning stretch. That shipped, and was replaced by the marker.
   `renderCompacting` draws a sweeping ring rather than a percentage, because
   no progress figure exists to draw — `pulse()` advances its phase a twelfth
   per tick and, as everywhere, never writes `btn.drawn`.

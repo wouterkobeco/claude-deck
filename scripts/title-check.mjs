@@ -39,8 +39,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   blockedOnDenial: false,
   model: null,
   effort: null,
-  lastLineAt: null,
-  toolPending: false,
+  compactRequestedAt: null,
 });
 
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine("Add rate limiting")]), {
@@ -49,8 +48,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
   blockedOnDenial: false,
   model: null,
   effort: null,
-  lastLineAt: null,
-  toolPending: false,
+  compactRequestedAt: null,
 });
 
 // An old title must not survive a /clear with nothing said since.
@@ -60,8 +58,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   blockedOnDenial: false,
   model: null,
   effort: null,
-  lastLineAt: null,
-  toolPending: false,
+  compactRequestedAt: null,
 });
 
 assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
@@ -70,8 +67,7 @@ assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   blockedOnDenial: false,
   model: null,
   effort: null,
-  lastLineAt: null,
-  toolPending: false,
+  compactRequestedAt: null,
 });
 console.log("OK: aiTitle / clearedEmpty");
 
@@ -94,8 +90,7 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
   blockedOnDenial: false,
   model: "claude-opus-5",
   effort: "high",
-  lastLineAt: null,
-  toolPending: false,
+  compactRequestedAt: null,
 });
 
 // A transcript with no assistant line yet reports null rather than guessing.
@@ -105,27 +100,34 @@ assert.deepEqual(await signals([userTurnLine]), {
   blockedOnDenial: false,
   model: null,
   effort: null,
-  lastLineAt: null,
-  toolPending: false,
+  compactRequestedAt: null,
 });
-// The two signals compaction detection rests on. `toolPending` is the one
-// that matters: a long-running command is silent too, so without it a
-// five-minute test run would read as a compaction.
-const toolUseLine = (ts) =>
-  JSON.stringify({ type: "assistant", timestamp: ts, message: { content: [{ type: "tool_use", name: "Bash" }] } });
-const toolResultLine = (ts) =>
-  JSON.stringify({ type: "user", timestamp: ts, message: { content: [{ type: "tool_result" }] } });
+// Compaction start marker: a manual /compact writes its command line the
+// moment it starts, then nothing until the boundary — so "newest user line
+// is /compact" is the signal. Both content formats Claude Code writes, and
+// it must match the parsed content exactly: transcripts are full of lines
+// that merely *contain* the string "/compact" (tool results, prose).
+const TS = "2026-08-12T21:06:21.793Z";
+const compactBare = JSON.stringify({ type: "user", timestamp: TS, message: { role: "user", content: "/compact" } });
+const compactXml = JSON.stringify({
+  type: "user",
+  timestamp: TS,
+  message: { role: "user", content: "<command-name>/compact</command-name>\n<command-message>compact</command-message>" },
+});
+const mentionLine = JSON.stringify({
+  type: "user",
+  timestamp: "2026-08-12T21:08:00.000Z",
+  message: { role: "user", content: [{ type: "tool_result", content: "grep found /compact in 3 files" }] },
+});
 
-const running = await signals([toolResultLine("2026-08-12T10:00:00.000Z"), toolUseLine("2026-08-12T10:00:05.000Z")]);
-assert.equal(running.toolPending, true, "newest tool line is an unanswered tool_use — a tool is running");
-assert.equal(running.lastLineAt, Date.parse("2026-08-12T10:00:05.000Z"), "lastLineAt is the newest timestamp");
-
-const settled = await signals([toolUseLine("2026-08-12T10:00:00.000Z"), toolResultLine("2026-08-12T10:00:09.000Z")]);
-assert.equal(settled.toolPending, false, "newest tool line is the result — nothing outstanding");
-
-// A transcript with no tool lines at all must not claim one is pending.
-assert.equal((await signals([userTurnLine])).toolPending, false, "no tool lines means nothing pending");
-console.log("OK: compaction silence signals");
+assert.equal((await signals([compactBare])).compactRequestedAt, Date.parse(TS), "bare /compact content");
+assert.equal((await signals([compactXml])).compactRequestedAt, Date.parse(TS), "command-name /compact content");
+// Anything newer from the conversation means the compaction is over (or was
+// canceled and resumed) — the marker only holds while it is the newest user line.
+assert.equal((await signals([compactBare, humanReplyLine])).compactRequestedAt, null, "cleared by a newer user line");
+// A line that merely contains the string is not the command.
+assert.equal((await signals([compactBare, mentionLine])).compactRequestedAt, null, "tool_result mentioning /compact is not a /compact");
+console.log("OK: compaction start marker");
 
 console.log("OK: model / effort");
 

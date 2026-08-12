@@ -9,10 +9,11 @@ const TASKS_DIR = join(CLAUDE_DIR, "tasks");
 const CTX_DIR = join(CLAUDE_DIR, "ctx");
 const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const TITLE_TAIL_BYTES = 65536;
-// How long a busy session with no outstanding tool call has to have written
-// nothing before it reads as compacting. Real compactions run 70-120s; a turn
-// that is merely thinking or streaming still appends well inside this.
-const COMPACT_SILENCE_S = 25;
+// How long after a `/compact` command line the session can still be assumed
+// to be compacting. Real compactions run 70-120s; the cap is what stops a
+// canceled `/compact` (which leaves the command line with nothing after it)
+// from spinning forever if the status flip doesn't clear it first.
+const COMPACT_MAX_S = 180;
 
 async function readJsonFiles(dir, suffixes = [".json"]) {
   let names;
@@ -136,44 +137,19 @@ export async function readTranscriptSignals(transcriptPath) {
       effort = null,
       modelResolved = false;
 
-    // Two more signals off the same scan, both about *silence* rather than
-    // content — see `compacting` in getLiveSessions.
-    //
-    // `lastLineAt`: when the transcript last grew. A session mid-turn appends
-    // constantly (tool_use, tool_result); one that has gone quiet for a long
-    // time while still reporting busy is doing something that writes nothing.
-    //
-    // `toolPending`: whether the newest of those two line kinds is an
-    // assistant tool_use rather than its tool_result — i.e. a tool is running
-    // right now. That is the other thing that produces a long silence, and
-    // it's what stops a five-minute `npm test` reading as a compaction.
-    let lastLineAt = null,
-      toolPending = false,
-      toolResolved = false;
+    // `compactRequestedAt` — the timestamp of the newest `type:"user"` line
+    // when that line is a `/compact` command with nothing from the
+    // conversation after it. Running `/compact` writes its command line
+    // immediately, then the transcript goes quiet until the boundary — so
+    // this is a direct start marker, not an inference. When compaction
+    // finishes (or is canceled and the conversation resumes), a newer user
+    // line exists and the signal clears itself. An earlier version inferred
+    // compaction from transcript *silence* instead; a turn thinking for 25s+
+    // writes nothing either, so busy sessions kept false-firing.
+    let compactRequestedAt = null;
 
-    for (
-      let i = lines.length - 1;
-      i >= 0 && (!titleResolved || !denialResolved || !modelResolved || !toolResolved || lastLineAt === null);
-      i--
-    ) {
+    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved || !modelResolved); i--) {
       const line = lines[i];
-
-      if (lastLineAt === null && line.includes('"timestamp"')) {
-        try {
-          const t = Date.parse(JSON.parse(line).timestamp);
-          if (Number.isFinite(t)) lastLineAt = t;
-        } catch {
-          // truncated line at the start of the tail slice — keep scanning
-        }
-      }
-
-      if (!toolResolved && (line.includes('"tool_result"') || line.includes('"tool_use"'))) {
-        // Whichever comes first scanning backwards decides: a tool_result
-        // means the last tool call already came back, a tool_use means it
-        // hasn't.
-        toolPending = !line.includes('"tool_result"');
-        toolResolved = true;
-      }
 
       if (!titleResolved) {
         if (line.includes("aiTitle")) {
@@ -195,6 +171,23 @@ export async function readTranscriptSignals(transcriptPath) {
 
       if (!denialResolved && line.includes(USER_LINE_MARKER)) {
         blockedOnDenial = line.includes("toolDenialKind");
+        // The same newest-user-line decides compacting. Content must be the
+        // command itself (both formats Claude Code writes), matched on the
+        // parsed value, not the raw line — tool results and ordinary messages
+        // can *contain* the string "/compact" without being the command.
+        try {
+          const obj = JSON.parse(line);
+          const content = obj.message?.content;
+          const isCompactCmd =
+            content === "/compact" ||
+            (typeof content === "string" && content.startsWith("<command-name>/compact</command-name>"));
+          if (isCompactCmd) {
+            const t = Date.parse(obj.timestamp);
+            if (Number.isFinite(t)) compactRequestedAt = t;
+          }
+        } catch {
+          // truncated line at the start of the tail slice — not a command
+        }
         denialResolved = true;
       }
 
@@ -218,9 +211,9 @@ export async function readTranscriptSignals(transcriptPath) {
       }
     }
 
-    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort, lastLineAt, toolPending };
+    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
   } catch {
-    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null, lastLineAt: null, toolPending: false };
+    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null, compactRequestedAt: null };
   } finally {
     await fh?.close();
   }
@@ -395,22 +388,20 @@ export async function getLiveSessions() {
 
   return Promise.all(
     matched.map(async (s) => {
-      const { blockedOnDenial, lastLineAt, toolPending, ...signals } = await readTranscriptSignals(
+      const { blockedOnDenial, compactRequestedAt, ...signals } = await readTranscriptSignals(
         transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })
       );
-      // Compaction writes nothing while it runs — it only announces itself
-      // afterwards, with a `compact_boundary` line carrying how long it took
-      // (70-120s in practice). So it can't be observed directly, only
-      // inferred: the session says busy, no tool call is outstanding, and the
-      // transcript hasn't grown for long enough that a turn thinking or
-      // streaming would have written *something*.
-      //
-      // Not certainty, and the same shape as `blockedOnDenial` above: enough
-      // for a key that tells you to leave it alone for two minutes, not a
-      // promise. `toolPending` is what keeps a long-running command out of
-      // this — those are silent too, but they leave an unanswered tool_use.
-      const silentFor = lastLineAt ? (Date.now() - lastLineAt) / 1000 : 0;
-      const compacting = s.state === "busy" && !toolPending && silentFor > COMPACT_SILENCE_S;
+      // A manual /compact writes its command line the moment it starts, then
+      // nothing until the finished boundary — so "newest user line is
+      // /compact" IS the compaction, observed directly. Requiring busy is
+      // what clears the spinner the instant a /compact is canceled (the
+      // registry flips back to idle before any new transcript line lands),
+      // and the age cap catches the stale-line leftovers busy can't.
+      // Auto-triggered compactions write no start marker at all and are
+      // deliberately not detected — an earlier silence heuristic tried, and
+      // false-fired on every turn that thought for 25s without a tool call.
+      const compacting =
+        s.state === "busy" && compactRequestedAt !== null && (Date.now() - compactRequestedAt) / 1000 < COMPACT_MAX_S;
       return {
         ...s,
         ...signals,
