@@ -504,7 +504,7 @@ Replace the whole body of `deck.on("down", ...)` with:
   });
 ```
 
-Note the attention no-op test reads `attentionButton.drawn`, which `drawAttention` sets to `attention 0  false` when the queue is empty (count `0`, empty `longest`, `pulse` false — two spaces, on purpose).
+`attentionCount` is declared in `run()` and assigned from every `drawAttention()` call — see Task 2. Until the first draw completes it is `0`, so a press before the first poll correctly does nothing.
 
 - [ ] **Step 3: Update the loop and pulse**
 
