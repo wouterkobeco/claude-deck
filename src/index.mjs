@@ -85,13 +85,19 @@ async function anchorFile(folder) {
 // both open an extra window; System Events AXRaise works but requires
 // granting Accessibility ("control your computer") to the whole terminal
 // app. This route needs no permission at all.
-async function focusWindow(folder) {
-  const file = (await openFileIn(folder)) ?? (await anchorFile(folder));
+//
+// `ide` is the lock file's own `ideName` ("Visual Studio Code", "PhpStorm",
+// ...), which doubles as the .app name `open -a` wants. Only VS Code gets the
+// already-open-file preference — that comes out of VS Code's own storage, so
+// for any other IDE it's the anchor file or nothing.
+async function focusWindow(folder, ide) {
+  const app = ide ?? "Visual Studio Code";
+  const file = (app === "Visual Studio Code" ? await openFileIn(folder) : null) ?? (await anchorFile(folder));
   if (!file) {
     console.error(`focus failed for ${folder}: no file found to open`);
     return;
   }
-  execFile("open", ["-a", "Visual Studio Code", file], (err, _stdout, stderr) => {
+  execFile("open", ["-a", app, file], (err, _stdout, stderr) => {
     if (err) console.error(`focus failed for ${folder}:`, stderr || err.message);
   });
 }
@@ -393,7 +399,7 @@ async function run() {
     if (isRepeat && btn.nestedSessions?.length) {
       nestedView = { folder: btn.assigned.folder, order: btn.nestedSessions.map((s) => s.session_id) };
     } else if (btn?.assigned) {
-      focusWindow(btn.assigned.folder);
+      focusWindow(btn.assigned.folder, btn.assigned.ide);
     }
     lastPress = { index: control.index, session_id: sessionId };
   });

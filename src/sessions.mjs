@@ -262,7 +262,14 @@ async function readContext(sessionId) {
 export async function getLiveSessions() {
   const [registry, locks] = await Promise.all([readJsonFiles(SESSIONS_DIR), readJsonFiles(IDE_DIR, [".lock"])]);
 
-  const folders = locks.flatMap((l) => l.workspaceFolders ?? []);
+  // Locks aren't only VS Code's — JetBrains IDEs write the same file with
+  // their own `ideName`. Keep that per folder so a press focuses the IDE the
+  // session actually lives in. Two IDEs on one folder: last lock wins.
+  const ideByFolder = new Map();
+  for (const l of locks) {
+    for (const f of l.workspaceFolders ?? []) ideByFolder.set(f, l.ideName ?? null);
+  }
+  const folders = [...ideByFolder.keys()];
 
   const matched = [];
   for (const s of registry) {
@@ -274,6 +281,7 @@ export async function getLiveSessions() {
       session_id: s.sessionId,
       cwd: s.cwd,
       folder: match.folder,
+      ide: ideByFolder.get(match.folder) ?? null,
       nested: match.nested,
       name: s.name ?? null,
       state: s.status ?? "idle",
