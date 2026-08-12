@@ -66,10 +66,13 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   exported precisely because that slot arithmetic is where an off-by-one
   silently hides a task; `slots-check` covers it. The task list is read here,
   per poll, never in `getLiveSessions()` — the board's own 2s poll costs what it
-  always did. The layout is captured once (`view.tiles`) and then held while
-  content keeps refreshing: `taskWindow` re-centres on the in-progress task, so
-  recomputing it every poll would slide the board under your finger each time a
-  task completed.
+  always did. The layout is captured once (`view.tiles`) and then held by
+  `holdTiles` while content keeps refreshing: `taskWindow` re-centres on the
+  in-progress task, so recomputing it every poll would slide the board under
+  your finger each time a task completed. `holdTiles` is exported and checked
+  for the same reason `detailLayout` is — it also has to stop a worktree
+  session drawing on two keys at once, which `detailLayout` re-pinning its tail
+  every poll otherwise causes and which nothing but a deck would show you.
 - **`/clear` reuses the transcript file.** It's written as an ordinary line
   (`<command-name>/clear</command-name>`) into the same `.jsonl`, not a new
   file, so a naive backward scan for `aiTitle` would keep surfacing the

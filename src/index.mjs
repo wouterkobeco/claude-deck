@@ -305,6 +305,39 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
   return [...header, ...body, ...nestedTiles];
 }
 
+// Holds the detail board's shape for a visit. `held` is the layout captured
+// when the view opened, `fresh` this poll's; each held tile keeps its slot and
+// re-reads its own content by identity — a task by its number, a worktree
+// session by its id — so a task completing recolours a tile instead of sliding
+// the board.
+//
+// A slot that was empty at open takes the fresh layout, *except* a worktree
+// tile whose session is already held somewhere: detailLayout re-pins worktree
+// tiles to the tail every poll, so a second one starting shifts the first one
+// left, onto a slot that was empty at open — drawing that one session on two
+// keys at once. Blanking that slot is the honest answer, and a new worktree
+// session waiting until the board is reopened is the same fixed-order rule
+// this whole function exists to enforce.
+//
+// Exported for slots-check: with the aliasing above invisible without a deck,
+// this arithmetic has to be testable the same way detailLayout's is.
+export function holdTiles(held, fresh, tasks, sessions) {
+  const byId = new Map(sessions.map((s) => [s.session_id, s]));
+  const pinned = new Set(held.filter((t) => t?.kind === "nested").map((t) => t.session.session_id));
+  return held.map((tile, i) => {
+    if (tile?.kind === "task") {
+      const t = tasks[tile.number - 1];
+      return t ? { ...tile, subject: t.subject ?? "", status: t.status ?? "pending" } : null;
+    }
+    if (tile?.kind === "nested") {
+      const s = byId.get(tile.session.session_id);
+      return s ? { kind: "nested", session: s } : null;
+    }
+    const f = fresh[i];
+    return f?.kind === "nested" && pinned.has(f.session.session_id) ? null : f ?? null;
+  });
+}
+
 // The bottom-right key is the usage readout rather than a session, so it is
 // left out of `buttons` before slots are assigned.
 async function drawUsage(deck, btn) {
@@ -485,21 +518,7 @@ async function refreshDetail(deck, buttons, view) {
   const { age } = keyFields(session);
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;
-  const byId = new Map(sessions.map((s) => [s.session_id, s]));
-  // Each held tile keeps its slot and re-reads its own content by identity:
-  // a task by its number, a worktree session by its id. Header tiles and
-  // slots that were empty when the view opened simply take the fresh layout.
-  const tiles = view.tiles.map((tile, i) => {
-    if (tile?.kind === "task") {
-      const t = tasks[tile.number - 1];
-      return t ? { ...tile, subject: t.subject ?? "", status: t.status ?? "pending" } : null;
-    }
-    if (tile?.kind === "nested") {
-      const s = byId.get(tile.session.session_id);
-      return s ? { kind: "nested", session: s } : null;
-    }
-    return fresh[i] ?? null;
-  });
+  const tiles = holdTiles(view.tiles, fresh, tasks, sessions);
   const accent = accentFor(session.folder);
 
   await Promise.all(

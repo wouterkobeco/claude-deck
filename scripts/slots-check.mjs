@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor, attentionQueue, detailLayout } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -264,5 +264,39 @@ eq(cleared.slice(0, 2), [{ kind: "label", label: "" }, { kind: "label", label: "
 // A session with no context reported must not print "null%".
 const noCtx = detailLayout({ session: { ...dSession, context: null }, tasks: [], nested: [], age: "", slotCount: 13 });
 eq(noCtx[3], { kind: "stat", label: "CONTEXT", value: "—" }, "unknown context shows a dash");
+
+// Holding the board's shape for a visit: content follows each tile, position
+// doesn't move. The case that matters is a worktree session appearing while
+// the board is up — detailLayout re-pins worktree tiles to the tail on every
+// poll, so the one already on screen shifts a slot left, onto a slot that was
+// empty when the board opened. Taking the fresh tile there would draw that one
+// session on two keys and never show the new one at all.
+const wt = (id) => ({ session_id: id, state: "busy", nested: true, folder: "/projects/kob-trace", cwd: `/wt/${id}` });
+const openTasks = [dTask("one", "in_progress"), dTask("two")];
+const opened = detailLayout({ session: dSession, tasks: openTasks, nested: [wt("w1")], age: "40m", slotCount: 13 });
+const later = detailLayout({ session: dSession, tasks: openTasks, nested: [wt("w1"), wt("w2")], age: "40m", slotCount: 13 });
+eq(opened[12].session.session_id, "w1", "one worktree session sits in the last slot");
+eq([later[11].session.session_id, later[12].session.session_id], ["w1", "w2"], "a second one shifts it left");
+
+const held = holdTiles(opened, later, openTasks, [wt("w1"), wt("w2")]);
+eq(held.length, 13, "held layout still fills the board");
+eq(
+  held.filter((t) => t?.kind === "nested").map((t) => t.session.session_id),
+  ["w1"],
+  "a worktree session occupies at most one key"
+);
+eq(held[12].session.session_id, "w1", "and keeps the slot it opened in");
+eq(held[11], null, "the slot it would have been aliased into stays blank");
+
+// Content still follows: a task completing recolours its own tile in place.
+const done = holdTiles(opened, opened, [dTask("one", "completed"), dTask("two", "in_progress")], [wt("w1")]);
+eq(done[5], { kind: "task", number: 1, subject: "one", status: "completed" }, "task tile takes fresh content in its own slot");
+eq(done[6].status, "in_progress", "and so does the next one");
+
+// A task or worktree session that disappears leaves a blank rather than
+// pulling everything after it up a slot.
+const gone = holdTiles(opened, opened, [dTask("one", "in_progress")], []);
+eq(gone[6], null, "a vanished task blanks its slot");
+eq(gone[12], null, "a vanished worktree session blanks its slot");
 
 console.log("OK: project grouping");
