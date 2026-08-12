@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, formatAge, splitLabel } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, formatAge, splitLabel } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -31,6 +31,11 @@ const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md"
 // telling windows apart is the whole point. Sorting would instead reshuffle
 // existing colours whenever a new window appears.
 const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#a1887f"];
+
+// Headless processes get this instead of their project's accent on the detail
+// board — muted, so a script that will be gone in a minute doesn't look like a
+// subsession you can go and talk to.
+const PROCESS_ACCENT = "#90a4ae";
 
 // First-seen order for both grouping and colour, so a project's block and its
 // stripe always agree. Folders are kept after their last session ends: if the
@@ -172,8 +177,13 @@ async function focusWindow(folder, ide) {
 // the daemon's lifetime, and within a project sessions stay in arrival order.
 // Nothing re-sorts by activity.
 export function assignSlots(sessions, slots, nestedBySlot = []) {
-  let real = sessions.filter((s) => !s.nested);
-  let nested = sessions.filter((s) => s.nested);
+  // Headless SDK processes are neither: no slot of their own, and no margin
+  // marker either. They exist on the detail board of the project they belong
+  // to and nowhere else — a scripted agent that runs for ninety seconds
+  // shouldn't rearrange a board you navigate by muscle memory.
+  const onBoard = sessions.filter((s) => !s.process);
+  let real = onBoard.filter((s) => !s.nested);
+  let nested = onBoard.filter((s) => s.nested);
 
   // A session that has ever reported a non-nested cwd stays real, even once
   // its cwd moves into a worktree. `nested` is really a property of where a
@@ -293,7 +303,12 @@ function keyFields(session, projectPath = session.folder) {
 // Worktree tiles are pinned to the tail rather than appended after the tasks:
 // they're the only way to reach those sessions, and a twenty-task plan would
 // otherwise push them off the board.
-export function detailLayout({ session, tasks, nested, age, slotCount }) {
+// Bottom-left key on an MK.2: keys are row-major across 5 columns, so row 2
+// starts at 10. The detail board takes over the whole deck — usage and
+// attention keys included — so it owes you an unambiguous way out.
+export const DETAIL_BACK_INDEX = 10;
+
+export function detailLayout({ session, tasks, nested, processes = [], age, slotCount }) {
   // Same title as the session's own key, clearedEmpty rule included — after a
   // /clear the two header keys go blank rather than showing the session name
   // as though it were an answer.
@@ -311,8 +326,21 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
     },
   ];
 
-  const nestedTiles = nested.slice(0, Math.max(0, slotCount - header.length)).map((s) => ({ kind: "nested", session: s }));
-  const taskRoom = slotCount - header.length - nestedTiles.length;
+  // Worktree subsessions and headless processes both belong to this session's
+  // project and both are pinned to the tail, ahead of the tasks: they're the
+  // only way to see that they exist at all, where a task list past the window
+  // is merely truncated. Subsessions first — they're the ones that outlive a
+  // glance.
+  const tail = [
+    ...nested.map((s) => ({ kind: "nested", session: s })),
+    ...processes.map((s) => ({ kind: "process", session: s })),
+  ];
+
+  // Every slot except the back key is content; the back key is carved out
+  // afterwards so the arithmetic here stays a simple "how many are left".
+  const contentSlots = slotCount - 1;
+  const tailTiles = tail.slice(0, Math.max(0, contentSlots - header.length));
+  const taskRoom = contentSlots - header.length - tailTiles.length;
   const shown = taskWindow(tasks, taskRoom);
   const taskTiles = shown.map((t) => ({
     kind: "task",
@@ -323,7 +351,12 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
 
   const body = new Array(taskRoom).fill(null);
   taskTiles.forEach((tile, i) => (body[i] = tile));
-  return [...header, ...body, ...nestedTiles];
+  const tiles = [...header, ...body, ...tailTiles];
+  // Splice the back key into its fixed position rather than reserving it up
+  // front, so it lands on the same physical key no matter how the content
+  // above it happens to fill.
+  tiles.splice(DETAIL_BACK_INDEX, 0, { kind: "back" });
+  return tiles;
 }
 
 // Holds the detail board's shape for a visit. `held` is the layout captured
@@ -444,7 +477,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
         }
         return;
       }
-      const { label, project, age } = keyFields(session);
+      const { label, project } = keyFields(session);
       const accent = accentFor(session.folder);
 
       // One object drives both the render call and the drawn signature (the
@@ -452,7 +485,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
       // drawn but not signed can't happen — that's what left this same
       // tile's gauge frozen once already, and dropped its task counter a
       // second time.
-      const params = { state: session.state, label, accent, project, context: session.context, age, progress: session.progress };
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress };
       const drawn = `queue ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
       const buf = await renderKey({ ...btn, ...params });
@@ -485,7 +518,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
         }
         return;
       }
-      const { label, project, age } = keyFields(session);
+      const { label, project } = keyFields(session);
       const accent = accentFor(session.folder);
       const nestedStates = btn.nestedSessions.map((n) => n.state);
       // The key stands for its whole project block, so its colour takes the
@@ -506,7 +539,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // `shell` is carried separately because `state` is now the block's, and
       // the margin's blue dot is about this session alone — without it, a key
       // going green for a busy subsession would erase its own shell marker.
-      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, age };
+      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates };
       btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are
@@ -562,9 +595,13 @@ async function refreshDetail(deck, buttons, view) {
   const nested = sessions.filter(
     (s) => s.nested && s.folder === session.folder && s.session_id !== session.session_id && !everReal.has(s.session_id)
   );
+  // The headless processes belonging to this project. They never appear on
+  // the board itself, so this board is the only place they're visible at all
+  // — and they're short-lived, so one may well vanish between two polls.
+  const processes = sessions.filter((s) => s.process && s.folder === session.folder);
   const tasks = await readTaskList(session.session_id);
   const { age } = keyFields(session);
-  const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
+  const fresh = detailLayout({ session, tasks, nested, processes, age, slotCount: buttons.length });
   view.tiles ??= fresh;
   const tiles = holdTiles(view.tiles, fresh, tasks, sessions);
   const accent = accentFor(session.folder);
@@ -594,14 +631,19 @@ async function refreshDetail(deck, buttons, view) {
       // from it — that omission (accent and context, on the queue tiles) is
       // what froze a gauge for minutes.
       const params =
-        tile.kind === "task"
+        tile.kind === "back"
+          ? {}
+          : tile.kind === "task"
           ? { number: tile.number, subject: tile.subject, status: tile.status }
           : tile.kind === "stat"
           ? { label: tile.label, value: tile.value }
-          : tile.kind === "nested"
+          : tile.kind === "nested" || tile.kind === "process"
           ? {
               state: tile.session.state,
-              accent,
+              // A headless process gets the muted accent rather than the
+              // project's, so a subsession you can go and talk to doesn't
+              // look identical to a script that will be gone in a minute.
+              accent: tile.kind === "process" ? PROCESS_ACCENT : accent,
               // A worktree tile names its own checkout, not the parent
               // project whose name is already two keys up.
               ...keyFields(tile.session, tile.session.cwd),
@@ -612,7 +654,8 @@ async function refreshDetail(deck, buttons, view) {
       const drawn = `detail ${tile.kind} ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
 
-      const render = tile.kind === "task" ? renderTask : tile.kind === "stat" ? renderStat : renderKey;
+      const render =
+        tile.kind === "back" ? renderBack : tile.kind === "task" ? renderTask : tile.kind === "stat" ? renderStat : renderKey;
       await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...params }), { format: "rgba" });
       btn.drawn = drawn;
     })
@@ -684,6 +727,10 @@ async function run() {
   // 13 session slots.
   const usageButton = allButtons.pop();
   const attentionButton = allButtons.pop();
+  // The detail board takes over the entire deck, usage and attention keys
+  // included, so it needs the full list — every other board draws only the
+  // session keys.
+  const allKeys = [...allButtons, attentionButton, usageButton].sort((a, b) => a.index - b.index);
   const buttons = allButtons;
   const slots = new Array(buttons.length).fill(null);
   const nestedBySlot = new Array(buttons.length).fill(null);
@@ -730,13 +777,21 @@ async function run() {
     const sessionId = btn?.assigned?.session_id ?? null;
     const press = { index: control.index, session_id: sessionId };
 
-    // Any press leaves an overlay, including the key that opened it.
-    if (view.kind === "attention" || view.kind === "detail") {
-      const wasAttention = view.kind === "attention";
+    // The detail board owns the whole deck, so it leaves only by its own back
+    // key. Every other key there is a tile describing something — pressing a
+    // task or a subagent shouldn't throw the board away, and the back key is
+    // right there saying so.
+    if (view.kind === "detail") {
+      if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
+      lastPress = press;
+      return;
+    }
+    // The queue is the opposite: it's transient triage, so any press leaves.
+    if (view.kind === "attention") {
       setView({ kind: "sessions" });
-      // In the queue a session key still focuses its window on the way out —
-      // that's the whole point of pressing one there.
-      if (wasAttention && btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
+      // A session key still focuses its window on the way out — that's the
+      // whole point of pressing one there.
+      if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
       lastPress = press;
       return;
     }
@@ -821,7 +876,7 @@ async function run() {
           attentionCount = await drawAttention(deck, attentionButton, sessions, false);
         }
       } else if (view.kind === "detail") {
-        const detailSessions = await refreshDetail(deck, buttons, view);
+        const detailSessions = await refreshDetail(deck, allKeys, view);
         // Same race guard as the attention branch above: only leave the
         // board this tick was actually drawing.
         if (detailSessions === null && view.kind === "detail") {

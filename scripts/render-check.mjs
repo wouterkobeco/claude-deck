@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, renderAttention, renderTask, renderStat, splitLabel } from "../src/render.mjs";
+import { renderKey, formatAge, renderAttention, renderTask, renderStat, renderBack, splitLabel } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -11,7 +11,8 @@ const eq = (got, want, label) => {
   }
 };
 
-// Compact age for the accent bar: it shares 72px with the project name, so
+// Compact age for the detail board's STATE tile — it no longer shares the
+// accent bar with the project name (there wasn't room for both at 72px), so
 // seconds below a minute, whole minutes below an hour, h+mm past that.
 eq(formatAge(0), "0s", "zero seconds");
 eq(formatAge(45), "45s", "under a minute");
@@ -138,31 +139,6 @@ for (const [name, progress] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
-// The accent bar carries the project name and the age together. A long name
-// beside the longest age is where the caps re-fit either truncates sensibly
-// or collides — this writes a PNG to look at, byte length can't judge it.
-for (const [name, project, age] of [
-  ["age-short", "kob-trace", "45s"],
-  ["age-long", "claude-streamdeck", "2h14m"],
-]) {
-  const buf = await renderKey({
-    width,
-    height,
-    state: "busy",
-    label: "serializing client-block mutations",
-    accent: "#4fc3f7",
-    project,
-    age,
-  });
-  if (buf.length !== expected) {
-    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
-    process.exit(1);
-  }
-  await sharp(buf, { raw: { width, height, channels: 4 } })
-    .png()
-    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
-}
-
 // Attention key at rest, under load, and mid-pulse. Zero is a distinct
 // visual state, not a red key showing "0"; the pulse case covers the
 // brighter #ff5252 branch, otherwise unexercised by any check.
@@ -242,4 +218,16 @@ for (const [name, label] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles");
+// The detail board's back key. It's the only affordance saying the deck isn't
+// stuck — that board covers every key, usage and attention included — so it
+// gets an arrow and a word rather than a glyph alone.
+const backBuf = await renderBack({ width, height });
+if (backBuf.length !== expected) {
+  console.error(`FAILED (back key): expected ${expected} bytes, got ${backBuf.length}`);
+  process.exit(1);
+}
+await sharp(backBuf, { raw: { width, height, channels: 4 } })
+  .png()
+  .toFile(new URL("./render-check-back.png", import.meta.url).pathname);
+
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, back key");

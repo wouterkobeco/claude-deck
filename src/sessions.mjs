@@ -312,14 +312,18 @@ export async function getLiveSessions() {
   const matched = [];
   for (const s of registry) {
     if (s.kind !== "interactive" || !s.sessionId || !s.cwd || !s.pid) continue;
-    // `kind` alone isn't enough: a headless SDK run (a security review, a
-    // scripted agent) registers itself as "interactive" too, with the repo as
-    // its cwd, and shows up as a phantom key for a window you never opened.
-    // Its `entrypoint` is "sdk-py"/"sdk-ts" where a real terminal session is
-    // "cli". Excluding the sdk prefix rather than allowlisting "cli" so an
-    // entrypoint we haven't seen still gets a button — a missing key is worse
-    // than a spurious one.
-    if (s.entrypoint?.startsWith("sdk")) continue;
+    // A headless SDK run (a security review, a scripted agent) registers
+    // itself as `kind: "interactive"` too, with the repo as its cwd, so `kind`
+    // alone can't tell it from a session you opened. Its `entrypoint` is
+    // "sdk-py"/"sdk-ts" where a real terminal session is "cli".
+    //
+    // Flagged rather than dropped: these are the *processes* a session spawns,
+    // and the detail board exists to show them. `assignSlots` keeps them off
+    // the board's own slots and out of the margin markers, so they still can't
+    // claim a key the way they once did — they're only visible where you went
+    // looking for them. Matching the sdk prefix rather than allowlisting "cli"
+    // so an entrypoint we haven't seen still gets a button.
+    const isProcess = s.entrypoint?.startsWith("sdk") ?? false;
     if (!isAlive(s.pid)) continue;
     const match = matchFolder(s.cwd, folders);
     if (!match) continue; // no live local VS Code window for this session
@@ -329,6 +333,7 @@ export async function getLiveSessions() {
       folder: match.folder,
       ide: ideByFolder.get(match.folder) ?? null,
       nested: match.nested,
+      process: isProcess,
       name: s.name ?? null,
       state: s.status ?? "idle",
       ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),

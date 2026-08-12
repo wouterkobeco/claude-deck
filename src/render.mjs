@@ -76,18 +76,17 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, age, shell }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, shell }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
   const color = pulse && state === "requires_action" ? "#ff5252" : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
-  // Accents are all light, so the caps go dark rather than white.
-  // The age sits right-aligned in the bar, so the caps get fitted to — and
-  // centred in — what's left, rather than being centred across the full width
-  // and running under it.
-  const ageWidth = age ? age.length * capSize * 0.62 + 4 : 0;
-  const caps = project ? fitCaps(project, width - ageWidth, capSize) : "";
+  // Accents are all light, so the caps go dark rather than white. The bar
+  // carries the project name alone: an age shared it for one release and
+  // there simply isn't room for both at 72px — the detail board's STATE tile
+  // is where time-in-state is legible.
+  const caps = project ? fitCaps(project, width, capSize) : "";
   // Title zone: 3px of plain accent-coloured pad, an 8px row for the caps
   // text, a 2px dark border on the bottom edge only — 13px fixed, not derived
   // from capSize. The gauge, when known, eats that border rather than adding
@@ -195,16 +194,9 @@ export async function renderKey({ width, height, state, label, accent, project, 
       }
       ${
         caps
-          ? `<text x="${(width - ageWidth) / 2}" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
+          ? `<text x="50%" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
                    font-weight="bold" letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
-          : ""
-      }
-      ${
-        age && project
-          ? `<text x="${width - 3}" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
-                   font-weight="bold" letter-spacing="0.3" fill="#00000099" text-anchor="end"
-                   dominant-baseline="middle">${escapeXml(age)}</text>`
           : ""
       }
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
@@ -379,6 +371,26 @@ export async function renderTask({ width, height, number, subject, status }) {
             letter-spacing="0.5" fill="${text}" dominant-baseline="middle">${number}</text>
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" fill="${text}"
             text-anchor="start" dominant-baseline="middle">${tspans}</text>
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+/**
+ * The detail board's way out. That board takes over every key including the
+ * usage and attention ones, so this is the only affordance telling you the
+ * deck isn't stuck — which is why it's an arrow and a word rather than a
+ * glyph alone.
+ */
+export async function renderBack({ width, height }) {
+  const capSize = Math.round(height * 0.11);
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="#1b1b1b" />
+      <text x="50%" y="${height * 0.44}" font-family="sans-serif" font-size="${Math.round(height * 0.42)}"
+            fill="#ffffffdd" text-anchor="middle" dominant-baseline="middle">←</text>
+      <text x="50%" y="${height * 0.78}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+            letter-spacing="0.5" fill="#ffffff99" text-anchor="middle" dominant-baseline="middle">BACK</text>
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();

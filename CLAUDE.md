@@ -56,12 +56,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `sessionResetsAt`/`weekResetsAt` reduced to hours/days, prepended in
   `index.mjs` because they change by the hour/day while the all-time totals
   barely move.
-- **One session across the whole board: the detail view.** A second press on a
-  session key (see the repeat-press rule below) opens `refreshDetail`:
-  `detailLayout` lays out a two-key title, STATE/CONTEXT/MODEL stat tiles, then
-  that session's task list coloured by status, with the worktree sessions
-  sharing its folder pinned to the tail — a twenty-task plan must not push the
-  only way to reach those sessions off the board. `detailLayout` is pure and
+- **One session across the whole deck: the detail view.** A second press on a
+  session key (see the repeat-press rule below) opens `refreshDetail`, which
+  takes over **all 15 keys** — usage and attention included, unlike every other
+  board, which draws only the 13 session keys. `detailLayout` lays out a
+  two-key title, STATE/CONTEXT/MODEL stat tiles, then that session's task list
+  coloured by status, with its subagents (worktree sessions) and headless
+  processes pinned to the tail — a twenty-task plan must not push the only way
+  to see those off the board. Because it covers the whole deck it owes an
+  unambiguous exit: a back key at `DETAIL_BACK_INDEX` (10, the bottom-left
+  button — keys are row-major across 5 columns). It is spliced in at that fixed
+  index after the content is laid out, so it lands on the same physical key
+  however the tiles above it happen to fill. That back key is also the *only*
+  way out: every other key there describes something, and pressing a task or a
+  subagent shouldn't throw the board away. `detailLayout` is pure and
   exported precisely because that slot arithmetic is where an off-by-one
   silently hides a task; `slots-check` covers it. The task list is read here,
   per poll, never in `getLiveSessions()` — the board's own 2s poll costs what it
@@ -205,6 +213,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   attention queue (if they're blocked) and the detail board of their project
   (always, pinned to its tail). There is no separate nested-only overlay any
   more.
+- **Headless SDK runs are `process: true`, not dropped.** A scripted agent (a
+  security review, an SDK script) registers itself as `kind: "interactive"`
+  with the repo as its cwd, so `kind` can't tell it from a session you opened —
+  its `entrypoint` is `sdk-py`/`sdk-ts` where a terminal session is `cli`. It
+  once claimed a board key outright. Now `sessions.mjs` flags it and
+  `assignSlots` filters those out before anything else: no slot, and no margin
+  marker either, because one that runs for ninety seconds shouldn't rearrange a
+  board you navigate by muscle memory. They appear only on the detail board of
+  their project, in a muted `PROCESS_ACCENT` so a script that will be gone in a
+  minute doesn't look like a subsession you can go and talk to. This is why
+  "kob-trace is running two agents but only one key is lit" is expected: one is
+  a subsession (a marker) and one may be a process (detail board only).
 - **A key's colour covers its block; every other field is its own.** `refresh`
   takes `mostUrgent([own state, ...nested states])` for the background, so a
   project working only through a worktree subsession reads as working instead
