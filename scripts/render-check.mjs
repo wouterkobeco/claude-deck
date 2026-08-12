@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel } from "../src/render.mjs";
+import { renderKey, formatAge, fitProgress, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -25,6 +25,13 @@ eq(formatAge(8040), "2h14m", "hours and minutes");
 // carries neither statusUpdatedAt nor updatedAt.
 eq(formatAge(-1), "", "negative input");
 eq(formatAge(NaN), "", "non-numeric input");
+
+// The foot counter's three fit tiers at key size (72px, 14px font): the word
+// intact, the vowel dropped, then a smaller font — in that order, because
+// "task 2/5" must never shrink just to make room "task 12/20" would need.
+eq(JSON.stringify(fitProgress({ current: 2, total: 5 }, 72, 14)), '{"text":"task 2/5","size":14}', "narrow count keeps the word");
+eq(JSON.stringify(fitProgress({ current: 12, total: 20 }, 72, 14)), '{"text":"tsk 12/20","size":13}', "wide count drops the vowel first");
+eq(JSON.stringify(fitProgress({ current: 123, total: 456 }, 72, 14)), '{"text":"tsk 123/456","size":10}', "very wide count shrinks the font");
 
 const width = 72;
 const height = 72;
@@ -119,6 +126,7 @@ await sharp(marginBuf, { raw: { width, height, channels: 4 } })
 for (const [name, progress] of [
   ["shell", null],
   ["shell-progress", { current: 3, total: 7 }],
+  ["shell-progress-wide", { current: 12, total: 20 }],
 ]) {
   const buf = await renderKey({
     width,
