@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, renderAttention } from "../src/render.mjs";
+import { renderKey, formatAge, renderAttention, renderTask, splitLabel } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -75,8 +75,9 @@ for (const [name, nestedStates] of [
     .toFile(new URL(`./render-check-nested-${name}.png`, import.meta.url).pathname);
 }
 
-// Overlay tile: caps show the worktree folder's own basename, not the
-// parent project's name — same renderKey call an overlay tile makes.
+// Worktree tile on the detail board: caps show the worktree folder's own
+// basename, not the parent project's — the parent's name is already on the
+// header keys. Same renderKey call refreshDetail's nested tiles make.
 const overlayBuf = await renderKey({
   width,
   height,
@@ -180,4 +181,25 @@ for (const [name, count, longest, pulse] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot");
+// A detail board's title runs across two keys, so the split must always
+// return exactly as many pieces as there are keys to fill — a short or empty
+// title leaves the later key blank rather than drawing "undefined".
+eq(splitLabel("serializing client-block mutations", 2).join("|"), "serializing client-block|mutations", "splits on words");
+eq(splitLabel("one", 2).join("|"), "one|", "short label leaves the second key blank");
+eq(splitLabel("", 2).length, 2, "empty label still fills every part");
+eq(splitLabel(null, 2).join("|"), "|", "missing label is not a crash");
+eq(splitLabel("a b c d e", 2).join("|"), "a b c|d e", "odd word counts favour the first key");
+
+// One task tile per status — the three must be tellable apart at arm's length.
+for (const status of ["completed", "in_progress", "pending"]) {
+  const buf = await renderTask({ width, height, number: 3, subject: "serialize client-block mutations", status });
+  if (buf.length !== expected) {
+    console.error(`FAILED (task ${status}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-task-${status}.png`, import.meta.url).pathname);
+}
+
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles");

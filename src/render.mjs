@@ -41,6 +41,20 @@ export function formatAge(seconds) {
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/**
+ * Splits a label into `parts` roughly equal chunks on word boundaries, so a
+ * title can run across neighbouring keys. Always returns exactly `parts`
+ * strings — short labels leave the later keys blank rather than undefined.
+ */
+export function splitLabel(label, parts) {
+  const words = (label ?? "").split(/\s+/).filter(Boolean);
+  const out = new Array(parts).fill("");
+  if (words.length === 0) return out;
+  const per = Math.ceil(words.length / parts);
+  for (let i = 0; i < parts; i++) out[i] = words.slice(i * per, (i + 1) * per).join(" ");
+  return out;
+}
+
 function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }
@@ -321,6 +335,46 @@ export async function renderStat({ width, height, label, value }) {
             dominant-baseline="middle">${escapeXml(caps)}</text>
       <text font-family="sans-serif" font-size="${valueSize}" font-weight="600" fill="#ffab70"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+// Done recedes, active is the only bright tile, todo sits between them —
+// the board should read as "here" at a glance, not as fourteen equal boxes.
+const TASK_COLORS = {
+  completed: { bg: "#1b3a1e", text: "#ffffff77" },
+  in_progress: { bg: "#2e7d32", text: "#ffffff" },
+  pending: { bg: "#1b1b1b", text: "#ffffffaa" },
+};
+
+/**
+ * One task of the detail board: its number small at the top, its subject
+ * wrapped below, coloured by status.
+ */
+export async function renderTask({ width, height, number, subject, status }) {
+  const { bg, text } = TASK_COLORS[status] ?? TASK_COLORS.pending;
+  const capSize = Math.round(height * 0.11);
+  const fontSize = Math.round(height * 0.17);
+  const lineHeight = fontSize * 1.05;
+
+  let lines = wrapLabel((subject ?? "").toLowerCase(), width - 6, fontSize);
+  const maxLines = 4;
+  if (lines.length > maxLines) {
+    const maxChars = Math.max(3, Math.floor((width - 6) / (fontSize * 0.6)));
+    lines = lines.slice(0, maxLines);
+    lines[maxLines - 1] = lines[maxLines - 1].slice(0, Math.max(1, maxChars - 1)) + "…";
+  }
+  const startY = height * 0.3 + lineHeight / 2;
+  const tspans = lines.map((line, i) => `<tspan x="3" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`).join("");
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="${bg}" />
+      <text x="3" y="${height * 0.13}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+            letter-spacing="0.5" fill="${text}" dominant-baseline="middle">${number}</text>
+      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" fill="${text}"
+            text-anchor="start" dominant-baseline="middle">${tspans}</text>
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();

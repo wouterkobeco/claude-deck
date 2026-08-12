@@ -10,6 +10,9 @@ npm run render-check   # SVG -> RGBA pipeline; writes scripts/render-check-outpu
 npm run slots-check    # project grouping / slot assignment
 npm run tasks-check    # "task X of Y" numbering
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
+npm run stats-check    # stats board formatting
+npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial
+npm run transcript-check # the rest of the transcript tail scan (model, effort)
 ```
 
 The checks are the test suite: plain `node scripts/*-check.mjs` files that
@@ -20,7 +23,7 @@ non-trivial logic gets a case appended to the matching check, or a new
 
 ## Architecture
 
-A single polling daemon, ~950 lines across six modules. Every 2s it rebuilds
+A single polling daemon, ~1800 lines across six modules. Every 2s it rebuilds
 the whole board from disk; there is no event stream and no persisted state.
 
 ```
@@ -39,16 +42,34 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   that skips rather than throws: these files are written by another process and
   a poll can land mid-write. `readTranscriptSignals` reads `aiTitle` and two
   more things from that same tail scan — see the two invariants below.
-- `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`
-  and `accentFor` for the checks; the `import.meta.url === argv[1]` guard at the
-  bottom is what keeps importing it from starting a daemon. Also owns the
-  session/stats view toggle (`statsMode`, local to `run()`) — pressing the
-  usage key flips it; the other 14 buttons redraw as sessions or stat tiles
-  depending on which is current. The stats board's top-left pair ("Session
-  reset" / "Week reset") isn't from stats.mjs — it's `usage.mjs`'s
+- `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`,
+  `accentFor`, `attentionQueue` and `detailLayout` for the checks; the
+  `import.meta.url === argv[1]` guard at the bottom is what keeps importing it
+  from starting a daemon. Also owns **which board is showing**: one `view`
+  value local to `run()`, never a flag per board, so "stats and detail are both
+  somehow on" isn't representable. Its four kinds — `sessions`, `stats`,
+  `attention`, `detail` — each have one branch in the poll loop and one
+  `refresh*` function, and the same 13 session keys are redrawn by whichever is
+  current. The `drawn`-signature diffing does the switching for free: signatures
+  never match across boards, so a mode change redraws everything once and needs
+  no explicit invalidation. The stats board's top-left pair ("Session reset" /
+  "Week reset") isn't from stats.mjs — it's `usage.mjs`'s
   `sessionResetsAt`/`weekResetsAt` reduced to hours/days, prepended in
   `index.mjs` because they change by the hour/day while the all-time totals
   barely move.
+- **One session across the whole board: the detail view.** A second press on a
+  session key (see the repeat-press rule below) opens `refreshDetail`:
+  `detailLayout` lays out a two-key title, STATE/CONTEXT/MODEL stat tiles, then
+  that session's task list coloured by status, with the worktree sessions
+  sharing its folder pinned to the tail — a twenty-task plan must not push the
+  only way to reach those sessions off the board. `detailLayout` is pure and
+  exported precisely because that slot arithmetic is where an off-by-one
+  silently hides a task; `slots-check` covers it. The task list is read here,
+  per poll, never in `getLiveSessions()` — the board's own 2s poll costs what it
+  always did. The layout is captured once (`view.tiles`) and then held while
+  content keeps refreshing: `taskWindow` re-centres on the in-progress task, so
+  recomputing it every poll would slide the board under your finger each time a
+  task completed.
 - **`/clear` reuses the transcript file.** It's written as an ordinary line
   (`<command-name>/clear</command-name>`) into the same `.jsonl`, not a new
   file, so a naive backward scan for `aiTitle` would keep surfacing the
@@ -68,9 +89,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   for a key that needs to catch your eye, not a guarantee.
 - **Requires-action keys pulse.** `pulse()` in `index.mjs` is a second loop
   alongside the main poll, ticking every `PULSE_MS` (400ms) — the 2s poll is
-  far too slow to read as animation. It redraws only `requires_action` keys,
-  reusing `btn.renderParams` (cached every poll in `refresh()`, not just on
-  change) rather than re-deriving from a fresh session read. It never touches
+  far too slow to read as animation. It redraws only the keys with something
+  flashing on them — `requires_action` keys, keys carrying nested markers, and
+  the attention key when its count is nonzero — reusing `btn.renderParams`
+  (cached every poll in `refresh()`/`drawAttention()`, not just on change)
+  rather than re-deriving from a fresh session read. It never touches
   `btn.drawn`, so the next `refresh()` still recognises a steady frame as
   unchanged and leaves the button alone.
 - `src/render.mjs` — builds an SVG string per key and rasterizes with sharp.
@@ -98,9 +121,24 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   deliberately kept after their last session ends so a returning project
   reclaims its slot and accent colour. Anything that re-sorts a settled board
   breaks the point of the tool: muscle memory for where a button is.
-- **Redraw is diffed** on the `btn.drawn` signature string in `refresh()`. Any
-  new visual input must be added to that string or it will not appear until
-  something else changes.
+  **The attention queue is the one exception**, deliberately: `attentionQueue`
+  ranks blocked ahead of waiting and longest-stuck first inside each group.
+  It's transient triage — you read it, act, and leave — so there's no muscle
+  memory for it to break, and it re-sorts while it's up so a session that gets
+  unblocked leaves the queue you're looking at. The detail board is *not* an
+  exception: its shape is fixed for the visit.
+- **Redraw is diffed** on the `btn.drawn` signature string in `refresh()` and in
+  every other `refresh*`. Any new visual input must be added to that string or
+  it will not appear until something else changes — a real bug twice already
+  (the queue tiles' context gauge froze because `accent` and `context` were
+  drawn but not signed). `refreshDetail` builds one `params` object and both
+  renders and signs it, which is the shape to copy.
+- **Overlay boards must null `btn.renderParams`.** `pulse()` runs on its own
+  400ms tick and is frozen while a non-`sessions` board is up, but it resumes
+  the instant one is dismissed and redraws from whatever `renderParams` still
+  holds — the pre-overlay data, however old. `refreshAttention` and
+  `refreshDetail` both null it, so pulse finds nothing to redraw until the next
+  `refresh()` repopulates it, at most 2s later.
 - **Read-only, near-zero-install.** No hooks, no `settings.json` writes, no
   config file. The daemon itself only reads — from `~/.claude/`, VS Code's
   storage, and the usage endpoint. An earlier hook-based version was deleted;
@@ -120,19 +158,27 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   extra one, and AXRaise needs Accessibility permission. The reasoning is in the
   comment above `focusWindow()` — read it before proposing an alternative.
 - **MK.2 hardcoded-ish**: 15 keys, 72×72, macOS only, exclusive HID (the Elgato
-  app cannot run alongside). Extra sessions past the key count are dropped
-  silently, by design.
+  app cannot run alongside). The last two are reserved — key 14 (bottom-right)
+  is the usage readout and the stats toggle, key 13 the attention key — leaving
+  **13 session slots**. Extra sessions past that are dropped silently, by
+  design.
+- **A second press means "tell me more".** Tracked as a global "was the
+  immediately preceding press this same key for this same session" check
+  (`lastPress`), not a timeout, so any other key in between breaks the chain.
+  First press focuses the window, second opens that session's detail board.
+  Any press then leaves an overlay board, including the key that opened it —
+  in the attention queue that press still focuses the window on the way out,
+  which is the point of pressing one there; on the detail board its tiles have
+  no window of their own (`btn.assigned` is nulled), so they only dismiss.
 - **Nested (worktree) sessions don't get their own button.** `sessions.mjs`
   flags a session `nested: true` when its cwd sits inside — but isn't equal
   to — its matched VS Code window's folder (a background worktree checkout).
   `assignSlots` in `index.mjs` keeps those off the board's own slots entirely;
   instead they're grouped by folder onto the first button of that project's
-  block, drawn as a small indicator square. A second press of that same
-  button — tracked as a global "was this the immediately preceding press"
-  check, not a timeout, so any other key in between breaks the chain — opens
-  `refreshNested`'s overlay: live-refreshing content on a tile order fixed at
-  the moment it opened (`nestedView.order`), not re-sorted while it's up.
-  Pressing any key closes the overlay and returns to the normal board.
+  block, drawn as a small indicator square. The two places they become
+  full-size tiles you can read are the attention queue (if they're blocked) and
+  the detail board of their project (always, pinned to its tail). There is no
+  separate nested-only overlay any more.
 
 ## Docs
 

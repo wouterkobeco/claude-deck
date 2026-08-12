@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor, attentionQueue } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue, detailLayout } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -214,5 +214,55 @@ eq(
   ["real", "unknown"],
   "ts: 0 does not sort ahead of a real timestamp as if it were the epoch"
 );
+
+// The detail board: five header tiles, then tasks, with worktree tiles held
+// at the tail so a long task list can't push them off the board entirely.
+const dSession = {
+  session_id: "d1",
+  folder: "/projects/kob-trace",
+  state: "busy",
+  context: 41,
+  model: "claude-opus-5",
+  effort: "high",
+  aiTitle: "serializing client-block mutations",
+};
+const dTask = (subject, status = "pending") => ({ subject, status });
+
+const plain = detailLayout({ session: dSession, tasks: [dTask("read the code"), dTask("lock it", "in_progress")], nested: [], age: "40m", slotCount: 13 });
+eq(plain.length, 13, "layout always fills the board");
+eq(plain.slice(0, 2).map((t) => t.kind), ["label", "label"], "title spans two tiles");
+eq(plain[2], { kind: "stat", label: "STATE", value: "busy 40m" }, "state tile carries the age");
+eq(plain[3], { kind: "stat", label: "CONTEXT", value: "41%" }, "context tile");
+eq(plain[4], { kind: "stat", label: "MODEL", value: "opus-5 high" }, "model tile drops the vendor prefix");
+eq(plain[5], { kind: "task", number: 1, subject: "read the code", status: "pending" }, "tasks start at slot 5");
+eq(plain[6].status, "in_progress", "task status is carried through");
+eq(plain[7], null, "unused slots are null");
+
+// Worktree tiles hold the tail; tasks take what's left in front of them.
+const withNested = detailLayout({
+  session: dSession,
+  tasks: Array.from({ length: 20 }, (_, i) => dTask(`Task ${i + 1}`, i === 0 ? "in_progress" : "pending")),
+  nested: [{ session_id: "w1", state: "busy" }, { session_id: "w2", state: "idle" }],
+  age: "40m",
+  slotCount: 13,
+});
+eq(withNested.length, 13, "layout still fills the board");
+eq(withNested.slice(11).map((t) => t.kind), ["nested", "nested"], "worktree tiles sit at the tail");
+eq(withNested.slice(5, 11).every((t) => t.kind === "task"), true, "tasks fill the space in front of them");
+
+// After /clear the transcript still holds the pre-clear session name; the
+// header must go blank rather than present it as this session's title.
+const cleared = detailLayout({
+  session: { ...dSession, aiTitle: null, name: "old summary", clearedEmpty: true, cwd: "/projects/kob-trace" },
+  tasks: [],
+  nested: [],
+  age: "",
+  slotCount: 13,
+});
+eq(cleared.slice(0, 2), [{ kind: "label", label: "" }, { kind: "label", label: "" }], "cleared session shows no title");
+
+// A session with no context reported must not print "null%".
+const noCtx = detailLayout({ session: { ...dSession, context: null }, tasks: [], nested: [], age: "", slotCount: 13 });
+eq(noCtx[3], { kind: "stat", label: "CONTEXT", value: "—" }, "unknown context shows a dash");
 
 console.log("OK: project grouping");

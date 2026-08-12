@@ -3,9 +3,9 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
-import { getLiveSessions } from "./sessions.mjs";
+import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, formatAge } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, formatAge, splitLabel } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -236,6 +236,75 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   });
 }
 
+// The three things every board derives from a session the same way. One copy
+// rather than one per view: the fallback chain and the clearedEmpty rule
+// below are invariants (see CLAUDE.md), and the second copy had already
+// dropped a field the first one drew.
+//
+// `projectPath` is the folder whose basename names the key — the matched VS
+// Code window normally, but a worktree session's own cwd on the detail board,
+// where the parent project's name is already on screen.
+function keyFields(session, projectPath = session.folder) {
+  return {
+    // Prefer the AI-generated title (the exact string VS Code's terminal list
+    // shows), then Claude Code's short session name, then the cwd's basename —
+    // each a fallback for when the one before it isn't available yet (e.g.
+    // aiTitle hasn't been generated this early in a session) or a future
+    // Claude Code version changes format.
+    //
+    // clearedEmpty skips that whole chain: /clear reuses the transcript file,
+    // so a title found there would be the pre-clear one, and name/cwd would
+    // look like a real answer when the honest one is "nothing yet".
+    label: session.clearedEmpty
+      ? ""
+      : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd,
+    project: projectPath.split("/").filter(Boolean).pop() ?? "",
+    // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
+    // updatedAt; formatAge would otherwise report the age of the epoch.
+    age: session.ts ? formatAge(Date.now() / 1000 - session.ts) : "",
+  };
+}
+
+// The detail board, as data. Kept separate from drawing so the slot
+// arithmetic — which is where an off-by-one silently hides a task — is
+// testable without a Stream Deck.
+//
+// Worktree tiles are pinned to the tail rather than appended after the tasks:
+// they're the only way to reach those sessions, and a twenty-task plan would
+// otherwise push them off the board.
+export function detailLayout({ session, tasks, nested, age, slotCount }) {
+  // Same title as the session's own key, clearedEmpty rule included — after a
+  // /clear the two header keys go blank rather than showing the session name
+  // as though it were an answer.
+  const [titleA, titleB] = splitLabel(keyFields(session).label, 2);
+  const header = [
+    { kind: "label", label: titleA },
+    { kind: "label", label: titleB },
+    { kind: "stat", label: "STATE", value: age ? `${session.state} ${age}` : session.state },
+    { kind: "stat", label: "CONTEXT", value: typeof session.context === "number" ? `${session.context}%` : "—" },
+    {
+      kind: "stat",
+      label: "MODEL",
+      // "claude-opus-5" is three quarters vendor on a 72px key.
+      value: [(session.model ?? "").replace(/^claude-/, ""), session.effort ?? ""].filter(Boolean).join(" ") || "—",
+    },
+  ];
+
+  const nestedTiles = nested.slice(0, Math.max(0, slotCount - header.length)).map((s) => ({ kind: "nested", session: s }));
+  const taskRoom = slotCount - header.length - nestedTiles.length;
+  const shown = taskWindow(tasks, taskRoom);
+  const taskTiles = shown.map((t) => ({
+    kind: "task",
+    number: tasks.indexOf(t) + 1,
+    subject: t.subject ?? "",
+    status: t.status ?? "pending",
+  }));
+
+  const body = new Array(taskRoom).fill(null);
+  taskTiles.forEach((tile, i) => (body[i] = tile));
+  return [...header, ...body, ...nestedTiles];
+}
+
 // The bottom-right key is the usage readout rather than a session, so it is
 // left out of `buttons` before slots are assigned.
 async function drawUsage(deck, btn) {
@@ -308,7 +377,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
     buttons.map(async (btn, i) => {
       const session = queue[i] ?? null;
       btn.assigned = session;
-      btn.renderParams = null; // see refreshNested: keeps pulse off stale data
+      btn.renderParams = null; // see refreshDetail: keeps pulse off stale data
 
       if (!session) {
         if (btn.drawn !== null) {
@@ -317,11 +386,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
         }
         return;
       }
-      const label = session.clearedEmpty
-        ? ""
-        : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
-      const project = session.folder.split("/").filter(Boolean).pop() ?? "";
-      const age = session.ts ? formatAge(Date.now() / 1000 - session.ts) : "";
+      const { label, project, age } = keyFields(session);
       const accent = accentFor(session.folder);
 
       // Every value renderKey below actually draws must be in this signature
@@ -367,21 +432,8 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
         }
         return;
       }
-      // Prefer the AI-generated title (the exact string VS Code's terminal
-      // list shows), then Claude Code's short session name, then the cwd's
-      // basename — each a fallback for when the one before it isn't
-      // available yet (e.g. aiTitle hasn't been generated this early in a
-      // session) or a future Claude Code version changes format.
-      //
-      // clearedEmpty skips that whole chain: /clear reuses the transcript
-      // file, so a title found there would be the pre-clear one, and name/cwd
-      // would look like a real answer when the honest one is "nothing yet".
-      const label = session.clearedEmpty
-        ? ""
-        : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
-
+      const { label, project, age } = keyFields(session);
       const accent = accentFor(session.folder);
-      const project = session.folder.split("/").filter(Boolean).pop() ?? "";
       const progress = session.progress;
       // Every field on this key describes this session and no other. A
       // worktree session folded onto the key reports itself through its own
@@ -389,9 +441,6 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // title and context gauge belong to a different session was worse than
       // a small square.
       const nestedStates = btn.nestedSessions.map((n) => n.state);
-      // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
-      // updatedAt; formatAge would otherwise report the age of the epoch.
-      const age = session.ts ? formatAge(Date.now() / 1000 - session.ts) : "";
       // Cached every poll (not just on change) so the pulse loop below can
       // redraw a requires_action key between polls without re-deriving it
       // from a fresh getLiveSessions() call.
@@ -408,49 +457,101 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
   return sessions;
 }
 
-// The nested-session overlay: same rendering and blank/diffing conventions
-// as refresh(), but drawn from a fixed set of session ids captured once at
-// the moment the overlay opened (nestedView.order) rather than a fresh
-// assignSlots pass — order stays put for the visit even as content updates.
-async function refreshNested(deck, buttons, nestedView) {
+// The detail board: one session across every session key — a two-key title,
+// three stat tiles, then its task list, with the worktree sessions that share
+// its folder held at the tail. This is where those sessions became reachable
+// as tiles instead of 3×6px squares, which is why the old nested-only overlay
+// is gone.
+//
+// Content refreshes every poll; the shape does not. `view.tiles` is captured
+// on the first poll after the view opens and then held, so a task completing
+// recolours its tile rather than sliding the whole window (taskWindow
+// re-centres on the in-progress task) under your finger. Tasks are read here
+// rather than in getLiveSessions so the 2s poll costs exactly what it did
+// before this view existed.
+async function refreshDetail(deck, buttons, view) {
   const sessions = await getLiveSessions();
+  const session = sessions.find((s) => s.session_id === view.session_id);
+  if (!session) return sessions; // it ended while you were looking at it; any press exits
+
+  // Sessions already holding a board key of their own (everReal — a real
+  // session that later cd'd into a worktree, or this session itself) are not
+  // worktree children of this one.
+  const nested = sessions.filter(
+    (s) => s.nested && s.folder === session.folder && s.session_id !== session.session_id && !everReal.has(s.session_id)
+  );
+  const tasks = await readTaskList(session.session_id);
+  const { age } = keyFields(session);
+  const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
+  view.tiles ??= fresh;
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
-  const accent = accentFor(nestedView.folder);
+  // Each held tile keeps its slot and re-reads its own content by identity:
+  // a task by its number, a worktree session by its id. Header tiles and
+  // slots that were empty when the view opened simply take the fresh layout.
+  const tiles = view.tiles.map((tile, i) => {
+    if (tile?.kind === "task") {
+      const t = tasks[tile.number - 1];
+      return t ? { ...tile, subject: t.subject ?? "", status: t.status ?? "pending" } : null;
+    }
+    if (tile?.kind === "nested") {
+      const s = byId.get(tile.session.session_id);
+      return s ? { kind: "nested", session: s } : null;
+    }
+    return fresh[i] ?? null;
+  });
+  const accent = accentFor(session.folder);
 
   await Promise.all(
     buttons.map(async (btn, i) => {
-      const sessionId = nestedView.order[i];
-      const session = sessionId ? byId.get(sessionId) : null;
-      btn.assigned = null; // nested tiles have no window to focus
-      // pulse() is paused while the overlay shows (see the run() change
-      // below), but the instant it's dismissed, pulse resumes on its own
-      // 400ms tick and reads whatever btn.renderParams already holds —
-      // which, without this, would still be each button's pre-overlay data,
-      // stale by however long the overlay was open. Nulling it here means
-      // pulse's filter (state/nestedStates) finds nothing to redraw until the
-      // next refresh() repopulates it, at most 2s later.
+      const tile = tiles[i];
+      btn.assigned = null; // detail tiles have no window of their own to focus
+      // pulse() is paused while this view shows (run() freezes it on
+      // view.kind), but the instant it's dismissed pulse resumes on its own
+      // 400ms tick and reads whatever btn.renderParams already holds — which,
+      // without this, would still be each button's pre-detail data, stale by
+      // however long the view was open. Nulling it means pulse finds nothing
+      // to redraw until the next refresh() repopulates it, at most 2s later.
       btn.renderParams = null;
 
-      if (!session) {
+      if (!tile) {
         if (btn.drawn !== null) {
           await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
           btn.drawn = null;
         }
         return;
       }
-      const label = session.clearedEmpty
-        ? ""
-        : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
-      const project = session.cwd.split("/").filter(Boolean).pop() ?? "";
-      const progress = session.progress;
 
-      const drawn = `nested ${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label}`;
+      // The render call takes exactly these params and the diff signature is
+      // built from exactly these params, so no drawn field can go missing
+      // from it — that omission (accent and context, on the queue tiles) is
+      // what froze a gauge for minutes.
+      const params =
+        tile.kind === "task"
+          ? { number: tile.number, subject: tile.subject, status: tile.status }
+          : tile.kind === "stat"
+          ? { label: tile.label, value: tile.value }
+          : tile.kind === "nested"
+          ? {
+              state: tile.session.state,
+              accent,
+              // A worktree tile names its own checkout, not the parent
+              // project whose name is already two keys up.
+              ...keyFields(tile.session, tile.session.cwd),
+              progress: tile.session.progress,
+              context: tile.session.context,
+            }
+          : { state: session.state, label: tile.label, accent, project: "" };
+      const drawn = `detail ${tile.kind} ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
-      const buf = await renderKey({ ...btn, state: session.state, label, accent, project, progress, context: session.context });
-      await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
+
+      const render = tile.kind === "task" ? renderTask : tile.kind === "stat" ? renderStat : renderKey;
+      await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...params }), { format: "rgba" });
       btn.drawn = drawn;
     })
   );
+  // Returned so the poll loop can hand the same read to drawAttention rather
+  // than calling getLiveSessions() a second time for the same 2s tick.
+  return sessions;
 }
 
 // Flashes every requires_action key between its normal red and a brighter
@@ -524,8 +625,9 @@ async function run() {
   //   { kind: "sessions" }
   //   { kind: "stats" }
   //   { kind: "attention" }
-  //   { kind: "detail", session_id, order: [session_id, ...] }  (Task 6)
-  // `order` is captured when the view opens and never re-sorted.
+  //   { kind: "detail", session_id, tiles }
+  // `tiles` is filled in by the first refreshDetail after the view opens and
+  // then held, so the board's shape stays put while its content updates.
   let view = { kind: "sessions" };
   // Latest attentionQueue length, kept here so the press handler can read it
   // without a second query — drawAttention returns it on every call, this
@@ -575,15 +677,16 @@ async function run() {
       return; // stat tiles aren't clickable
     }
 
-    // TEMPORARY until Task 6: a repeat press should open the detail view
-    // (`view = { kind: "detail", session_id: sessionId, order: [] }`), but
-    // Tasks 4-5 haven't given it anything to draw yet, and `view.kind !==
-    // "sessions"` already freezes the pulse loop — opening a view with no
-    // content would eat the press and stall any pulsing key underneath it.
-    // So every press here, repeat or not, just focuses, same as before this
-    // task's press-handler rewrite. Task 6 removes this comment and branches
-    // on `isRepeat` again once refreshDetail() exists to back it.
-    if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
+    // A second press on the same key for the same session opens that
+    // session's detail board; the first still focuses its window. "Second"
+    // means the immediately preceding press, not a press within some timeout,
+    // so any other key in between breaks the chain.
+    const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
+    if (isRepeat) {
+      view = { kind: "detail", session_id: sessionId };
+    } else if (btn?.assigned) {
+      focusWindow(btn.assigned.folder, btn.assigned.ide);
+    }
     lastPress = press;
   });
 
@@ -608,10 +711,9 @@ async function run() {
         attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);
+      } else if (view.kind === "detail") {
+        attentionCount = await drawAttention(deck, attentionButton, await refreshDetail(deck, buttons, view), false);
       } else {
-        // Covers "sessions" and, until Task 6 adds its own branch, "detail" —
-        // the placeholder view opened by a repeat press falls back to the
-        // normal board rather than showing nothing.
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
       }
