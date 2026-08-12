@@ -296,6 +296,54 @@ async function refreshStats(deck, buttons, stats) {
   );
 }
 
+// The attention board: the queue across the session keys, re-ranked every
+// poll. Unlike the detail view this deliberately re-sorts while it's up — a
+// session that gets unblocked should leave the queue you're looking at.
+async function refreshAttention(deck, buttons, attentionButton) {
+  const sessions = await getLiveSessions();
+  const queue = attentionQueue(sessions, Date.now() / 1000);
+  const count = await drawAttention(deck, attentionButton, sessions, false);
+
+  await Promise.all(
+    buttons.map(async (btn, i) => {
+      const session = queue[i] ?? null;
+      btn.assigned = session;
+      btn.renderParams = null; // see refreshNested: keeps pulse off stale data
+
+      if (!session) {
+        if (btn.drawn !== null) {
+          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
+          btn.drawn = null;
+        }
+        return;
+      }
+      const label = session.clearedEmpty
+        ? ""
+        : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
+      const project = session.folder.split("/").filter(Boolean).pop() ?? "";
+      const age = session.ts ? formatAge(Date.now() / 1000 - session.ts) : "";
+
+      const drawn = `queue ${session.state} ${project} ${label} ${age}`;
+      if (btn.drawn === drawn) return;
+      const buf = await renderKey({
+        ...btn,
+        state: session.state,
+        label,
+        accent: accentFor(session.folder),
+        project,
+        context: session.context,
+        age,
+      });
+      await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
+      btn.drawn = drawn;
+    })
+  );
+  // Returned like drawAttention() so the poll loop can keep attentionCount
+  // live from this branch too — this view's own call to drawAttention is
+  // buried inside here rather than at the loop's call site.
+  return count;
+}
+
 async function refresh(deck, buttons, slots, nestedBySlot) {
   const sessions = await getLiveSessions();
   assignSlots(sessions, slots, nestedBySlot);
@@ -466,16 +514,18 @@ async function run() {
   const nestedBySlot = new Array(buttons.length).fill(null);
 
   let disconnected = false;
-  // Toggled by pressing the usage key; the key itself keeps rendering the
-  // same either way — it's the 13 session buttons that switch content.
-  let statsMode = false;
-  // { folder, order: [session_id, ...] } while the nested-session overlay is
-  // showing, otherwise null. `order` is captured once when the overlay opens
-  // and never re-sorted — see refreshNested.
-  let nestedView = null;
-  // Latest attentionQueue length, kept here so the press handler (a later
-  // task) can read it without a second query — drawAttention returns it on
-  // every call, this just holds the most recent value.
+  // Which board is showing. One value rather than a flag per view: with four
+  // of them, "stats and detail are both somehow on" is a state that shouldn't
+  // be representable.
+  //   { kind: "sessions" }
+  //   { kind: "stats" }
+  //   { kind: "attention" }
+  //   { kind: "detail", session_id, order: [session_id, ...] }  (Task 6)
+  // `order` is captured when the view opens and never re-sorted.
+  let view = { kind: "sessions" };
+  // Latest attentionQueue length, kept here so the press handler can read it
+  // without a second query — drawAttention returns it on every call, this
+  // just holds the most recent value.
   let attentionCount = 0;
   // The immediately preceding key-down, updated on every press regardless of
   // what it did — this is what makes a second press on the same button mean
@@ -487,40 +537,56 @@ async function run() {
   });
   deck.on("down", (control) => {
     if (control.type !== "button") return;
-    const btn = control.index === usageButton.index ? null : buttons[control.index];
+    const isUsage = control.index === usageButton.index;
+    const isAttention = control.index === attentionButton.index;
+    const btn = isUsage || isAttention ? null : buttons[control.index];
     const sessionId = btn?.assigned?.session_id ?? null;
+    const press = { index: control.index, session_id: sessionId };
 
-    if (nestedView) {
-      nestedView = null;
-      lastPress = { index: control.index, session_id: sessionId };
+    // Any press leaves an overlay, including the key that opened it.
+    if (view.kind === "attention" || view.kind === "detail") {
+      const wasAttention = view.kind === "attention";
+      view = { kind: "sessions" };
+      // In the queue a session key still focuses its window on the way out —
+      // that's the whole point of pressing one there.
+      if (wasAttention && btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
+      lastPress = press;
       return;
     }
-    if (control.index === usageButton.index) {
-      statsMode = !statsMode;
+    if (isUsage) {
+      view = view.kind === "stats" ? { kind: "sessions" } : { kind: "stats" };
       lastPress = { index: control.index, session_id: null };
       return;
     }
-    if (statsMode) {
-      lastPress = { index: control.index, session_id: sessionId };
+    if (isAttention) {
+      // Dark key, nothing queued: a press has nothing to show, so it does
+      // nothing rather than opening an empty board. `attentionCount` is what
+      // the last drawAttention() returned.
+      if (attentionCount > 0) view = { kind: "attention" };
+      lastPress = { index: control.index, session_id: null };
+      return;
+    }
+    if (view.kind === "stats") {
+      lastPress = press;
       return; // stat tiles aren't clickable
     }
 
     const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
-    if (isRepeat && btn.nestedSessions?.length) {
-      nestedView = { folder: btn.assigned.folder, order: btn.nestedSessions.map((s) => s.session_id) };
+    if (isRepeat) {
+      view = { kind: "detail", session_id: sessionId, order: [] }; // filled in Task 6
     } else if (btn?.assigned) {
       focusWindow(btn.assigned.folder, btn.assigned.ide);
     }
-    lastPress = { index: control.index, session_id: sessionId };
+    lastPress = press;
   });
 
   // Runs alongside the poll loop below, not inside it — it needs a much
   // faster beat than the 2s poll to read as a pulse.
-  pulse(deck, buttons, attentionButton, () => statsMode || !!nestedView, () => disconnected);
+  pulse(deck, buttons, attentionButton, () => view.kind !== "sessions", () => disconnected);
 
   while (!disconnected) {
     try {
-      if (statsMode) {
+      if (view.kind === "stats") {
         // Top-left pair: time left in each rate-limit window, ahead of the
         // all-time totals — these change by the hour/day, the totals barely
         // move. Session in hours (it resets within a day), week in days.
@@ -533,10 +599,12 @@ async function run() {
         ];
         await refreshStats(deck, buttons, [...resetTiles, ...(await getStats())]);
         attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
-      } else if (nestedView) {
-        await refreshNested(deck, buttons, nestedView);
-        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
+      } else if (view.kind === "attention") {
+        attentionCount = await refreshAttention(deck, buttons, attentionButton);
       } else {
+        // Covers "sessions" and, until Task 6 adds its own branch, "detail" —
+        // the placeholder view opened by a repeat press falls back to the
+        // normal board rather than showing nothing.
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
       }
