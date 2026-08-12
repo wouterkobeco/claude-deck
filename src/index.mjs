@@ -32,11 +32,6 @@ const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md"
 // existing colours whenever a new window appears.
 const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#a1887f"];
 
-// Headless processes get this instead of their project's accent on the detail
-// board — muted, so a script that will be gone in a minute doesn't look like a
-// subsession you can go and talk to.
-const PROCESS_ACCENT = "#90a4ae";
-
 // First-seen order for both grouping and colour, so a project's block and its
 // stripe always agree. Folders are kept after their last session ends: if the
 // project comes back it reclaims its old position and colour instead of
@@ -44,10 +39,6 @@ const PROCESS_ACCENT = "#90a4ae";
 const folderOrder = new Map();
 const sessionOrder = new Map();
 const nestedOrder = new Map();
-// Sessions ever seen with a non-nested cwd. Never pruned, same as folderOrder:
-// a set of dead session ids costs nothing, and a resumed session keeping its
-// real button is the behaviour we want anyway.
-const everReal = new Set();
 let arrivals = 0;
 
 // Colour is picked from what no other live folder is using, not from
@@ -177,49 +168,13 @@ async function focusWindow(folder, ide) {
 // the daemon's lifetime, and within a project sessions stay in arrival order.
 // Nothing re-sorts by activity.
 export function assignSlots(sessions, slots, nestedBySlot = []) {
-  // Headless SDK processes are neither: no slot of their own, and no margin
-  // marker either. They exist on the detail board of the project they belong
-  // to and nowhere else — a scripted agent that runs for ninety seconds
-  // shouldn't rearrange a board you navigate by muscle memory.
-  const onBoard = sessions.filter((s) => !s.process);
-  let real = onBoard.filter((s) => !s.nested);
-  let nested = onBoard.filter((s) => s.nested);
-
-  // A session that has ever reported a non-nested cwd stays real, even once
-  // its cwd moves into a worktree. `nested` is really a property of where a
-  // session *started*: one that runs EnterWorktree mid-task looks identical
-  // to a background checkout from the cwd alone, and demoting it blanks out a
-  // busy green key in the middle of the work it's reporting on. Same
-  // first-seen rule as everything else here — only a session already nested
-  // the first time it appeared becomes an indicator.
-  //
-  // Deliberately not `sessionOrder.has()`: an orphan-promoted stand-in (see
-  // below) is in there too, and those must still revert once a genuine real
-  // session shows up for their folder.
-  for (const s of real) everReal.add(s.session_id);
-  const settled = nested.filter((s) => everReal.has(s.session_id));
-  if (settled.length) {
-    real = [...real, ...settled];
-    nested = nested.filter((s) => !everReal.has(s.session_id));
-  }
-
-  // A folder with no real session at all would otherwise vanish from the
-  // board entirely — no primary button to attach its nested sessions to.
-  // The common cause is an interactive session that simply cd'd into a
-  // worktree rather than a background helper spawned by one; there's no way
-  // to tell those apart from the data available, so the earliest-seen
-  // nested session for such a folder is promoted to stand in as its
-  // primary, rather than losing the folder's only button.
-  const realFolders = new Set(real.map((s) => s.folder));
-  const orphanFolders = new Set(nested.map((s) => s.folder).filter((f) => !realFolders.has(f)));
-  for (const folder of orphanFolders) {
-    const candidates = nested
-      .filter((s) => s.folder === folder)
-      .sort((a, b) => (nestedOrder.get(a.session_id) ?? Infinity) - (nestedOrder.get(b.session_id) ?? Infinity));
-    const promoted = candidates[0];
-    real = [...real, promoted];
-    nested = nested.filter((s) => s.session_id !== promoted.session_id);
-  }
+  // Nested means *spawned by another session*, not "in a subdirectory".
+  // sessions.mjs decides it from `entrypoint`: `sdk-py`/`sdk-ts` is an agent
+  // some other agent started, `cli` is one you started yourself. A cli session
+  // gets a key wherever its cwd happens to be — most work here happens in
+  // worktrees, and hiding those behind a 3×6px marker hid the main event.
+  const real = sessions.filter((s) => !s.nested);
+  const nested = sessions.filter((s) => s.nested);
 
   const liveFolders = new Set(real.map((s) => s.folder));
   for (const s of real) {
@@ -275,7 +230,13 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
 // `projectPath` is the folder whose basename names the key — the matched VS
 // Code window normally, but a worktree session's own cwd on the detail board,
 // where the parent project's name is already on screen.
-function keyFields(session, projectPath = session.folder) {
+// `projectPath` defaults to the session's own cwd rather than its matched
+// window folder, so a worktree session's key names the worktree
+// ("DATA-LAYER-CORRECTNESS") instead of repeating its project. Two agents in
+// one repo are otherwise two keys both reading KOB-TRACE. The accent stays
+// folder-derived, so they still share their project's colour and block —
+// the name tells them apart, the colour says they belong together.
+function keyFields(session, projectPath = session.cwd ?? session.folder) {
   return {
     // Prefer the AI-generated title (the exact string VS Code's terminal list
     // shows), then Claude Code's short session name, then the cwd's basename —
@@ -308,7 +269,7 @@ function keyFields(session, projectPath = session.folder) {
 // attention keys included — so it owes you an unambiguous way out.
 export const DETAIL_BACK_INDEX = 10;
 
-export function detailLayout({ session, tasks, nested, processes = [], age, slotCount }) {
+export function detailLayout({ session, tasks, nested, age, slotCount }) {
   // Same title as the session's own key, clearedEmpty rule included — after a
   // /clear the two header keys go blank rather than showing the session name
   // as though it were an answer.
@@ -326,15 +287,10 @@ export function detailLayout({ session, tasks, nested, processes = [], age, slot
     },
   ];
 
-  // Worktree subsessions and headless processes both belong to this session's
-  // project and both are pinned to the tail, ahead of the tasks: they're the
-  // only way to see that they exist at all, where a task list past the window
-  // is merely truncated. Subsessions first — they're the ones that outlive a
-  // glance.
-  const tail = [
-    ...nested.map((s) => ({ kind: "nested", session: s })),
-    ...processes.map((s) => ({ kind: "process", session: s })),
-  ];
+  // Subagents pin to the tail, ahead of the tasks: this board and a 3×6px
+  // margin marker are the only places they appear at all, where a task list
+  // past the window is merely truncated.
+  const tail = nested.map((s) => ({ kind: "nested", session: s }));
 
   // Every slot except the back key is content; the back key is carved out
   // afterwards so the arithmetic here stays a simple "how many are left".
@@ -589,19 +545,14 @@ async function refreshDetail(deck, buttons, view) {
     return null; // tells the poll loop there's nothing left to show
   }
 
-  // Sessions already holding a board key of their own (everReal — a real
-  // session that later cd'd into a worktree, or this session itself) are not
-  // worktree children of this one.
-  const nested = sessions.filter(
-    (s) => s.nested && s.folder === session.folder && s.session_id !== session.session_id && !everReal.has(s.session_id)
-  );
-  // The headless processes belonging to this project. They never appear on
-  // the board itself, so this board is the only place they're visible at all
-  // — and they're short-lived, so one may well vanish between two polls.
-  const processes = sessions.filter((s) => s.process && s.folder === session.folder);
+  // The subagents this project has running: sdk sessions, which never hold a
+  // board key of their own, so this board and the margin markers are the only
+  // places they appear at all. They're short-lived, so one may well vanish
+  // between two polls.
+  const nested = sessions.filter((s) => s.nested && s.folder === session.folder);
   const tasks = await readTaskList(session.session_id);
   const { age } = keyFields(session);
-  const fresh = detailLayout({ session, tasks, nested, processes, age, slotCount: buttons.length });
+  const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;
   const tiles = holdTiles(view.tiles, fresh, tasks, sessions);
   const accent = accentFor(session.folder);
@@ -637,16 +588,11 @@ async function refreshDetail(deck, buttons, view) {
           ? { number: tile.number, subject: tile.subject, status: tile.status }
           : tile.kind === "stat"
           ? { label: tile.label, value: tile.value }
-          : tile.kind === "nested" || tile.kind === "process"
+          : tile.kind === "nested"
           ? {
               state: tile.session.state,
-              // A headless process gets the muted accent rather than the
-              // project's, so a subsession you can go and talk to doesn't
-              // look identical to a script that will be gone in a minute.
-              accent: tile.kind === "process" ? PROCESS_ACCENT : accent,
-              // A worktree tile names its own checkout, not the parent
-              // project whose name is already two keys up.
-              ...keyFields(tile.session, tile.session.cwd),
+              accent,
+              ...keyFields(tile.session),
               progress: tile.session.progress,
               context: tile.session.context,
             }

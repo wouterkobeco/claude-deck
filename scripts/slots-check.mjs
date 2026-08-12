@@ -96,60 +96,31 @@ eq(
   "nested session order survives being reported in a different order"
 );
 
-// A folder with only nested sessions and no real one at all (e.g. an
-// interactive session that cd'd into a worktree) would otherwise vanish from
-// the board entirely — the earliest-seen nested session is promoted to stand
-// in as the primary instead.
+// A folder whose only sessions are subagents shows nothing. They are agents
+// some script spawned, not ones you talk to, and a key for one is exactly the
+// phantom that used to appear for a security review nobody opened. Their whole
+// visibility is the margin marker on a project that does have a session, and
+// the detail board behind it.
 const C = "/projects/gamma";
 const nestedBySlot4 = new Array(5).fill(null);
 assignSlots([s("w1", C, true)], slots, nestedBySlot4);
-eq(slots, ["w1", null, null, null, null], "orphaned nested session is promoted to a real button");
-eq(nestedBySlot4[0], [], "promoted session has no nested siblings of its own");
+eq(slots, [null, null, null, null, null], "a folder with only subagents claims no key");
 
-// Two orphaned nested sessions in the same folder: the earliest-seen one is
-// promoted, the other still shows as its nested child.
-const D = "/projects/delta";
-const nestedBySlot5 = new Array(5).fill(null);
-assignSlots([s("w1", D, true), s("w2", D, true)], slots, nestedBySlot5);
-eq(slots, ["w1", null, null, null, null], "earliest nested session promoted when none is real");
-eq(
-  nestedBySlot5[0],
-  [{ session_id: "w2", folder: D, nested: true }],
-  "remaining nested session becomes the promoted button's child"
-);
-
-// Self-healing: once a genuine real session shows up for a previously
-// orphaned folder, it takes over as primary and the promoted stand-in
-// reverts to being an ordinary nested child.
-const E = "/projects/epsilon";
-const nestedBySlot6 = new Array(5).fill(null);
-assignSlots([s("w1", E, true)], slots, nestedBySlot6);
-eq(slots, ["w1", null, null, null, null], "orphaned nested session promoted (before a real session exists)");
-assignSlots([s("e1", E), s("w1", E, true)], slots, nestedBySlot6);
-eq(slots, ["e1", null, null, null, null], "real session takes over as primary once it appears");
-eq(
-  nestedBySlot6[0],
-  [{ session_id: "w1", folder: E, nested: true }],
-  "previously-promoted session reverts to an ordinary nested child"
-);
-
-// A real session that cd's into a worktree mid-task (EnterWorktree) keeps its
-// own button instead of collapsing into an indicator — otherwise a busy key
-// blanks out in the middle of the work it's reporting on.
+// A cli session in a worktree is a full agent, not a subagent: nested is
+// decided by entrypoint (sdk-* = spawned by another session), never by where
+// the cwd happens to sit. Most work here happens in worktrees, so demoting
+// them hid the main event behind a 3×6px marker.
 const F = "/projects/zeta";
 const nestedBySlot7 = new Array(5).fill(null);
 assignSlots([s("f1", F), s("f2", F)], slots, nestedBySlot7);
-eq(slots, ["f1", "f2", null, null, null], "two real sessions in one project");
-assignSlots([s("f1", F, true), s("f2", F)], slots, nestedBySlot7);
-eq(slots, ["f1", "f2", null, null, null], "settled session keeps its slot after entering a worktree");
-eq(nestedBySlot7[0], [], "and does not become its own nested child");
+eq(slots, ["f1", "f2", null, null, null], "two sessions in one project each get a key");
+eq(nestedBySlot7[0], [], "neither is the other's subagent");
 
-// ...but a session first seen inside a worktree still is one, even when its
-// folder already has a real session — that's the background-checkout case the
-// indicator exists for.
+// ...and a genuine subagent alongside them still folds onto the block's first
+// key rather than taking one of its own.
 assignSlots([s("f1", F), s("f2", F), s("w9", F, true)], slots, nestedBySlot7);
-eq(slots, ["f1", "f2", null, null, null], "session first seen nested claims no slot");
-eq(nestedBySlot7[0].map((n) => n.session_id), ["w9"], "session first seen nested stays an indicator");
+eq(slots, ["f1", "f2", null, null, null], "a subagent claims no slot");
+eq(nestedBySlot7[0].map((n) => n.session_id), ["w9"], "it attaches to the block's first key");
 
 // Accents come from what's free, not from position % 8. folderOrder is never
 // pruned, so a long-lived folder plus enough churn used to hand a new project
@@ -242,24 +213,22 @@ eq(plain[5], { kind: "task", number: 1, subject: "read the code", status: "pendi
 eq(plain[6].status, "in_progress", "task status is carried through");
 eq(plain[7], null, "unused slots are null");
 
-// Subagents and processes both pin to the tail, subagents first — they're the
-// only place either is visible at all, where a task list past the window is
-// merely truncated.
+// Subagents pin to the tail — this board and a 3×6px margin marker are the
+// only places they appear at all, where a task list past the window is merely
+// truncated.
 const wtS = (id) => ({ session_id: id, state: "busy", nested: true, folder: "/projects/kob-trace", cwd: `/wt/${id}` });
-const prS = (id) => ({ session_id: id, state: "idle", process: true, folder: "/projects/kob-trace", cwd: `/wt/${id}` });
 const withTail = detailLayout({
   session: dSession,
   tasks: [dTask("only task", "in_progress")],
-  nested: [wtS("w1")],
-  processes: [prS("p1"), prS("p2")],
+  nested: [wtS("w1"), wtS("w2"), wtS("w3")],
   age: "40m",
   slotCount: DECK,
 });
 eq(withTail.length, DECK, "layout still fills the deck");
 eq(
   withTail.slice(-3).map((t) => `${t.kind}:${t.session.session_id}`),
-  ["nested:w1", "process:p1", "process:p2"],
-  "subagents then processes, both at the tail"
+  ["nested:w1", "nested:w2", "nested:w3"],
+  "subagents sit at the tail, in order"
 );
 eq(withTail[DETAIL_BACK_INDEX], { kind: "back" }, "the back key keeps its position with a full tail");
 

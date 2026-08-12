@@ -61,8 +61,8 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   takes over **all 15 keys** — usage and attention included, unlike every other
   board, which draws only the 13 session keys. `detailLayout` lays out a
   two-key title, STATE/CONTEXT/MODEL stat tiles, then that session's task list
-  coloured by status, with its subagents (worktree sessions) and headless
-  processes pinned to the tail — a twenty-task plan must not push the only way
+  coloured by status, with its subagents (the sdk sessions it spawned)
+  pinned to the tail — a twenty-task plan must not push the only way
   to see those off the board. Because it covers the whole deck it owes an
   unambiguous exit: a back key at `DETAIL_BACK_INDEX` (10, the bottom-left
   button — keys are row-major across 5 columns). It is spliced in at that fixed
@@ -203,40 +203,39 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   that, the dismiss press still reads as "same key, same session" and the
   press after it reopens detail instead of focusing the window, purely
   depending on how fast you press.
-- **Nested (worktree) sessions don't get their own button.** `sessions.mjs`
-  flags a session `nested: true` when its cwd sits inside — but isn't equal
-  to — its matched VS Code window's folder (a background worktree checkout).
-  `assignSlots` in `index.mjs` keeps those off the board's own slots entirely;
-  instead they're grouped by folder onto the first button of that project's
-  block, drawn as a small indicator square coloured by that session's own
-  state. The two places they become full-size tiles you can read are the
-  attention queue (if they're blocked) and the detail board of their project
-  (always, pinned to its tail). There is no separate nested-only overlay any
-  more.
-- **Headless SDK runs are `process: true`, not dropped.** A scripted agent (a
-  security review, an SDK script) registers itself as `kind: "interactive"`
-  with the repo as its cwd, so `kind` can't tell it from a session you opened —
-  its `entrypoint` is `sdk-py`/`sdk-ts` where a terminal session is `cli`. It
-  once claimed a board key outright. Now `sessions.mjs` flags it and
-  `assignSlots` filters those out before anything else: no slot, and no margin
-  marker either, because one that runs for ninety seconds shouldn't rearrange a
-  board you navigate by muscle memory. They appear only on the detail board of
-  their project, in a muted `PROCESS_ACCENT` so a script that will be gone in a
-  minute doesn't look like a subsession you can go and talk to. This is why
-  "kob-trace is running two agents but only one key is lit" is expected: one is
-  a subsession (a marker) and one may be a process (detail board only).
+- **Nested means spawned by another session, not "in a subdirectory".**
+  `sessions.mjs` sets `nested: true` from `entrypoint`: `sdk-py`/`sdk-ts` is an
+  agent some script started, `cli` is one you started yourself. `assignSlots`
+  keeps nested ones off the board's slots; they group by folder onto the first
+  button of that project's block as a small square coloured by their own state,
+  and become readable tiles in two places — the attention queue if they block,
+  and the detail board of their project, pinned to its tail.
+
+  **This used to be inferred from the cwd**, and that was wrong. Anything below
+  the window's folder was called nested, which caught the SDK helpers *and*
+  every worktree — and most work in this setup happens in worktrees, so full
+  agents were being hidden behind a marker built for background helpers. A cli
+  session now gets a key wherever its cwd sits. The machinery that existed only
+  to paper over the old rule is gone with it: `everReal` (which rescued a
+  session that ran `EnterWorktree` mid-task) and orphan promotion (which
+  rescued a folder whose only session had wandered into a worktree). A folder
+  whose only sessions are nested now shows nothing, which is right — a key for
+  one is exactly the phantom that once appeared for a security review nobody
+  opened.
+- **A key names its cwd, not its window's folder.** `keyFields` defaults
+  `projectPath` to `session.cwd`, so two agents in one repo read
+  `KOB-TRACE` and `DATA-LAYER-CORRECTNESS` rather than both reading
+  `KOB-TRACE`. The accent stays folder-derived, so they still share a colour
+  and a block: the name tells them apart, the colour says they belong together.
 - **A key's colour covers its block; every other field is its own.** `refresh`
   takes `mostUrgent([own state, ...nested states])` for the background, so a
-  project working only through a worktree subsession reads as working instead
-  of sitting grey behind a 3×6px marker — those subsessions have no key, so
-  this is the only way their state reaches one. The title, context gauge and
-  task counter still describe the key's own session, which is the honest
-  split: a subsession can speak for "is anything happening here", not for
-  "what is this key about". The cost is real and was chosen with eyes open —
-  a green key can show a context gauge belonging to its idle session while
-  the work happens in the worktree. `state` is the block's, so `renderKey`
-  takes a separate `shell` flag for the margin's blue dot; without it a key
-  greened by a subsession would erase its own background-shell marker.
+  project whose only activity is a subagent reads as working rather than
+  sitting grey behind a 3×6px marker — subagents have no key, so this is the
+  only way their state reaches one. The title, context gauge and task counter
+  still describe the key's own session: a subagent can speak for "is anything
+  happening here", not for "what is this key about". `state` is the block's, so
+  `renderKey` takes a separate `shell` flag for the margin's blue dot; without
+  it a key greened by a subagent would erase its own background-shell marker.
 
 ## Docs
 

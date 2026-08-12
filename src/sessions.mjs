@@ -312,18 +312,21 @@ export async function getLiveSessions() {
   const matched = [];
   for (const s of registry) {
     if (s.kind !== "interactive" || !s.sessionId || !s.cwd || !s.pid) continue;
+    // Nested = spawned by another session, and `entrypoint` is what says so.
     // A headless SDK run (a security review, a scripted agent) registers
-    // itself as `kind: "interactive"` too, with the repo as its cwd, so `kind`
-    // alone can't tell it from a session you opened. Its `entrypoint` is
-    // "sdk-py"/"sdk-ts" where a real terminal session is "cli".
+    // itself as `kind: "interactive"` with the repo as its cwd, so `kind`
+    // can't tell it from a session you opened — but its entrypoint is
+    // "sdk-py"/"sdk-ts" where a session you started yourself is "cli".
     //
-    // Flagged rather than dropped: these are the *processes* a session spawns,
-    // and the detail board exists to show them. `assignSlots` keeps them off
-    // the board's own slots and out of the margin markers, so they still can't
-    // claim a key the way they once did — they're only visible where you went
-    // looking for them. Matching the sdk prefix rather than allowlisting "cli"
-    // so an entrypoint we haven't seen still gets a button.
-    const isProcess = s.entrypoint?.startsWith("sdk") ?? false;
+    // This used to be inferred from the cwd instead: anything below the
+    // window's folder was called nested. That caught SDK helpers, and it also
+    // caught every worktree — which is where most real work happens, so it
+    // hid full agents behind a marker meant for background helpers. The
+    // entrypoint says what the cwd only guessed at.
+    //
+    // Matching the sdk prefix rather than allowlisting "cli", so an entrypoint
+    // we haven't seen yet gets a key rather than disappearing.
+    const isNested = s.entrypoint?.startsWith("sdk") ?? false;
     if (!isAlive(s.pid)) continue;
     const match = matchFolder(s.cwd, folders);
     if (!match) continue; // no live local VS Code window for this session
@@ -332,8 +335,7 @@ export async function getLiveSessions() {
       cwd: s.cwd,
       folder: match.folder,
       ide: ideByFolder.get(match.folder) ?? null,
-      nested: match.nested,
-      process: isProcess,
+      nested: isNested,
       name: s.name ?? null,
       state: s.status ?? "idle",
       ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),
