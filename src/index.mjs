@@ -1,17 +1,21 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
-// One source of truth for the version — read from package.json rather than
-// duplicated here, so a bump is one edit. JSON modules only have a default
-// export, so this can't be destructured in the import.
-import pkg from "../package.json" with { type: "json" };
 import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, formatAge, splitLabel } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
+
+// One source of truth for the version — read from package.json rather than
+// duplicated here, so a bump is one edit. Read rather than imported with
+// `with { type: "json" }`: that syntax is parsed before anything runs, so on a
+// Node without it the daemon and every check that imports this file fail
+// outright rather than degrading, and nothing here declares that floor.
+const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 const POLL_MS = 2000;
 const RECONNECT_MS = 5000;
