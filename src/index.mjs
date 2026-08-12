@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, formatAge, splitLabel } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, splitLabel } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -67,7 +67,7 @@ export function accentFor(folder) {
 // worktree still reads as working. An unrecognised state ranks below all of
 // them rather than winning by accident — render.mjs already falls back to
 // idle's colour for anything it doesn't know.
-const STATE_URGENCY = ["idle", "shell", "busy", "waiting", "requires_action"];
+const STATE_URGENCY = ["idle", "shell", "busy", "compacting", "waiting", "requires_action"];
 export function mostUrgent(states) {
   return states.reduce((best, s) => (STATE_URGENCY.indexOf(s) > STATE_URGENCY.indexOf(best) ? s : best));
 }
@@ -498,9 +498,18 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
 
       // Skip the re-encode when nothing visible changed — most polls are
       // no-ops once a board has settled.
+      // A compacting key is its own renderer, not a colour: it's the one
+      // state where the useful thing to show is "still going, leave it" rather
+      // than a title and a gauge. The signature omits the phase so the 2s poll
+      // doesn't fight the 400ms sweep for the key — pulse() owns the animation
+      // and, as everywhere else here, never writes btn.drawn.
       const drawn = `session ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
-      await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...params }), { format: "rgba" });
+      const buf =
+        state === "compacting"
+          ? await renderCompacting({ ...btn, accent, project, phase: 0 })
+          : await renderKey({ ...btn, ...params });
+      await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
       btn.drawn = drawn;
     })
   );
@@ -619,15 +628,28 @@ async function refreshDetail(deck, buttons, view) {
 // still recognises a steady frame as unchanged.
 async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnected) {
   let bright = false;
+  let tick = 0;
   while (!isDisconnected()) {
     bright = !bright;
+    tick++;
     if (!isOverlayView()) {
       try {
         await Promise.all([
           ...buttons
-            .filter((btn) => btn.renderParams?.state === "requires_action" || (btn.renderParams?.nestedStates?.length ?? 0) > 0)
+            .filter(
+              (btn) =>
+                btn.renderParams?.state === "requires_action" ||
+                btn.renderParams?.state === "compacting" ||
+                (btn.renderParams?.nestedStates?.length ?? 0) > 0
+            )
             .map(async (btn) => {
-              const buf = await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
+              // The sweep advances a twelfth per 400ms tick — a full turn every
+              // ~5s, slow enough to read as deliberate against a compaction
+              // that runs a minute or two.
+              const buf =
+                btn.renderParams.state === "compacting"
+                  ? await renderCompacting({ ...btn, ...btn.renderParams, phase: (tick % 12) / 12 })
+                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
             }),
           ...(attentionButton.renderParams?.count > 0

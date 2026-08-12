@@ -377,6 +377,51 @@ export async function renderTask({ width, height, number, subject, status }) {
 }
 
 /**
+ * A session mid-compaction: a ring that sweeps round with the word under it.
+ *
+ * `phase` is 0..1 and comes from the pulse loop's tick, not from any real
+ * progress — nothing on disk reports how far along a compaction is, only that
+ * it finished. So this is a spinner honestly shaped like one: it says "still
+ * going", never "56%". Compactions run 70-120s, so it sweeps slowly enough to
+ * read as deliberate rather than as a stuck redraw.
+ */
+export async function renderCompacting({ width, height, accent, project, phase = 0 }) {
+  const capSize = Math.round(height * 0.11);
+  const cx = width / 2;
+  const cy = height * 0.44;
+  const r = Math.round(height * 0.2);
+  const stroke = 4;
+
+  // A quarter-turn arc as the moving head, drawn as a dash pattern round the
+  // circumference so no trig is needed to place it.
+  const circumference = 2 * Math.PI * r;
+  const arc = circumference * 0.28;
+  const offset = -circumference * phase;
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="${STATE_COLORS.busy}" />
+      ${accent && project ? `<rect width="${width}" height="13" fill="${accent}" />` : ""}
+      ${
+        project
+          ? `<text x="50%" y="7.5" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+                   letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
+                   dominant-baseline="middle">${escapeXml(fitCaps(project, width, capSize))}</text>`
+          : ""
+      }
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ffffff33" stroke-width="${stroke}" />
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ffffff" stroke-width="${stroke}"
+              stroke-linecap="round" stroke-dasharray="${arc} ${circumference - arc}"
+              stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})" />
+      <text x="50%" y="${height * 0.84}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+            letter-spacing="0.5" fill="#ffffffdd" text-anchor="middle"
+            dominant-baseline="middle">COMPACTING</text>
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+/**
  * The detail board's way out. That board takes over every key including the
  * usage and attention ones, so this is the only affordance telling you the
  * deck isn't stuck — which is why it's an arrow and a word rather than a

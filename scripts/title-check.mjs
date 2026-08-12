@@ -39,6 +39,8 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   blockedOnDenial: false,
   model: null,
   effort: null,
+  lastLineAt: null,
+  toolPending: false,
 });
 
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine("Add rate limiting")]), {
@@ -47,6 +49,8 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
   blockedOnDenial: false,
   model: null,
   effort: null,
+  lastLineAt: null,
+  toolPending: false,
 });
 
 // An old title must not survive a /clear with nothing said since.
@@ -56,6 +60,8 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   blockedOnDenial: false,
   model: null,
   effort: null,
+  lastLineAt: null,
+  toolPending: false,
 });
 
 assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
@@ -64,6 +70,8 @@ assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   blockedOnDenial: false,
   model: null,
   effort: null,
+  lastLineAt: null,
+  toolPending: false,
 });
 console.log("OK: aiTitle / clearedEmpty");
 
@@ -86,6 +94,8 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
   blockedOnDenial: false,
   model: "claude-opus-5",
   effort: "high",
+  lastLineAt: null,
+  toolPending: false,
 });
 
 // A transcript with no assistant line yet reports null rather than guessing.
@@ -95,7 +105,28 @@ assert.deepEqual(await signals([userTurnLine]), {
   blockedOnDenial: false,
   model: null,
   effort: null,
+  lastLineAt: null,
+  toolPending: false,
 });
+// The two signals compaction detection rests on. `toolPending` is the one
+// that matters: a long-running command is silent too, so without it a
+// five-minute test run would read as a compaction.
+const toolUseLine = (ts) =>
+  JSON.stringify({ type: "assistant", timestamp: ts, message: { content: [{ type: "tool_use", name: "Bash" }] } });
+const toolResultLine = (ts) =>
+  JSON.stringify({ type: "user", timestamp: ts, message: { content: [{ type: "tool_result" }] } });
+
+const running = await signals([toolResultLine("2026-08-12T10:00:00.000Z"), toolUseLine("2026-08-12T10:00:05.000Z")]);
+assert.equal(running.toolPending, true, "newest tool line is an unanswered tool_use — a tool is running");
+assert.equal(running.lastLineAt, Date.parse("2026-08-12T10:00:05.000Z"), "lastLineAt is the newest timestamp");
+
+const settled = await signals([toolUseLine("2026-08-12T10:00:00.000Z"), toolResultLine("2026-08-12T10:00:09.000Z")]);
+assert.equal(settled.toolPending, false, "newest tool line is the result — nothing outstanding");
+
+// A transcript with no tool lines at all must not claim one is pending.
+assert.equal((await signals([userTurnLine])).toolPending, false, "no tool lines means nothing pending");
+console.log("OK: compaction silence signals");
+
 console.log("OK: model / effort");
 
 await rm(dir, { recursive: true, force: true });

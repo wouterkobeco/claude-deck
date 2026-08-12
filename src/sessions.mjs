@@ -9,6 +9,10 @@ const TASKS_DIR = join(CLAUDE_DIR, "tasks");
 const CTX_DIR = join(CLAUDE_DIR, "ctx");
 const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const TITLE_TAIL_BYTES = 65536;
+// How long a busy session with no outstanding tool call has to have written
+// nothing before it reads as compacting. Real compactions run 70-120s; a turn
+// that is merely thinking or streaming still appends well inside this.
+const COMPACT_SILENCE_S = 25;
 
 async function readJsonFiles(dir, suffixes = [".json"]) {
   let names;
@@ -125,8 +129,44 @@ export async function readTranscriptSignals(transcriptPath) {
       effort = null,
       modelResolved = false;
 
-    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved || !modelResolved); i--) {
+    // Two more signals off the same scan, both about *silence* rather than
+    // content — see `compacting` in getLiveSessions.
+    //
+    // `lastLineAt`: when the transcript last grew. A session mid-turn appends
+    // constantly (tool_use, tool_result); one that has gone quiet for a long
+    // time while still reporting busy is doing something that writes nothing.
+    //
+    // `toolPending`: whether the newest of those two line kinds is an
+    // assistant tool_use rather than its tool_result — i.e. a tool is running
+    // right now. That is the other thing that produces a long silence, and
+    // it's what stops a five-minute `npm test` reading as a compaction.
+    let lastLineAt = null,
+      toolPending = false,
+      toolResolved = false;
+
+    for (
+      let i = lines.length - 1;
+      i >= 0 && (!titleResolved || !denialResolved || !modelResolved || !toolResolved || lastLineAt === null);
+      i--
+    ) {
       const line = lines[i];
+
+      if (lastLineAt === null && line.includes('"timestamp"')) {
+        try {
+          const t = Date.parse(JSON.parse(line).timestamp);
+          if (Number.isFinite(t)) lastLineAt = t;
+        } catch {
+          // truncated line at the start of the tail slice — keep scanning
+        }
+      }
+
+      if (!toolResolved && (line.includes('"tool_result"') || line.includes('"tool_use"'))) {
+        // Whichever comes first scanning backwards decides: a tool_result
+        // means the last tool call already came back, a tool_use means it
+        // hasn't.
+        toolPending = !line.includes('"tool_result"');
+        toolResolved = true;
+      }
 
       if (!titleResolved) {
         if (line.includes("aiTitle")) {
@@ -167,9 +207,9 @@ export async function readTranscriptSignals(transcriptPath) {
       }
     }
 
-    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort };
+    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort, lastLineAt, toolPending };
   } catch {
-    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null };
+    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null, lastLineAt: null, toolPending: false };
   } finally {
     await fh?.close();
   }
@@ -344,13 +384,26 @@ export async function getLiveSessions() {
 
   return Promise.all(
     matched.map(async (s) => {
-      const { blockedOnDenial, ...signals } = await readTranscriptSignals(
+      const { blockedOnDenial, lastLineAt, toolPending, ...signals } = await readTranscriptSignals(
         transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })
       );
+      // Compaction writes nothing while it runs — it only announces itself
+      // afterwards, with a `compact_boundary` line carrying how long it took
+      // (70-120s in practice). So it can't be observed directly, only
+      // inferred: the session says busy, no tool call is outstanding, and the
+      // transcript hasn't grown for long enough that a turn thinking or
+      // streaming would have written *something*.
+      //
+      // Not certainty, and the same shape as `blockedOnDenial` above: enough
+      // for a key that tells you to leave it alone for two minutes, not a
+      // promise. `toolPending` is what keeps a long-running command out of
+      // this — those are silent too, but they leave an unanswered tool_use.
+      const silentFor = lastLineAt ? (Date.now() - lastLineAt) / 1000 : 0;
+      const compacting = s.state === "busy" && !toolPending && silentFor > COMPACT_SILENCE_S;
       return {
         ...s,
         ...signals,
-        state: s.state === "idle" && blockedOnDenial ? "requires_action" : s.state,
+        state: compacting ? "compacting" : s.state === "idle" && blockedOnDenial ? "requires_action" : s.state,
         progress: await readTaskProgress(s.session_id),
         context: await readContext(s.session_id),
       };

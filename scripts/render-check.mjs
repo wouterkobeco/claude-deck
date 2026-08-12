@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, renderAttention, renderTask, renderStat, renderBack, splitLabel } from "../src/render.mjs";
+import { renderKey, formatAge, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -218,6 +218,20 @@ for (const [name, label] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
+// A compacting key at four points around its sweep. Nothing on disk reports
+// how far along a compaction is — only that it finished — so this is a
+// spinner, deliberately: it says "still going", never a percentage.
+for (const phase of [0, 0.25, 0.5, 0.75]) {
+  const buf = await renderCompacting({ width, height, accent: "#4fc3f7", project: "kob-trace", phase });
+  if (buf.length !== expected) {
+    console.error(`FAILED (compacting ${phase}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-compacting-${phase}.png`, import.meta.url).pathname);
+}
+
 // The detail board's back key. It's the only affordance saying the deck isn't
 // stuck — that board covers every key, usage and attention included — so it
 // gets an arrow and a word rather than a glyph alone.
@@ -230,4 +244,4 @@ await sharp(backBuf, { raw: { width, height, channels: 4 } })
   .png()
   .toFile(new URL("./render-check-back.png", import.meta.url).pathname);
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, back key");
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, back key, compacting spinner");

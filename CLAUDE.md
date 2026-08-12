@@ -229,6 +229,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   folder — never the session's cwd. A worktree agent belongs to its project and
   says so, so two agents in one repo both read `KOB-TRACE` and are told apart
   by their body text, which is the field that actually differs between them.
+- **"compacting" is inferred, not reported.** Nothing on disk says a
+  compaction has started: the registry has no such field, the status-line
+  payload has none, and the transcript only announces it *afterwards*, with a
+  `system`/`compact_boundary` line carrying `trigger`, `durationMs`,
+  `preTokens` and `postTokens`. The lines immediately before that boundary are
+  compaction's own metadata (`relocated`, `mode`, `worktree-state`, `pr-link`),
+  written a second before it finishes — not a start marker.
+  So `getLiveSessions` infers it: the session says `busy`, no tool call is
+  outstanding (`toolPending`), and the transcript hasn't grown for
+  `COMPACT_SILENCE_S`. Real compactions run 70-120s; a turn merely thinking or
+  streaming appends well inside that. `toolPending` is the load-bearing part —
+  a long `npm test` is silent too, but leaves an unanswered `tool_use`. Same
+  narrow-signal contract as `blockedOnDenial`: good enough for a key that says
+  "leave this alone for two minutes", not a promise.
+  `renderCompacting` draws a sweeping ring rather than a percentage, because
+  no progress figure exists to draw — `pulse()` advances its phase a twelfth
+  per tick and, as everywhere, never writes `btn.drawn`.
 - **A key's colour covers its block; every other field is its own.** `refresh`
   takes `mostUrgent([own state, ...nested states])` for the background, so a
   project whose only activity is a subagent reads as working rather than
