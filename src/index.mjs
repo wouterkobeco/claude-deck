@@ -669,12 +669,17 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
   }
 }
 
+// The deck currently being driven, so a signal handler can wipe it on the way
+// out. Nothing else may reach for this — every draw path is handed its deck.
+let activeDeck = null;
+
 async function run() {
   const devices = await listStreamDecks();
   if (devices.length === 0) {
     throw new Error("No Stream Deck found. Is it plugged in?");
   }
   const deck = await openStreamDeck(devices[0].path);
+  activeDeck = deck;
   // Which build is driving the deck — worth stating, since a worktree and the
   // main checkout can each be started against the same device.
   console.log(`claude-streamdeck v${pkg.version} — connected to ${deck.PRODUCT_NAME}`);
@@ -871,7 +876,20 @@ async function run() {
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
 
+  activeDeck = null;
   await deck.close().catch(() => {});
+}
+
+/**
+ * A stopped daemon must not leave a live-looking board. The hardware keeps the
+ * last frame written to it forever, so without this Ctrl+C leaves the deck
+ * showing sessions, colours and task counters from whenever it died — which is
+ * exactly what a working board looks like. Same reasoning as the attention
+ * queue leaving when it empties: nothing may look alive after it isn't.
+ */
+async function shutdown() {
+  await activeDeck?.clearPanel().catch(() => {});
+  process.exit(0);
 }
 
 async function main() {
@@ -894,4 +912,10 @@ async function main() {
 }
 
 // Only run the daemon when executed directly, so checks can import from here.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+// The signal handlers go inside the guard for the same reason: importing this
+// module must not install any.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  main();
+}
