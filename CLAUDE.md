@@ -69,7 +69,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   index after the content is laid out, so it lands on the same physical key
   however the tiles above it happen to fill. That back key is also the *only*
   way out: every other key there describes something, and pressing a task or a
-  subagent shouldn't throw the board away. `detailLayout` is pure and
+  subagent shouldn't throw the board away. Because it owns all 15 keys, the
+  poll loop must not also call `drawAttention` or `drawUsage` on that tick —
+  both paint keys the detail board is holding, and the two writes fight for
+  the key on every poll, which reads as a flashing key. `detailLayout` is pure and
   exported precisely because that slot arithmetic is where an off-by-one
   silently hides a task; `slots-check` covers it. The task list is read here,
   per poll, never in `getLiveSessions()` — the board's own 2s poll costs what it

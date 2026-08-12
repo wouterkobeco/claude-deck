@@ -830,14 +830,17 @@ async function run() {
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
           attentionCount = await drawAttention(deck, attentionButton, sessions, false);
-        } else if (detailSessions !== null) {
-          attentionCount = await drawAttention(deck, attentionButton, detailSessions, false);
         }
+        // No drawAttention here, and no drawUsage below: the detail board owns
+        // all 15 keys, so anything else painting keys 13 and 14 fights it for
+        // them and both flip back and forth on every poll. `attentionCount`
+        // going stale while the board is up is harmless — the only press it
+        // gates is on the attention key, which is a detail tile right now.
       } else {
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
       }
-      await drawUsage(deck, usageButton);
+      if (view.kind !== "detail") await drawUsage(deck, usageButton);
     } catch (err) {
       console.error("refresh failed:", err.message);
     }
