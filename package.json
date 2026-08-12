@@ -13,8 +13,7 @@
     "usage-check": "node scripts/usage-check.mjs",
     "stats-check": "node scripts/stats-check.mjs",
     "title-check": "node scripts/title-check.mjs",
-    "tasks-check": "node scripts/tasks-check.mjs",
-    "transcript-check": "node scripts/transcript-check.mjs"
+    "tasks-check": "node scripts/tasks-check.mjs"
   },
   "keywords": ["claude-code", "stream-deck", "macos"],
   "author": "wouterkobeco",
