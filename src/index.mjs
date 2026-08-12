@@ -784,6 +784,10 @@ async function run() {
     // means the immediately preceding press, not a press within some timeout,
     // so any other key in between breaks the chain.
     const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
+    // Both presses focus the window: between the two you may well have
+    // alt-tabbed somewhere else, and a press that opens the detail board but
+    // leaves you looking at Safari has done half its job.
+    if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
     if (isRepeat) {
       setView({ kind: "detail", session_id: sessionId });
       // Without this, the button that opened the detail board keeps reporting
@@ -794,8 +798,6 @@ async function run() {
       // focusing the window. Nulling it here makes the outcome depend on what
       // was pressed, not on how fast.
       btn.assigned = null;
-    } else if (btn?.assigned) {
-      focusWindow(btn.assigned.folder, btn.assigned.ide);
     }
     lastPress = press;
   });
