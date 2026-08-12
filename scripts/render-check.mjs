@@ -2,7 +2,28 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey } from "../src/render.mjs";
+import { renderKey, formatAge } from "../src/render.mjs";
+
+const eq = (got, want, label) => {
+  if (got !== want) {
+    console.error(`FAILED (${label}): got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    process.exit(1);
+  }
+};
+
+// Compact age for the accent bar: it shares 72px with the project name, so
+// seconds below a minute, whole minutes below an hour, h+mm past that.
+eq(formatAge(0), "0s", "zero seconds");
+eq(formatAge(45), "45s", "under a minute");
+eq(formatAge(60), "1m", "exactly a minute");
+eq(formatAge(3599), "59m", "under an hour");
+eq(formatAge(3600), "1h00m", "exactly an hour");
+eq(formatAge(8040), "2h14m", "hours and minutes");
+// A session with no usable timestamp must render nothing rather than an age
+// counted from the epoch — sessions.mjs falls back to 0 when the registry
+// carries neither statusUpdatedAt nor updatedAt.
+eq(formatAge(-1), "", "negative input");
+eq(formatAge(NaN), "", "non-numeric input");
 
 const width = 72;
 const height = 72;
@@ -106,6 +127,31 @@ for (const [name, progress] of [
     project: "kob-backend",
     progress,
     context: 41,
+  });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+
+// The accent bar carries the project name and the age together. A long name
+// beside the longest age is where the caps re-fit either truncates sensibly
+// or collides — this writes a PNG to look at, byte length can't judge it.
+for (const [name, project, age] of [
+  ["age-short", "kob-trace", "45s"],
+  ["age-long", "claude-streamdeck", "2h14m"],
+]) {
+  const buf = await renderKey({
+    width,
+    height,
+    state: "busy",
+    label: "serializing client-block mutations",
+    accent: "#4fc3f7",
+    project,
+    age,
   });
   if (buf.length !== expected) {
     console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);

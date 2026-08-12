@@ -27,6 +27,20 @@ const MARKER_COLORS = {
   idle: "#ffffff",
 };
 
+/**
+ * Compact age for a key. Kept short because it shares the accent bar with the
+ * project name: seconds below a minute, whole minutes below an hour, h+mm
+ * past that. Empty string for anything unusable, so a session whose registry
+ * entry carries no timestamp draws no age rather than one counted from 1970.
+ */
+export function formatAge(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
+}
+
 function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }
@@ -48,14 +62,18 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, age }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
   const color = pulse && state === "requires_action" ? "#ff5252" : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white.
-  const caps = project ? fitCaps(project, width, capSize) : "";
+  // The age sits right-aligned in the bar, so the caps get fitted to — and
+  // centred in — what's left, rather than being centred across the full width
+  // and running under it.
+  const ageWidth = age ? age.length * capSize * 0.62 + 4 : 0;
+  const caps = project ? fitCaps(project, width - ageWidth, capSize) : "";
   // Title zone: 3px of plain accent-coloured pad, an 8px row for the caps
   // text, a 2px dark border on the bottom edge only — 13px fixed, not derived
   // from capSize. The gauge, when known, eats that border rather than adding
@@ -159,9 +177,16 @@ export async function renderKey({ width, height, state, label, accent, project, 
       }
       ${
         caps
-          ? `<text x="50%" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
+          ? `<text x="${(width - ageWidth) / 2}" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
                    font-weight="bold" letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
+          : ""
+      }
+      ${
+        age && project
+          ? `<text x="${width - 3}" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="0.3" fill="#00000099" text-anchor="end"
+                   dominant-baseline="middle">${escapeXml(age)}</text>`
           : ""
       }
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"

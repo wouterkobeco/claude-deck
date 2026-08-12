@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, formatAge } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -294,14 +294,17 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // title and context gauge belong to a different session was worse than
       // a small square.
       const nestedStates = btn.nestedSessions.map((n) => n.state);
+      // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
+      // updatedAt; formatAge would otherwise report the age of the epoch.
+      const age = session.ts ? formatAge(Date.now() / 1000 - session.ts) : "";
       // Cached every poll (not just on change) so the pulse loop below can
       // redraw a requires_action key between polls without re-deriving it
       // from a fresh getLiveSessions() call.
-      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context, nestedStates };
+      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context, nestedStates, age };
 
       // Skip the re-encode when nothing visible changed — most polls are
       // no-ops once a board has settled.
-      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label} ${nestedStates}`;
+      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label} ${nestedStates} ${age}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...btn.renderParams }), { format: "rgba" });
       btn.drawn = drawn;
