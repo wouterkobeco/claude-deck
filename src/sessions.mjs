@@ -121,8 +121,11 @@ export async function readTranscriptSignals(transcriptPath) {
       titleResolved = false;
     let blockedOnDenial = false,
       denialResolved = false;
+    let model = null,
+      effort = null,
+      modelResolved = false;
 
-    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved); i--) {
+    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved || !modelResolved); i--) {
       const line = lines[i];
 
       if (!titleResolved) {
@@ -147,11 +150,26 @@ export async function readTranscriptSignals(transcriptPath) {
         blockedOnDenial = line.includes("toolDenialKind");
         denialResolved = true;
       }
+
+      // Model and effort ride on assistant lines; the newest one is what the
+      // session is running right now. Same scan, no extra read.
+      if (!modelResolved && line.includes('"type":"assistant"')) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj.message?.model) {
+            model = obj.message.model;
+            effort = obj.effort ?? null;
+            modelResolved = true;
+          }
+        } catch {
+          // truncated line at the start of the tail slice — keep scanning
+        }
+      }
     }
 
-    return { aiTitle, clearedEmpty, blockedOnDenial };
+    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort };
   } catch {
-    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false };
+    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null };
   } finally {
     await fh?.close();
   }
