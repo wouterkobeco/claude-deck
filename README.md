@@ -1,60 +1,97 @@
 # claude-streamdeck
 
-Shows active local Claude Code sessions on a dedicated Stream Deck MK.2 — one
-button per session, with a stripe along the top identifying which VS Code
-window it belongs to and, for sessions using tasks, a `done/total` count and
-progress bar. Pressing a button focuses that window. The two bottom-right keys
-leave the rotation, leaving 13 session keys:
+Your running Claude Code sessions, on a Stream Deck MK.2. One key per session,
+coloured by what that session is doing right now; press a key to jump to its
+VS Code window.
 
-- **Usage** (bottom-right) shows how much of your session and weekly limits are
-  spent — press it to swap the 13 session keys for an all-time stats board
-  (time until each rate-limit window resets, favorite model, total tokens,
-  streaks, ...), press it again to go back.
-- **Attention** (next to it) counts the sessions blocked on you and how long
-  the worst one has been waiting. Press it to see just those, worst first.
-  Dark and quiet when there's nothing to do; a press then does nothing.
+![The sessions board](docs/img/board-sessions.png)
 
-The stripe carries the project name in tiny caps and how long the session has
-been in its current state, and under it a gauge for that session's context
-window — green, amber past 50%, red past 85%.
-
-Press a session key a second time in a row and that one session takes over the
-whole board: its title across two keys, then its state and age, context, and
-model, then its task list — one key per task, the one in progress bright, done
-ones dimmed. Any key press returns to the normal board.
-
-Key colour is the session's own status:
+Every key is one live session: the project name in caps along the top in that
+project's colour, the session's own title under it, a `done/total` counter when
+it's working through a task list, and a thin gauge along the bottom for how full
+its context window is (green, amber past 50%, red past 85%). Press a key to
+focus that window.
 
 | Colour | Status | Meaning |
 |---|---|---|
 | green | `busy` | actively working |
-| red | `requires_action` | blocked on you |
+| red | `requires_action` | blocked on you — this key pulses |
 | amber | `waiting` | waiting on input |
-| blue | `shell` | dropped to a shell |
+| blue dot | `shell` | dropped to a shell |
 | gray | `idle` | idle |
 
-A session running in a background worktree checkout of a project doesn't get
-its own button — it shows as a small square on its parent project's key
-instead, coloured by its own status. To read those sessions properly, open the
-project's detail board (press its key twice): they sit along the bottom, after
-the task list. A blocked one also shows up on the attention board.
+The last two keys leave the rotation, so 13 are session keys. Extra sessions
+past 13 are dropped.
 
-Design: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
+- **Usage** (bottom-right) — how much of your session and weekly rate limits is
+  spent. Press it for the stats board.
+- **Attention** (next to it) — how many sessions are blocked on you and how long
+  the worst one has waited. Dark and quiet when there's nothing to do.
 
-Roadmap: `docs/roadmap-reveal-terminal.md` — pressing a button raises the right
-window but not the right *terminal* inside it. Investigated; needs a small
-VS Code extension.
+The daemon is read-only: it polls the files Claude Code already writes under
+`~/.claude/` every two seconds and redraws what changed. No hooks, no config
+file, nothing written back.
+
+## The other three boards
+
+**Attention** — press the attention key for just the sessions that want you,
+worst first. It re-sorts while it's up, and when the last one clears you're
+dropped back to the normal board.
+
+![The attention board](docs/img/board-attention.png)
+
+**Detail** — press a session key a second time in a row and that one session
+takes over all 15 keys: its title across two keys, then state, context and
+model, then its task list (done dimmed, in-progress bright), and pinned to the
+end, the subagents it has running. `BACK` returns.
+
+![The detail board](docs/img/board-detail.png)
+
+**Stats** — the usage key's second press: time until each rate-limit window
+resets, then all-time totals.
+
+![The stats board](docs/img/board-stats.png)
+
+> The screenshots are rendered by `npm run board-shot`, which draws made-up
+> sessions through the same code the daemon draws with.
+
+## Nice details
+
+- **Subagents don't get a key.** A session an SDK script started shows as a
+  small square on its project's key, coloured by its own state, and becomes a
+  readable tile on that project's detail board (and on the attention board, if
+  it blocks). A session *you* started gets its own key wherever its cwd is —
+  worktrees included.
+- **A key's colour covers its block.** A project whose only activity is a
+  subagent reads as working, not as a grey key with a 3px marker.
+- **Slots never move.** Keys are assigned first-seen and stay put, and a project
+  keeps its slot and colour after its last session ends, so a returning project
+  lands where it was. The attention board is the deliberate exception — it's
+  triage, not muscle memory.
+- **`/clear` shows blank, not stale.** `/clear` reuses the transcript file, so a
+  naive read keeps surfacing the pre-clear title. A cleared session with nothing
+  said yet draws an empty body.
+- **`idle` that's really "waiting for permission".** A turn that ends on a
+  denied tool call reports as `idle` like any other. That case is detected from
+  the transcript and promoted to `requires_action`.
+- **Compacting reads as a sweeping ring**, not a percentage — nothing on disk
+  reports how far along a compaction is.
 
 ## Setup
 
-1. `npm install`
-2. Plug in the Stream Deck MK.2 (nothing else — no Elgato Stream Deck app —
-   should be using it; this takes exclusive HID access).
+Requires macOS, Node 20+, and a Stream Deck MK.2 with nothing else using it
+(the Elgato Stream Deck app cannot run alongside — this takes exclusive HID
+access).
 
-That's everything except the context gauge, which needs one block in your
-status line — Claude Code reports a session's context percentage there and
-nowhere else. Add this near the top of `~/.claude/statusline-command.sh`
-(assumes the usual `input=$(cat)` first line):
+```
+npm install
+npm start
+```
+
+That's everything except the context gauge, which needs one block in your status
+line: Claude Code reports a session's context percentage there and nowhere else.
+Add this near the top of `~/.claude/statusline-command.sh` (assumes the usual
+`input=$(cat)` first line):
 
 ```bash
 ctx_dir="$HOME/.claude/ctx"
@@ -66,24 +103,7 @@ if [ -n "$sid" ]; then
 fi
 ```
 
-Skip it and every other feature still works; the gauge just never draws.
-
-## Run
-
-```
-npm start
-```
-
-## Checks
-
-```
-npm run render-check   # SVG -> key image pipeline, writes a sample PNG
-npm run slots-check    # project grouping / slot assignment
-npm run tasks-check    # "task X of Y" numbering
-npm run usage-check    # rate-limit parse (--live prints the raw API response)
-npm run stats-check    # stats board formatting (--live prints the real tiles)
-npm run title-check    # aiTitle / clearedEmpty / blocked-on-denial detection / model / effort
-```
+Skip it and everything else still works; the gauge just never draws.
 
 ## Where the data comes from
 
@@ -93,37 +113,38 @@ All read-only, all maintained by Claude Code itself:
 |---|---|
 | `~/.claude/sessions/<pid>.json` | session id, cwd, name, **status**, liveness (pid) |
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
-| `~/.claude/projects/<cwd>/<id>.jsonl` | `aiTitle` — the title VS Code's terminal list shows — plus the model and reasoning effort the session is running, from the same tail scan |
-| `~/.claude/tasks/<id>/*.json` | one file per task, with `subject` and `status` → `done/total` on the board, the full list on the detail board |
+| `~/.claude/projects/<cwd>/<id>.jsonl` | the session title VS Code's terminal list shows, plus its model and reasoning effort |
+| `~/.claude/tasks/<id>/*.json` | one file per task → `done/total` on the board, the full list on the detail board |
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
-| `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit %, for the bottom-right key |
-| `~/.claude/stats-cache.json` | all-time totals (tokens, sessions, streaks), for the stats board |
+| `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
+| `~/.claude/stats-cache.json` | all-time totals, for the stats board |
 
-## Notes
+A session whose folder isn't open in a VS Code window is dropped: there'd be
+nothing to focus.
 
-- **No hooks, no permissions, no config.** An earlier version wrote session
-  state from Claude Code hooks into `~/.claude/settings.json`; the registry's
-  own `status` field turned out to be both richer (it distinguishes
-  `waiting` / `requires_action`) and free, so the hooks are gone.
-- **No macOS permissions required.** Focusing a window opens a file from the
-  target folder via LaunchServices; VS Code routes it to the window whose
-  workspace contains it. Earlier attempts needed Accessibility ("control your
-  computer", granted to the whole terminal app) — that's gone.
-- **Focusing doesn't disturb the window.** It opens a file that window
-  *already has open*, read from VS Code's own `state.vscdb`, so no tab is
-  added and normally nothing visibly changes. If that state can't be read it
-  falls back to a static anchor file (`package.json` and friends), which does
-  switch the active editor.
-- **Stripe colors** are assigned per VS Code window in first-seen order, so
-  they stay put while running rather than reshuffling when a window appears.
-- **"Task X of Y" follows the plan's own numbering.** A plan whose items are
-  named `Task 4`..`Task 10` is eight files long, so its in-progress item is at
-  list position 3 while everyone calls it task 6 — the subject numbers win
-  when present, list position is the fallback. When nothing is in progress it
-  shows the furthest completed task, so the pair never switches schemes.
-- **Buttons are grouped by project.** All sessions for one VS Code window sit
-  in a contiguous block sharing a stripe colour. This costs full stickiness:
-  a new session inserts into its project's block, pushing later projects along
-  by one. Both project order and within-project order are pinned to first-seen,
-  so that insert is the only movement — nothing re-sorts by activity. A group
-  can wrap across rows; blocks aren't padded to row boundaries.
+## Checks
+
+The test suite is a handful of plain scripts — no framework, no runner. Each
+imports from `src/`, compares against expected values, and exits nonzero on
+mismatch.
+
+```
+npm run render-check   # SVG -> key image pipeline, writes sample PNGs
+npm run slots-check    # project grouping / slot assignment / detail layout
+npm run tasks-check    # "task X of Y" numbering
+npm run usage-check    # rate-limit parse (--live prints the raw API response)
+npm run stats-check    # stats board formatting (--live prints the real tiles)
+npm run title-check    # title / cleared / blocked-on-denial / model / effort
+npm run board-shot     # re-render the screenshots above
+```
+
+## Known limits
+
+- MK.2 only (15 keys, 72×72), macOS only.
+- Pressing a key raises the right *window*, not the right *terminal* inside it —
+  that needs a VS Code extension. See `docs/roadmap-reveal-terminal.md` for what
+  was ruled out and why.
+- Auto-triggered compactions aren't detected; only `/compact` is.
+
+Design notes: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
+(partly superseded — its hook-based status reporting is gone).
