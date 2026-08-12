@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge } from "../src/render.mjs";
+import { renderKey, formatAge, renderAttention } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -153,6 +153,22 @@ for (const [name, project, age] of [
     project,
     age,
   });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+
+// Attention key at rest and under load. Zero is a distinct visual state, not
+// a red key showing "0".
+for (const [name, count, longest] of [
+  ["attention-clear", 0, ""],
+  ["attention-two", 2, "14m"],
+]) {
+  const buf = await renderAttention({ width, height, count, longest });
   if (buf.length !== expected) {
     console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
     process.exit(1);

@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -170,5 +170,40 @@ eq(accentFor(acc(0)), first, "a folder keeps its colour as others appear");
 assignSlots([s("acc0", acc(0)), s("acc8", acc(8))], wide);
 eq(accentFor(acc(8)) !== first, true, "a new folder does not reuse a live folder's colour after the list wraps");
 eq(accentFor(acc(0)), first, "and the long-lived folder still keeps its own");
+
+// The attention queue is the one board that sorts by activity: blocked ahead
+// of waiting, longest-stuck first inside each group. Nested sessions are
+// included — they have no key of their own, so this is the only view that can
+// give them a title.
+const q = (id, state, ts, nested = false) => ({ session_id: id, folder: "/projects/q", state, ts, nested });
+const ids = (list) => list.map((x) => x.session_id);
+
+eq(
+  ids(attentionQueue([q("a", "waiting", 100), q("b", "requires_action", 500)], 1000)),
+  ["b", "a"],
+  "requires_action outranks waiting regardless of age"
+);
+eq(
+  ids(attentionQueue([q("new", "waiting", 900), q("old", "waiting", 100)], 1000)),
+  ["old", "new"],
+  "longest-stuck first inside a group"
+);
+eq(
+  ids(attentionQueue([q("busy1", "busy", 100), q("idle1", "idle", 100), q("w", "waiting", 100)], 1000)),
+  ["w"],
+  "only blocked and waiting sessions appear"
+);
+eq(
+  ids(attentionQueue([q("n", "waiting", 100, true), q("r", "waiting", 200)], 1000)),
+  ["n", "r"],
+  "nested sessions are included"
+);
+// Equal timestamps must not let two sessions swap places between polls.
+eq(
+  ids(attentionQueue([q("b", "waiting", 100), q("a", "waiting", 100)], 1000)),
+  ["a", "b"],
+  "ties broken stably"
+);
+eq(attentionQueue([], 1000).length, 0, "nothing waiting");
 
 console.log("OK: project grouping");

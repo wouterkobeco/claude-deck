@@ -259,6 +259,38 @@ export async function renderUsage({ width, height, session, week }) {
 }
 
 /**
+ * The attention key: how many sessions want you, and how long the worst one
+ * has been waiting. Dark and quiet at zero — an empty queue should read as
+ * "nothing to do here", not as a key that failed to draw.
+ */
+export async function renderAttention({ width, height, count, longest, pulse }) {
+  const capSize = Math.round(height * 0.11);
+  const countSize = Math.round(height * 0.34);
+  const quiet = count === 0;
+  const bg = quiet ? "#1b1b1b" : pulse ? "#ff5252" : "#c62828";
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="${bg}" />
+      <text x="50%" y="${height * 0.38}" font-family="sans-serif" font-size="${quiet ? capSize : countSize}"
+            font-weight="bold" fill="${quiet ? "#ffffff55" : "#ffffff"}" text-anchor="middle"
+            dominant-baseline="middle">${quiet ? "CLEAR" : count}</text>
+      ${
+        quiet
+          ? ""
+          : `<text x="50%" y="${height * 0.66}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="0.5" fill="#ffffffcc" text-anchor="middle"
+                   dominant-baseline="middle">WAITING</text>
+             <text x="50%" y="${height * 0.85}" font-family="sans-serif" font-size="${capSize}"
+                   fill="#ffffff99" text-anchor="middle"
+                   dominant-baseline="middle">${escapeXml(longest ?? "")}</text>`
+      }
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+/**
  * One tile of the all-time stats board (shown in place of the session grid
  * while that view is toggled on). A small caps label over a big value,
  * value wrapped to at most 2 lines.

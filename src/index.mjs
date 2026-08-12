@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, formatAge } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, formatAge } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -55,6 +55,23 @@ function claimAccent(folder, liveFolders) {
 
 export function accentFor(folder) {
   return folderAccent.get(folder) ?? ACCENTS[0];
+}
+
+// Ranked, not ordered: this is the one board that sorts by activity rather
+// than first-seen. It's transient triage — you read it, act, and leave — so
+// there's no muscle memory for it to break. Nested sessions are in here
+// because the queue is the only view that gives them a key at all; on the
+// board they're a 3×6px square in someone else's margin.
+const ATTENTION_RANK = { requires_action: 0, waiting: 1 };
+export function attentionQueue(sessions, nowSeconds) {
+  return sessions
+    .filter((s) => s.state in ATTENTION_RANK)
+    .sort(
+      (a, b) =>
+        ATTENTION_RANK[a.state] - ATTENTION_RANK[b.state] ||
+        (a.ts || nowSeconds) - (b.ts || nowSeconds) ||
+        a.session_id.localeCompare(b.session_id)
+    );
 }
 
 // Picks one stable file inside a folder to use as the focus target. Stable
@@ -228,6 +245,25 @@ async function drawUsage(deck, btn) {
   btn.drawn = drawn;
 }
 
+// Same drawn-signature diffing as every other key. Pulses with the board's
+// requires_action keys when anything is blocked, so the two agree.
+async function drawAttention(deck, btn, sessions, pulse) {
+  const queue = attentionQueue(sessions, Date.now() / 1000);
+  const longest = queue.length && queue[0].ts ? formatAge(Date.now() / 1000 - queue[0].ts) : "";
+  const drawn = `attention ${queue.length} ${longest} ${pulse}`;
+  if (btn.drawn !== drawn) {
+    await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
+      format: "rgba",
+    });
+    btn.drawn = drawn;
+  }
+  // Returned rather than re-derived by the press handler: a press needs to
+  // know whether there's anything to open, and reading that back out of the
+  // `drawn` signature string would couple key presses to a render-diffing
+  // detail that changes the moment this key gains anything else to show.
+  return queue.length;
+}
+
 // Stats view: the same 14 buttons, repurposed as an all-time stats board.
 // Reuses the `drawn`-signature diffing that `refresh` uses for sessions, so
 // switching modes just redraws everything once (the signatures never match
@@ -310,6 +346,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       btn.drawn = drawn;
     })
   );
+  return sessions;
 }
 
 // The nested-session overlay: same rendering and blank/diffing conventions
@@ -402,8 +439,11 @@ async function run() {
       assigned: null,
       drawn: null,
     }));
-  // Keys are row-major, so the highest index is the bottom-right one.
+  // Keys are row-major, so the highest index is the bottom-right one, and the
+  // one before it is bottom-row-second-from-right. Both are reserved, leaving
+  // 13 session slots.
   const usageButton = allButtons.pop();
+  const attentionButton = allButtons.pop();
   const buttons = allButtons;
   const slots = new Array(buttons.length).fill(null);
   const nestedBySlot = new Array(buttons.length).fill(null);
@@ -416,6 +456,10 @@ async function run() {
   // showing, otherwise null. `order` is captured once when the overlay opens
   // and never re-sorted — see refreshNested.
   let nestedView = null;
+  // Latest attentionQueue length, kept here so the press handler (a later
+  // task) can read it without a second query — drawAttention returns it on
+  // every call, this just holds the most recent value.
+  let attentionCount = 0;
   // The immediately preceding key-down, updated on every press regardless of
   // what it did — this is what makes a second press on the same button mean
   // "again", and any other key in between break that chain.
@@ -471,10 +515,13 @@ async function run() {
           { label: "Week reset", value: weekDays === null ? "—" : `${weekDays}d` },
         ];
         await refreshStats(deck, buttons, [...resetTiles, ...(await getStats())]);
+        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
       } else if (nestedView) {
         await refreshNested(deck, buttons, nestedView);
+        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
       } else {
-        await refresh(deck, buttons, slots, nestedBySlot);
+        const sessions = await refresh(deck, buttons, slots, nestedBySlot);
+        attentionCount = await drawAttention(deck, attentionButton, sessions, false);
       }
       await drawUsage(deck, usageButton);
     } catch (err) {
