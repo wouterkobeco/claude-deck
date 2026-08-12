@@ -230,13 +230,11 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
 // `projectPath` is the folder whose basename names the key — the matched VS
 // Code window normally, but a worktree session's own cwd on the detail board,
 // where the parent project's name is already on screen.
-// `projectPath` defaults to the session's own cwd rather than its matched
-// window folder, so a worktree session's key names the worktree
-// ("DATA-LAYER-CORRECTNESS") instead of repeating its project. Two agents in
-// one repo are otherwise two keys both reading KOB-TRACE. The accent stays
-// folder-derived, so they still share their project's colour and block —
-// the name tells them apart, the colour says they belong together.
-function keyFields(session, projectPath = session.cwd ?? session.folder) {
+// The caps bar is always the project name — the matched window's folder, not
+// the session's cwd. A worktree agent belongs to its project and says so;
+// two agents in one repo read KOB-TRACE twice and are told apart by their
+// body text, which is the thing that actually differs between them.
+function keyFields(session) {
   return {
     // Prefer the AI-generated title (the exact string VS Code's terminal list
     // shows), then Claude Code's short session name, then the cwd's basename —
@@ -250,7 +248,7 @@ function keyFields(session, projectPath = session.cwd ?? session.folder) {
     label: session.clearedEmpty
       ? ""
       : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd,
-    project: projectPath.split("/").filter(Boolean).pop() ?? "",
+    project: session.folder.split("/").filter(Boolean).pop() ?? "",
     // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
     // updatedAt; formatAge would otherwise report the age of the epoch.
     age: session.ts ? formatAge(Date.now() / 1000 - session.ts) : "",

@@ -222,11 +222,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   whose only sessions are nested now shows nothing, which is right — a key for
   one is exactly the phantom that once appeared for a security review nobody
   opened.
-- **A key names its cwd, not its window's folder.** `keyFields` defaults
-  `projectPath` to `session.cwd`, so two agents in one repo read
-  `KOB-TRACE` and `DATA-LAYER-CORRECTNESS` rather than both reading
-  `KOB-TRACE`. The accent stays folder-derived, so they still share a colour
-  and a block: the name tells them apart, the colour says they belong together.
+- **A key's caps bar is always the project name**, the matched window's
+  folder — never the session's cwd. A worktree agent belongs to its project and
+  says so, so two agents in one repo both read `KOB-TRACE` and are told apart
+  by their body text, which is the field that actually differs between them.
 - **A key's colour covers its block; every other field is its own.** `refresh`
   takes `mostUrgent([own state, ...nested states])` for the background, so a
   project whose only activity is a subagent reads as working rather than
