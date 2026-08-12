@@ -274,6 +274,14 @@ export async function getLiveSessions() {
   const matched = [];
   for (const s of registry) {
     if (s.kind !== "interactive" || !s.sessionId || !s.cwd || !s.pid) continue;
+    // `kind` alone isn't enough: a headless SDK run (a security review, a
+    // scripted agent) registers itself as "interactive" too, with the repo as
+    // its cwd, and shows up as a phantom key for a window you never opened.
+    // Its `entrypoint` is "sdk-py"/"sdk-ts" where a real terminal session is
+    // "cli". Excluding the sdk prefix rather than allowlisting "cli" so an
+    // entrypoint we haven't seen still gets a button — a missing key is worse
+    // than a spurious one.
+    if (s.entrypoint?.startsWith("sdk")) continue;
     if (!isAlive(s.pid)) continue;
     const match = matchFolder(s.cwd, folders);
     if (!match) continue; // no live local VS Code window for this session
