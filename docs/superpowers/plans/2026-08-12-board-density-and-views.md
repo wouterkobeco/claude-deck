@@ -381,13 +381,27 @@ async function drawAttention(deck, btn, sessions, pulse) {
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const longest = queue.length && queue[0].ts ? formatAge(Date.now() / 1000 - queue[0].ts) : "";
   const drawn = `attention ${queue.length} ${longest} ${pulse}`;
-  if (btn.drawn === drawn) return;
-  await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
-    format: "rgba",
-  });
-  btn.drawn = drawn;
+  if (btn.drawn !== drawn) {
+    await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
+      format: "rgba",
+    });
+    btn.drawn = drawn;
+  }
+  // Returned rather than re-derived by the press handler: a press needs to
+  // know whether there's anything to open, and reading that back out of the
+  // `drawn` signature string would couple key presses to a render-diffing
+  // detail that changes the moment this key gains anything else to show.
+  return queue.length;
 }
 ```
+
+`run()` keeps the latest count so the press handler can use it. Declare it with the other view state:
+
+```js
+  let attentionCount = 0;
+```
+
+and assign it at every call site: `attentionCount = await drawAttention(...)`.
 
 `refresh()` already calls `getLiveSessions()`; return those sessions from it so the loop can pass them on without a second read. Change the end of `refresh()` to `return sessions;`, and in the poll loop capture and use it:
 
@@ -469,8 +483,9 @@ Replace the whole body of `deck.on("down", ...)` with:
     }
     if (isAttention) {
       // Dark key, nothing queued: a press has nothing to show, so it does
-      // nothing rather than opening an empty board.
-      if (attentionButton.drawn !== "attention 0  false") view = { kind: "attention" };
+      // nothing rather than opening an empty board. `attentionCount` is what
+      // the last drawAttention() returned.
+      if (attentionCount > 0) view = { kind: "attention" };
       lastPress = { index: control.index, session_id: null };
       return;
     }
