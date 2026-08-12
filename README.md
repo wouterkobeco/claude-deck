@@ -16,7 +16,7 @@ leave the rotation, leaving 13 session keys:
 
 The stripe carries the project name in tiny caps and how long the session has
 been in its current state, and under it a gauge for that session's context
-window — green, amber past 70%, red past 85%.
+window — green, amber past 50%, red past 85%.
 
 Press a session key a second time in a row and that one session takes over the
 whole board: its title across two keys, then its state and age, context, and
@@ -82,8 +82,7 @@ npm run slots-check    # project grouping / slot assignment
 npm run tasks-check    # "task X of Y" numbering
 npm run usage-check    # rate-limit parse (--live prints the raw API response)
 npm run stats-check    # stats board formatting (--live prints the real tiles)
-npm run title-check    # aiTitle / clearedEmpty / blocked-on-denial detection
-npm run transcript-check # the rest of the transcript tail scan (model, effort)
+npm run title-check    # aiTitle / clearedEmpty / blocked-on-denial detection / model / effort
 ```
 
 ## Where the data comes from
