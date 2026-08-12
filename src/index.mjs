@@ -62,6 +62,16 @@ export function accentFor(folder) {
   return folderAccent.get(folder) ?? ACCENTS[0];
 }
 
+// Least to most urgent. A key takes the most urgent state among itself and
+// the subsessions folded onto it, so a project whose only activity is in a
+// worktree still reads as working. An unrecognised state ranks below all of
+// them rather than winning by accident — render.mjs already falls back to
+// idle's colour for anything it doesn't know.
+const STATE_URGENCY = ["idle", "shell", "busy", "waiting", "requires_action"];
+export function mostUrgent(states) {
+  return states.reduce((best, s) => (STATE_URGENCY.indexOf(s) > STATE_URGENCY.indexOf(best) ? s : best));
+}
+
 // Ranked, not ordered: this is the one board that sorts by activity rather
 // than first-seen. It's transient triage — you read it, act, and leave — so
 // there's no muscle memory for it to break. Nested sessions are in here
@@ -473,19 +483,26 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       }
       const { label, project, age } = keyFields(session);
       const accent = accentFor(session.folder);
-      // Every field on this key describes this session and no other. A
-      // worktree session folded onto the key reports itself through its own
-      // margin square's colour instead — the key going green for work whose
-      // title and context gauge belong to a different session was worse than
-      // a small square.
       const nestedStates = btn.nestedSessions.map((n) => n.state);
+      // The key stands for its whole project block, so its colour takes the
+      // most urgent state in it: a session working only through a worktree
+      // subsession reads as working, rather than sitting grey behind a margin
+      // marker. Those subsessions have no key of their own, so this is the
+      // only place their state can reach a whole key.
+      //
+      // Colour only. The title, gauge and counter still describe this key's
+      // own session — they are the fields a subsession can't speak for.
+      const state = mostUrgent([session.state, ...nestedStates]);
       // One object drives both the render call and the drawn signature — the
       // shape refreshDetail set and the other refresh* functions now also
       // follow — so a field rendered but not signed can't happen. Cached on
       // the button every poll (not just on change) so the pulse loop below
       // can redraw a requires_action key between polls without re-deriving it
       // from a fresh getLiveSessions() call.
-      const params = { state: session.state, label, accent, project, progress: session.progress, context: session.context, nestedStates, age };
+      // `shell` is carried separately because `state` is now the block's, and
+      // the margin's blue dot is about this session alone — without it, a key
+      // going green for a busy subsession would erase its own shell marker.
+      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, age };
       btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are

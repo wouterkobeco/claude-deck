@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -328,5 +328,16 @@ eq(done[6].status, "in_progress", "and so does the next one");
 const gone = holdTiles(opened, opened, [dTask("one", "in_progress")], []);
 eq(gone[6], null, "a vanished task blanks its slot");
 eq(gone[12], null, "a vanished worktree session blanks its slot");
+
+// A key's colour covers its whole block: a session working only through a
+// worktree subsession must read as working, not sit grey behind a marker.
+eq(mostUrgent(["idle", "busy"]), "busy", "a busy subsession turns an idle key green");
+eq(mostUrgent(["busy", "requires_action"]), "requires_action", "requires_action outranks busy");
+eq(mostUrgent(["waiting", "busy"]), "waiting", "waiting outranks busy");
+eq(mostUrgent(["shell", "idle"]), "shell", "shell outranks idle");
+eq(mostUrgent(["idle"]), "idle", "a key with no subsessions keeps its own state");
+eq(mostUrgent(["busy", "idle"]), "busy", "order of the states must not matter");
+// An unrecognised state must not outrank a real one just by being unknown.
+eq(mostUrgent(["busy", "no-such-state"]), "busy", "unknown state loses to a known one");
 
 console.log("OK: project grouping");

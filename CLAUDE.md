@@ -200,10 +200,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   to — its matched VS Code window's folder (a background worktree checkout).
   `assignSlots` in `index.mjs` keeps those off the board's own slots entirely;
   instead they're grouped by folder onto the first button of that project's
-  block, drawn as a small indicator square. The two places they become
-  full-size tiles you can read are the attention queue (if they're blocked) and
-  the detail board of their project (always, pinned to its tail). There is no
-  separate nested-only overlay any more.
+  block, drawn as a small indicator square coloured by that session's own
+  state. The two places they become full-size tiles you can read are the
+  attention queue (if they're blocked) and the detail board of their project
+  (always, pinned to its tail). There is no separate nested-only overlay any
+  more.
+- **A key's colour covers its block; every other field is its own.** `refresh`
+  takes `mostUrgent([own state, ...nested states])` for the background, so a
+  project working only through a worktree subsession reads as working instead
+  of sitting grey behind a 3×6px marker — those subsessions have no key, so
+  this is the only way their state reaches one. The title, context gauge and
+  task counter still describe the key's own session, which is the honest
+  split: a subsession can speak for "is anything happening here", not for
+  "what is this key about". The cost is real and was chosen with eyes open —
+  a green key can show a context gauge belonging to its idle session while
+  the work happens in the worktree. `state` is the block's, so `renderKey`
+  takes a separate `shell` flag for the margin's blue dot; without it a key
+  greened by a subsession would erase its own background-shell marker.
 
 ## Docs
 

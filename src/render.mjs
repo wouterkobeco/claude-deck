@@ -76,7 +76,7 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, age }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, age, shell }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
@@ -121,7 +121,11 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const squaresTop = barHeight + 2;
   const squaresBottom = height - footHeight - 2;
   const maxSquares = Math.max(0, Math.floor((squaresBottom - squaresTop) / squarePitch));
-  const shellDot = state === "shell";
+  // `state` is the whole block's — it goes green when a subsession behind
+  // this key is working — so the blue shell marker takes an explicit flag
+  // about *this* session. Falls back to state for callers that don't pass it
+  // (the queue and detail boards, which draw one session per key).
+  const shellDot = shell ?? state === "shell";
   const nested = nestedStates ?? [];
   const totalMarkers = (shellDot ? 1 : 0) + nested.length;
   const visibleMarkers = Math.min(totalMarkers, maxSquares);
