@@ -34,12 +34,16 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   aiTitle: "Fix login bug",
   clearedEmpty: false,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine("Add rate limiting")]), {
   aiTitle: "Add rate limiting",
   clearedEmpty: false,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 
 // An old title must not survive a /clear with nothing said since.
@@ -47,12 +51,16 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   aiTitle: null,
   clearedEmpty: true,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 
 assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   aiTitle: null,
   clearedEmpty: false,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 console.log("OK: aiTitle / clearedEmpty");
 
