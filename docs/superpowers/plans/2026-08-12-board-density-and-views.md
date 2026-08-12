@@ -16,7 +16,7 @@
 - **Every file read is wrapped in try/catch that skips rather than throws** — these files are written by another process and a poll can land mid-write.
 - **`btn.drawn` is the redraw diff.** Any new visual input must be added to that signature string or it will not appear until something else changes.
 - **Ordering is first-seen, never activity** — except the attention queue, which sorts by wait time on purpose (Task 2).
-- **Run checks with:** `npm run render-check`, `npm run slots-check`, `npm run tasks-check`, `npm run usage-check`. Run all four before every commit.
+- **Run every check before every commit.** The full list, from `package.json`: `render-check`, `slots-check`, `usage-check`, `stats-check`, `title-check`, `tasks-check`. (Task 4 originally added its model/effort cases as a separate `transcript-check`; that script was later merged into `title-check` and deleted, so `title-check` now covers both.) Do not work from a shorter list — `title-check` in particular exercises `readTranscriptSignals` with `assert.deepStrictEqual` against a fixed key set, so *any* new field on that function's return value breaks it, and nothing else in the suite would tell you.
 
 ---
 
@@ -381,13 +381,27 @@ async function drawAttention(deck, btn, sessions, pulse) {
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const longest = queue.length && queue[0].ts ? formatAge(Date.now() / 1000 - queue[0].ts) : "";
   const drawn = `attention ${queue.length} ${longest} ${pulse}`;
-  if (btn.drawn === drawn) return;
-  await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
-    format: "rgba",
-  });
-  btn.drawn = drawn;
+  if (btn.drawn !== drawn) {
+    await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
+      format: "rgba",
+    });
+    btn.drawn = drawn;
+  }
+  // Returned rather than re-derived by the press handler: a press needs to
+  // know whether there's anything to open, and reading that back out of the
+  // `drawn` signature string would couple key presses to a render-diffing
+  // detail that changes the moment this key gains anything else to show.
+  return queue.length;
 }
 ```
+
+`run()` keeps the latest count so the press handler can use it. Declare it with the other view state:
+
+```js
+  let attentionCount = 0;
+```
+
+and assign it at every call site: `attentionCount = await drawAttention(...)`.
 
 `refresh()` already calls `getLiveSessions()`; return those sessions from it so the loop can pass them on without a second read. Change the end of `refresh()` to `return sessions;`, and in the poll loop capture and use it:
 
@@ -469,8 +483,9 @@ Replace the whole body of `deck.on("down", ...)` with:
     }
     if (isAttention) {
       // Dark key, nothing queued: a press has nothing to show, so it does
-      // nothing rather than opening an empty board.
-      if (attentionButton.drawn !== "attention 0  false") view = { kind: "attention" };
+      // nothing rather than opening an empty board. `attentionCount` is what
+      // the last drawAttention() returned.
+      if (attentionCount > 0) view = { kind: "attention" };
       lastPress = { index: control.index, session_id: null };
       return;
     }
@@ -489,7 +504,7 @@ Replace the whole body of `deck.on("down", ...)` with:
   });
 ```
 
-Note the attention no-op test reads `attentionButton.drawn`, which `drawAttention` sets to `attention 0  false` when the queue is empty (count `0`, empty `longest`, `pulse` false — two spaces, on purpose).
+`attentionCount` is declared in `run()` and assigned from every `drawAttention()` call — see Task 2. Until the first draw completes it is `0`, so a press before the first poll correctly does nothing.
 
 - [ ] **Step 3: Update the loop and pulse**
 

@@ -1,7 +1,7 @@
 // Verifies "task X of Y": subject numbering wins over list position when
 // present, position is used otherwise, and the pair never mixes schemes.
 // Run: node scripts/tasks-check.mjs
-import { taskCounter } from "../src/sessions.mjs";
+import { taskCounter, taskWindow } from "../src/sessions.mjs";
 
 const t = (subject, status = "pending") => ({ subject, status });
 const eq = (got, want, label) => {
@@ -51,5 +51,47 @@ eq(
 
 // Total never reads lower than the current task.
 eq(taskCounter([t("Task 42: late", "in_progress")]), "42/42", "total not below current");
+
+const same = (got, want, label) => {
+  const a = JSON.stringify(got.map((t) => t.subject));
+  const b = JSON.stringify(want);
+  if (a !== b) {
+    console.error(`FAILED (${label}): got ${a}, want ${b}`);
+    process.exit(1);
+  }
+};
+
+const list = (n) => Array.from({ length: n }, (_, i) => t(`Task ${i + 1}`));
+const withActive = (n, activeIndex) => {
+  const l = list(n);
+  l[activeIndex].status = "in_progress";
+  return l;
+};
+
+// Fewer tasks than keys: everything shows, untouched.
+same(taskWindow(list(3), 8), ["Task 1", "Task 2", "Task 3"], "short list is unchanged");
+
+// The active task sits mid-window when there's room on both sides.
+same(
+  taskWindow(withActive(20, 9), 5).map((x) => x),
+  ["Task 8", "Task 9", "Task 10", "Task 11", "Task 12"],
+  "window centres on the in-progress task"
+);
+
+// Near the start there's nothing to the left to show — the window must still
+// be full, not half-empty.
+same(taskWindow(withActive(20, 0), 5), ["Task 1", "Task 2", "Task 3", "Task 4", "Task 5"], "clamped at the start");
+
+// Same at the end.
+same(
+  taskWindow(withActive(20, 19), 5),
+  ["Task 16", "Task 17", "Task 18", "Task 19", "Task 20"],
+  "clamped at the end"
+);
+
+// Nothing in progress: show the first `size`, rather than an empty window.
+same(taskWindow(list(20), 3), ["Task 1", "Task 2", "Task 3"], "no active task starts at the top");
+
+same(taskWindow([], 5), [], "empty list");
 
 console.log("OK: task counter");

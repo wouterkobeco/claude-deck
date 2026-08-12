@@ -1,7 +1,10 @@
 // Verifies the transcript tail scan: aiTitle stops at the most recent /clear
 // rather than surfacing a summary from a conversation that's already gone,
-// and blockedOnDenial flags a turn that ended right after an auto-mode
-// permission denial with nothing from the human since.
+// blockedOnDenial flags a turn that ended right after an auto-mode
+// permission denial with nothing from the human since, and model/effort come
+// from the newest assistant line. One file for the whole function — two
+// files testing one function is what let a field addition ship checked by
+// only one of them.
 // Run: node scripts/title-check.mjs
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -34,12 +37,16 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   aiTitle: "Fix login bug",
   clearedEmpty: false,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine("Add rate limiting")]), {
   aiTitle: "Add rate limiting",
   clearedEmpty: false,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 
 // An old title must not survive a /clear with nothing said since.
@@ -47,12 +54,16 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   aiTitle: null,
   clearedEmpty: true,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 
 assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   aiTitle: null,
   clearedEmpty: false,
   blockedOnDenial: false,
+  model: null,
+  effort: null,
 });
 console.log("OK: aiTitle / clearedEmpty");
 
@@ -63,5 +74,28 @@ assert.equal((await signals([denialLine, assistantLine])).blockedOnDenial, true)
 // The moment the human replies, the flag clears — even without a new denial.
 assert.equal((await signals([denialLine, assistantLine, humanReplyLine])).blockedOnDenial, false);
 console.log("OK: blockedOnDenial");
+
+// Model and effort ride on assistant lines; the newest one is what the
+// session is running right now. Same scan, no extra read.
+const modelLine = (model, effort) => JSON.stringify({ type: "assistant", effort, message: { model } });
+const userTurnLine = JSON.stringify({ type: "user", message: { content: [] } });
+
+assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLine, modelLine("claude-opus-5", "high")]), {
+  aiTitle: null,
+  clearedEmpty: false,
+  blockedOnDenial: false,
+  model: "claude-opus-5",
+  effort: "high",
+});
+
+// A transcript with no assistant line yet reports null rather than guessing.
+assert.deepEqual(await signals([userTurnLine]), {
+  aiTitle: null,
+  clearedEmpty: false,
+  blockedOnDenial: false,
+  model: null,
+  effort: null,
+});
+console.log("OK: model / effort");
 
 await rm(dir, { recursive: true, force: true });

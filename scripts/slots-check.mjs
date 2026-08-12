@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -170,5 +170,174 @@ eq(accentFor(acc(0)), first, "a folder keeps its colour as others appear");
 assignSlots([s("acc0", acc(0)), s("acc8", acc(8))], wide);
 eq(accentFor(acc(8)) !== first, true, "a new folder does not reuse a live folder's colour after the list wraps");
 eq(accentFor(acc(0)), first, "and the long-lived folder still keeps its own");
+
+// The attention queue is the one board that sorts by activity: blocked ahead
+// of waiting, longest-stuck first inside each group. Nested sessions are
+// included — they have no key of their own, so this is the only view that can
+// give them a title.
+const q = (id, state, ts, nested = false) => ({ session_id: id, folder: "/projects/q", state, ts, nested });
+const ids = (list) => list.map((x) => x.session_id);
+
+eq(
+  ids(attentionQueue([q("a", "waiting", 100), q("b", "requires_action", 500)], 1000)),
+  ["b", "a"],
+  "requires_action outranks waiting regardless of age"
+);
+eq(
+  ids(attentionQueue([q("new", "waiting", 900), q("old", "waiting", 100)], 1000)),
+  ["old", "new"],
+  "longest-stuck first inside a group"
+);
+eq(
+  ids(attentionQueue([q("busy1", "busy", 100), q("idle1", "idle", 100), q("w", "waiting", 100)], 1000)),
+  ["w"],
+  "only blocked and waiting sessions appear"
+);
+eq(
+  ids(attentionQueue([q("n", "waiting", 100, true), q("r", "waiting", 200)], 1000)),
+  ["n", "r"],
+  "nested sessions are included"
+);
+// Equal timestamps must not let two sessions swap places between polls.
+eq(
+  ids(attentionQueue([q("b", "waiting", 100), q("a", "waiting", 100)], 1000)),
+  ["a", "b"],
+  "ties broken stably"
+);
+eq(attentionQueue([], 1000).length, 0, "nothing waiting");
+// ts: 0 means the registry carried no timestamp at all (sessions.mjs's
+// fallback), not "began at the Unix epoch". The sort's `a.ts || nowSeconds`
+// guard must treat it as "now", so it must not leapfrog a session with a
+// real, older timestamp purely by looking like the oldest possible value.
+eq(
+  ids(attentionQueue([q("real", "waiting", 500), q("unknown", "waiting", 0)], 1000)),
+  ["real", "unknown"],
+  "ts: 0 does not sort ahead of a real timestamp as if it were the epoch"
+);
+
+// The detail board: five header tiles, then tasks, with worktree tiles held
+// at the tail so a long task list can't push them off the board entirely.
+const dSession = {
+  session_id: "d1",
+  folder: "/projects/kob-trace",
+  state: "busy",
+  context: 41,
+  model: "claude-opus-5",
+  effort: "high",
+  aiTitle: "serializing client-block mutations",
+};
+const dTask = (subject, status = "pending") => ({ subject, status });
+
+const plain = detailLayout({ session: dSession, tasks: [dTask("read the code"), dTask("lock it", "in_progress")], nested: [], age: "40m", slotCount: 13 });
+eq(plain.length, 13, "layout always fills the board");
+eq(plain.slice(0, 2).map((t) => t.kind), ["label", "label"], "title spans two tiles");
+eq(plain[2], { kind: "stat", label: "STATE", value: "busy 40m" }, "state tile carries the age");
+eq(plain[3], { kind: "stat", label: "CONTEXT", value: "41%" }, "context tile");
+eq(plain[4], { kind: "stat", label: "MODEL", value: "opus-5 high" }, "model tile drops the vendor prefix");
+eq(plain[5], { kind: "task", number: 1, subject: "read the code", status: "pending" }, "tasks start at slot 5");
+eq(plain[6].status, "in_progress", "task status is carried through");
+eq(plain[7], null, "unused slots are null");
+
+// Worktree tiles hold the tail; tasks take what's left in front of them.
+const withNested = detailLayout({
+  session: dSession,
+  tasks: Array.from({ length: 20 }, (_, i) => dTask(`Task ${i + 1}`, i === 0 ? "in_progress" : "pending")),
+  nested: [{ session_id: "w1", state: "busy" }, { session_id: "w2", state: "idle" }],
+  age: "40m",
+  slotCount: 13,
+});
+eq(withNested.length, 13, "layout still fills the board");
+eq(withNested.slice(11).map((t) => t.kind), ["nested", "nested"], "worktree tiles sit at the tail");
+eq(withNested.slice(5, 11).every((t) => t.kind === "task"), true, "tasks fill the space in front of them");
+
+// Task numbering is `tasks.indexOf(t) + 1` — absolute position in the full
+// list — and holdTiles reads a held task tile back by `tasks[number - 1]`.
+// The 20-task case above happens to put in_progress at index 0, so
+// taskWindow's start is 0 too and absolute numbering (1..6) is
+// indistinguishable from window-relative numbering (also 1..6) — it would
+// not notice that pairing breaking. Put in_progress mid-list instead.
+const midTasks = Array.from({ length: 20 }, (_, i) => dTask(`Task ${i + 1}`, i === 10 ? "in_progress" : "pending"));
+const midNested = [{ session_id: "w1", state: "busy" }, { session_id: "w2", state: "idle" }];
+const mid = detailLayout({ session: dSession, tasks: midTasks, nested: midNested, age: "40m", slotCount: 13 });
+const midTaskTiles = mid.slice(5, 11);
+eq(
+  midTaskTiles.map((t) => t.number),
+  [8, 9, 10, 11, 12, 13],
+  "task numbering stays absolute (tasks.indexOf + 1), not reset to 1 at the window's start"
+);
+eq(
+  midTaskTiles.find((t) => t.status === "in_progress").number,
+  11,
+  "the active task (array index 10) keeps its true number 11"
+);
+// And holdTiles must read the same task back by that same absolute number —
+// the one arithmetic this whole export-for-testability exists to guard.
+const midHeld = holdTiles(mid, mid, midTasks, midNested);
+const midActiveSlot = midTaskTiles.findIndex((t) => t.status === "in_progress") + 5;
+eq(
+  midHeld[midActiveSlot],
+  { kind: "task", number: 11, subject: "Task 11", status: "in_progress" },
+  "holdTiles re-reads the active task by its absolute number, not its position in the window"
+);
+
+// After /clear the transcript still holds the pre-clear session name; the
+// header must go blank rather than present it as this session's title.
+const cleared = detailLayout({
+  session: { ...dSession, aiTitle: null, name: "old summary", clearedEmpty: true, cwd: "/projects/kob-trace" },
+  tasks: [],
+  nested: [],
+  age: "",
+  slotCount: 13,
+});
+eq(cleared.slice(0, 2), [{ kind: "label", label: "" }, { kind: "label", label: "" }], "cleared session shows no title");
+
+// A session with no context reported must not print "null%".
+const noCtx = detailLayout({ session: { ...dSession, context: null }, tasks: [], nested: [], age: "", slotCount: 13 });
+eq(noCtx[3], { kind: "stat", label: "CONTEXT", value: "—" }, "unknown context shows a dash");
+
+// Holding the board's shape for a visit: content follows each tile, position
+// doesn't move. The case that matters is a worktree session appearing while
+// the board is up — detailLayout re-pins worktree tiles to the tail on every
+// poll, so the one already on screen shifts a slot left, onto a slot that was
+// empty when the board opened. Taking the fresh tile there would draw that one
+// session on two keys and never show the new one at all.
+const wt = (id) => ({ session_id: id, state: "busy", nested: true, folder: "/projects/kob-trace", cwd: `/wt/${id}` });
+const openTasks = [dTask("one", "in_progress"), dTask("two")];
+const opened = detailLayout({ session: dSession, tasks: openTasks, nested: [wt("w1")], age: "40m", slotCount: 13 });
+const later = detailLayout({ session: dSession, tasks: openTasks, nested: [wt("w1"), wt("w2")], age: "40m", slotCount: 13 });
+eq(opened[12].session.session_id, "w1", "one worktree session sits in the last slot");
+eq([later[11].session.session_id, later[12].session.session_id], ["w1", "w2"], "a second one shifts it left");
+
+const held = holdTiles(opened, later, openTasks, [wt("w1"), wt("w2")]);
+eq(held.length, 13, "held layout still fills the board");
+eq(
+  held.filter((t) => t?.kind === "nested").map((t) => t.session.session_id),
+  ["w1"],
+  "a worktree session occupies at most one key"
+);
+eq(held[12].session.session_id, "w1", "and keeps the slot it opened in");
+eq(held[11], null, "the slot it would have been aliased into stays blank");
+
+// Content still follows: a task completing recolours its own tile in place.
+const done = holdTiles(opened, opened, [dTask("one", "completed"), dTask("two", "in_progress")], [wt("w1")]);
+eq(done[5], { kind: "task", number: 1, subject: "one", status: "completed" }, "task tile takes fresh content in its own slot");
+eq(done[6].status, "in_progress", "and so does the next one");
+
+// A task or worktree session that disappears leaves a blank rather than
+// pulling everything after it up a slot.
+const gone = holdTiles(opened, opened, [dTask("one", "in_progress")], []);
+eq(gone[6], null, "a vanished task blanks its slot");
+eq(gone[12], null, "a vanished worktree session blanks its slot");
+
+// A key's colour covers its whole block: a session working only through a
+// worktree subsession must read as working, not sit grey behind a marker.
+eq(mostUrgent(["idle", "busy"]), "busy", "a busy subsession turns an idle key green");
+eq(mostUrgent(["busy", "requires_action"]), "requires_action", "requires_action outranks busy");
+eq(mostUrgent(["waiting", "busy"]), "waiting", "waiting outranks busy");
+eq(mostUrgent(["shell", "idle"]), "shell", "shell outranks idle");
+eq(mostUrgent(["idle"]), "idle", "a key with no subsessions keeps its own state");
+eq(mostUrgent(["busy", "idle"]), "busy", "order of the states must not matter");
+// An unrecognised state must not outrank a real one just by being unknown.
+eq(mostUrgent(["busy", "no-such-state"]), "busy", "unknown state loses to a known one");
 
 console.log("OK: project grouping");

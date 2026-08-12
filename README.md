@@ -3,14 +3,25 @@
 Shows active local Claude Code sessions on a dedicated Stream Deck MK.2 — one
 button per session, with a stripe along the top identifying which VS Code
 window it belongs to and, for sessions using tasks, a `done/total` count and
-progress bar. Pressing a button focuses that window. The bottom-right key
-leaves the rotation and shows how much of your session and weekly limits are
-spent — press it to swap the other 14 keys for an all-time stats board (time
-until each rate-limit window resets, favorite model, total tokens, streaks,
-...), press it again to go back.
+progress bar. Pressing a button focuses that window. The two bottom-right keys
+leave the rotation, leaving 13 session keys:
 
-The stripe carries the project name in tiny caps, and under it a gauge for that
-session's context window — green, amber past 70%, red past 85%.
+- **Usage** (bottom-right) shows how much of your session and weekly limits are
+  spent — press it to swap the 13 session keys for an all-time stats board
+  (time until each rate-limit window resets, favorite model, total tokens,
+  streaks, ...), press it again to go back.
+- **Attention** (next to it) counts the sessions blocked on you and how long
+  the worst one has been waiting. Press it to see just those, worst first.
+  Dark and quiet when there's nothing to do; a press then does nothing.
+
+The stripe carries the project name in tiny caps and how long the session has
+been in its current state, and under it a gauge for that session's context
+window — green, amber past 50%, red past 85%.
+
+Press a session key a second time in a row and that one session takes over the
+whole board: its title across two keys, then its state and age, context, and
+model, then its task list — one key per task, the one in progress bright, done
+ones dimmed. Any key press returns to the normal board.
 
 Key colour is the session's own status:
 
@@ -24,9 +35,9 @@ Key colour is the session's own status:
 
 A session running in a background worktree checkout of a project doesn't get
 its own button — it shows as a small square on its parent project's key
-instead. Press that key twice in a row to open an overlay listing those
-worktree sessions; any key press, including one of the overlay's own tiles,
-closes it and returns to the normal board.
+instead, coloured by its own status. To read those sessions properly, open the
+project's detail board (press its key twice): they sit along the bottom, after
+the task list. A blocked one also shows up on the attention board.
 
 Design: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 
@@ -71,6 +82,7 @@ npm run slots-check    # project grouping / slot assignment
 npm run tasks-check    # "task X of Y" numbering
 npm run usage-check    # rate-limit parse (--live prints the raw API response)
 npm run stats-check    # stats board formatting (--live prints the real tiles)
+npm run title-check    # aiTitle / clearedEmpty / blocked-on-denial detection / model / effort
 ```
 
 ## Where the data comes from
@@ -81,8 +93,8 @@ All read-only, all maintained by Claude Code itself:
 |---|---|
 | `~/.claude/sessions/<pid>.json` | session id, cwd, name, **status**, liveness (pid) |
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
-| `~/.claude/projects/<cwd>/<id>.jsonl` | `aiTitle` — the title VS Code's terminal list shows |
-| `~/.claude/tasks/<id>/*.json` | one file per task, with `status` → `done/total` |
+| `~/.claude/projects/<cwd>/<id>.jsonl` | `aiTitle` — the title VS Code's terminal list shows — plus the model and reasoning effort the session is running, from the same tail scan |
+| `~/.claude/tasks/<id>/*.json` | one file per task, with `subject` and `status` → `done/total` on the board, the full list on the detail board |
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit %, for the bottom-right key |
 | `~/.claude/stats-cache.json` | all-time totals (tokens, sessions, streaks), for the stats board |

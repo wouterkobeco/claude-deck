@@ -27,6 +27,34 @@ const MARKER_COLORS = {
   idle: "#ffffff",
 };
 
+/**
+ * Compact age for a key. Kept short because it shares the accent bar with the
+ * project name: seconds below a minute, whole minutes below an hour, h+mm
+ * past that. Empty string for anything unusable, so a session whose registry
+ * entry carries no timestamp draws no age rather than one counted from 1970.
+ */
+export function formatAge(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * Splits a label into `parts` roughly equal chunks on word boundaries, so a
+ * title can run across neighbouring keys. Always returns exactly `parts`
+ * strings — short labels leave the later keys blank rather than undefined.
+ */
+export function splitLabel(label, parts) {
+  const words = (label ?? "").split(/\s+/).filter(Boolean);
+  const out = new Array(parts).fill("");
+  if (words.length === 0) return out;
+  const per = Math.ceil(words.length / parts);
+  for (let i = 0; i < parts; i++) out[i] = words.slice(i * per, (i + 1) * per).join(" ");
+  return out;
+}
+
 function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }
@@ -48,14 +76,18 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, age, shell }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
   const color = pulse && state === "requires_action" ? "#ff5252" : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white.
-  const caps = project ? fitCaps(project, width, capSize) : "";
+  // The age sits right-aligned in the bar, so the caps get fitted to — and
+  // centred in — what's left, rather than being centred across the full width
+  // and running under it.
+  const ageWidth = age ? age.length * capSize * 0.62 + 4 : 0;
+  const caps = project ? fitCaps(project, width - ageWidth, capSize) : "";
   // Title zone: 3px of plain accent-coloured pad, an 8px row for the caps
   // text, a 2px dark border on the bottom edge only — 13px fixed, not derived
   // from capSize. The gauge, when known, eats that border rather than adding
@@ -89,7 +121,11 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const squaresTop = barHeight + 2;
   const squaresBottom = height - footHeight - 2;
   const maxSquares = Math.max(0, Math.floor((squaresBottom - squaresTop) / squarePitch));
-  const shellDot = state === "shell";
+  // `state` is the whole block's — it goes green when a subsession behind
+  // this key is working — so the blue shell marker takes an explicit flag
+  // about *this* session. Falls back to state for callers that don't pass it
+  // (the queue and detail boards, which draw one session per key).
+  const shellDot = shell ?? state === "shell";
   const nested = nestedStates ?? [];
   const totalMarkers = (shellDot ? 1 : 0) + nested.length;
   const visibleMarkers = Math.min(totalMarkers, maxSquares);
@@ -159,9 +195,16 @@ export async function renderKey({ width, height, state, label, accent, project, 
       }
       ${
         caps
-          ? `<text x="50%" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
+          ? `<text x="${(width - ageWidth) / 2}" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
                    font-weight="bold" letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
+          : ""
+      }
+      ${
+        age && project
+          ? `<text x="${width - 3}" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="0.3" fill="#00000099" text-anchor="end"
+                   dominant-baseline="middle">${escapeXml(age)}</text>`
           : ""
       }
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
@@ -234,6 +277,38 @@ export async function renderUsage({ width, height, session, week }) {
 }
 
 /**
+ * The attention key: how many sessions want you, and how long the worst one
+ * has been waiting. Dark and quiet at zero — an empty queue should read as
+ * "nothing to do here", not as a key that failed to draw.
+ */
+export async function renderAttention({ width, height, count, longest, pulse }) {
+  const capSize = Math.round(height * 0.11);
+  const countSize = Math.round(height * 0.34);
+  const quiet = count === 0;
+  const bg = quiet ? "#1b1b1b" : pulse ? "#ff5252" : "#c62828";
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="${bg}" />
+      <text x="50%" y="${height * 0.38}" font-family="sans-serif" font-size="${quiet ? capSize : countSize}"
+            font-weight="bold" fill="${quiet ? "#ffffff55" : "#ffffff"}" text-anchor="middle"
+            dominant-baseline="middle">${quiet ? "CLEAR" : count}</text>
+      ${
+        quiet
+          ? ""
+          : `<text x="50%" y="${height * 0.66}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="0.5" fill="#ffffffcc" text-anchor="middle"
+                   dominant-baseline="middle">WAITING</text>
+             <text x="50%" y="${height * 0.85}" font-family="sans-serif" font-size="${capSize}"
+                   fill="#ffffff99" text-anchor="middle"
+                   dominant-baseline="middle">${escapeXml(longest ?? "")}</text>`
+      }
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+/**
  * One tile of the all-time stats board (shown in place of the session grid
  * while that view is toggled on). A small caps label over a big value,
  * value wrapped to at most 2 lines.
@@ -264,6 +339,46 @@ export async function renderStat({ width, height, label, value }) {
             dominant-baseline="middle">${escapeXml(caps)}</text>
       <text font-family="sans-serif" font-size="${valueSize}" font-weight="600" fill="#ffab70"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+// Done recedes, active is the only bright tile, todo sits between them —
+// the board should read as "here" at a glance, not as fourteen equal boxes.
+const TASK_COLORS = {
+  completed: { bg: "#1b3a1e", text: "#ffffff77" },
+  in_progress: { bg: "#2e7d32", text: "#ffffff" },
+  pending: { bg: "#1b1b1b", text: "#ffffffaa" },
+};
+
+/**
+ * One task of the detail board: its number small at the top, its subject
+ * wrapped below, coloured by status.
+ */
+export async function renderTask({ width, height, number, subject, status }) {
+  const { bg, text } = TASK_COLORS[status] ?? TASK_COLORS.pending;
+  const capSize = Math.round(height * 0.11);
+  const fontSize = Math.round(height * 0.17);
+  const lineHeight = fontSize * 1.05;
+
+  let lines = wrapLabel((subject ?? "").toLowerCase(), width - 6, fontSize);
+  const maxLines = 4;
+  if (lines.length > maxLines) {
+    const maxChars = Math.max(3, Math.floor((width - 6) / (fontSize * 0.6)));
+    lines = lines.slice(0, maxLines);
+    lines[maxLines - 1] = lines[maxLines - 1].slice(0, Math.max(1, maxChars - 1)) + "…";
+  }
+  const startY = height * 0.3 + lineHeight / 2;
+  const tspans = lines.map((line, i) => `<tspan x="3" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`).join("");
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="${bg}" />
+      <text x="3" y="${height * 0.13}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+            letter-spacing="0.5" fill="${text}" dominant-baseline="middle">${number}</text>
+      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" fill="${text}"
+            text-anchor="start" dominant-baseline="middle">${tspans}</text>
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();

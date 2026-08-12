@@ -121,8 +121,11 @@ export async function readTranscriptSignals(transcriptPath) {
       titleResolved = false;
     let blockedOnDenial = false,
       denialResolved = false;
+    let model = null,
+      effort = null,
+      modelResolved = false;
 
-    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved); i--) {
+    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved || !modelResolved); i--) {
       const line = lines[i];
 
       if (!titleResolved) {
@@ -147,11 +150,26 @@ export async function readTranscriptSignals(transcriptPath) {
         blockedOnDenial = line.includes("toolDenialKind");
         denialResolved = true;
       }
+
+      // Model and effort ride on assistant lines; the newest one is what the
+      // session is running right now. Same scan, no extra read.
+      if (!modelResolved && line.includes('"type":"assistant"')) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj.message?.model) {
+            model = obj.message.model;
+            effort = obj.effort ?? null;
+            modelResolved = true;
+          }
+        } catch {
+          // truncated line at the start of the tail slice — keep scanning
+        }
+      }
     }
 
-    return { aiTitle, clearedEmpty, blockedOnDenial };
+    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort };
   } catch {
-    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false };
+    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null };
   } finally {
     await fh?.close();
   }
@@ -189,22 +207,19 @@ export function taskCounter(tasks) {
 }
 
 /**
- * Task progress for a session, from the per-task JSON files Claude Code keeps
- * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
- * tasks at all, so the button can stay clean rather than showing "0/0".
+ * Every task for a session, in creation order. Task files are named by
+ * numeric id, so they're sorted numerically — "10" after "2", not before it.
+ * Returns [] for a session that isn't using tasks, and skips any file caught
+ * mid-write rather than throwing.
  */
-async function readTaskProgress(sessionId) {
+export async function readTaskList(sessionId) {
   const dir = join(TASKS_DIR, sessionId);
   let names;
   try {
     names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
   } catch {
-    return null;
+    return [];
   }
-  if (names.length === 0) return null;
-
-  // Task files are named by numeric id; sort numerically so list position
-  // matches the order they were created in, not "10" before "2".
   names.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
   const tasks = [];
@@ -215,9 +230,32 @@ async function readTaskProgress(sessionId) {
       // mid-write — skip
     }
   }
-  if (tasks.length === 0) return null;
+  return tasks;
+}
 
+/**
+ * Task progress for a session, from the per-task JSON files Claude Code keeps
+ * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
+ * tasks at all, so the button can stay clean rather than showing "0/0".
+ */
+async function readTaskProgress(sessionId) {
+  const tasks = await readTaskList(sessionId);
+  if (tasks.length === 0) return null;
   return { ...taskCounter(tasks), active: tasks.find((t) => t.status === "in_progress")?.subject ?? null };
+}
+
+/**
+ * The `size` tasks worth showing. Centred on the in-progress one so you see
+ * what's just been done and what's next, clamped at both ends so the window
+ * is always full when the list is long enough to fill it. No in-progress task
+ * (a finished or not-yet-started list) starts at the top.
+ */
+export function taskWindow(tasks, size) {
+  if (tasks.length <= size) return tasks;
+  const active = tasks.findIndex((t) => t.status === "in_progress");
+  if (active < 0) return tasks.slice(0, size);
+  const start = Math.max(0, Math.min(active - Math.floor(size / 2), tasks.length - size));
+  return tasks.slice(start, start + size);
 }
 
 /**
