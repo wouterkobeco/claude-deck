@@ -349,6 +349,7 @@ async function refreshStats(deck, buttons, stats) {
     buttons.map(async (btn, i) => {
       const stat = stats[i] ?? null;
       btn.assigned = null;
+      btn.renderParams = null; // same as refreshDetail: keeps pulse off stale data
 
       if (!stat) {
         if (btn.drawn !== null) {
