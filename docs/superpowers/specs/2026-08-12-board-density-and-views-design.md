@@ -66,6 +66,12 @@ then `waiting`; within each group, longest-stuck first. Fewer sessions means
 fewer body lines, so the type gets bigger. Pressing a session focuses its
 window; pressing anything else returns to the board.
 
+**Nested sessions are included, and this is the only place they get a key.**
+A worktree session that's blocked shows on the board as a coloured square in
+someone else's margin — enough to notice, not enough to read. The queue is
+where it gets a title, a project, and a wait time. Both the resting count and
+the queue itself draw from real and nested sessions alike.
+
 **Invariant note:** this is the one board that sorts by activity. That
 contradicts "ordering is first-seen, never activity" on purpose — it is
 transient triage, not a surface anyone builds muscle memory on. CLAUDE.md gets
