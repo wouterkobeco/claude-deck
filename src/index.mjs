@@ -3,6 +3,10 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
+// One source of truth for the version — read from package.json rather than
+// duplicated here, so a bump is one edit. JSON modules only have a default
+// export, so this can't be destructured in the import.
+import pkg from "../package.json" with { type: "json" };
 import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, formatAge, splitLabel } from "./render.mjs";
@@ -641,7 +645,9 @@ async function run() {
     throw new Error("No Stream Deck found. Is it plugged in?");
   }
   const deck = await openStreamDeck(devices[0].path);
-  console.log(`Connected to ${deck.PRODUCT_NAME}`);
+  // Which build is driving the deck — worth stating, since a worktree and the
+  // main checkout can each be started against the same device.
+  console.log(`claude-streamdeck v${pkg.version} — connected to ${deck.PRODUCT_NAME}`);
 
   const allButtons = deck.CONTROLS.filter((c) => c.type === "button")
     .sort((a, b) => a.index - b.index)
