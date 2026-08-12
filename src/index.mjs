@@ -322,14 +322,18 @@ async function refreshAttention(deck, buttons, attentionButton) {
         : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
       const project = session.folder.split("/").filter(Boolean).pop() ?? "";
       const age = session.ts ? formatAge(Date.now() / 1000 - session.ts) : "";
+      const accent = accentFor(session.folder);
 
-      const drawn = `queue ${session.state} ${project} ${label} ${age}`;
+      // Every value renderKey below actually draws must be in this signature
+      // — accent and context were missing, which left the gauge frozen until
+      // some other field happened to change (see refresh()'s equivalent).
+      const drawn = `queue ${session.state} ${accent} ${project} ${label} ${age} ${session.context}`;
       if (btn.drawn === drawn) return;
       const buf = await renderKey({
         ...btn,
         state: session.state,
         label,
-        accent: accentFor(session.folder),
+        accent,
         project,
         context: session.context,
         age,
@@ -571,12 +575,15 @@ async function run() {
       return; // stat tiles aren't clickable
     }
 
-    const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
-    if (isRepeat) {
-      view = { kind: "detail", session_id: sessionId, order: [] }; // filled in Task 6
-    } else if (btn?.assigned) {
-      focusWindow(btn.assigned.folder, btn.assigned.ide);
-    }
+    // TEMPORARY until Task 6: a repeat press should open the detail view
+    // (`view = { kind: "detail", session_id: sessionId, order: [] }`), but
+    // Tasks 4-5 haven't given it anything to draw yet, and `view.kind !==
+    // "sessions"` already freezes the pulse loop — opening a view with no
+    // content would eat the press and stall any pulsing key underneath it.
+    // So every press here, repeat or not, just focuses, same as before this
+    // task's press-handler rewrite. Task 6 removes this comment and branches
+    // on `isRepeat` again once refreshDetail() exists to back it.
+    if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
     lastPress = press;
   });
 
