@@ -205,5 +205,14 @@ eq(
   "ties broken stably"
 );
 eq(attentionQueue([], 1000).length, 0, "nothing waiting");
+// ts: 0 means the registry carried no timestamp at all (sessions.mjs's
+// fallback), not "began at the Unix epoch". The sort's `a.ts || nowSeconds`
+// guard must treat it as "now", so it must not leapfrog a session with a
+// real, older timestamp purely by looking like the oldest possible value.
+eq(
+  ids(attentionQueue([q("real", "waiting", 500), q("unknown", "waiting", 0)], 1000)),
+  ["real", "unknown"],
+  "ts: 0 does not sort ahead of a real timestamp as if it were the epoch"
+);
 
 console.log("OK: project grouping");

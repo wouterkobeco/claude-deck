@@ -162,13 +162,15 @@ for (const [name, project, age] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
-// Attention key at rest and under load. Zero is a distinct visual state, not
-// a red key showing "0".
-for (const [name, count, longest] of [
-  ["attention-clear", 0, ""],
-  ["attention-two", 2, "14m"],
+// Attention key at rest, under load, and mid-pulse. Zero is a distinct
+// visual state, not a red key showing "0"; the pulse case covers the
+// brighter #ff5252 branch, otherwise unexercised by any check.
+for (const [name, count, longest, pulse] of [
+  ["attention-clear", 0, "", false],
+  ["attention-two", 2, "14m", false],
+  ["attention-pulse", 2, "14m", true],
 ]) {
-  const buf = await renderAttention({ width, height, count, longest });
+  const buf = await renderAttention({ width, height, count, longest, pulse });
   if (buf.length !== expected) {
     console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
     process.exit(1);

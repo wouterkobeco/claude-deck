@@ -12,7 +12,8 @@ import { getStats } from "./stats.mjs";
 const POLL_MS = 2000;
 const RECONNECT_MS = 5000;
 // ~2.5fps: fast enough to read as a pulse, slow enough not to flood the deck's
-// USB HID link across up to 14 keys at once.
+// USB HID link across up to 14 keys at once (13 session keys plus the
+// attention key).
 const PULSE_MS = 400;
 const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore"];
 
@@ -246,10 +247,16 @@ async function drawUsage(deck, btn) {
 }
 
 // Same drawn-signature diffing as every other key. Pulses with the board's
-// requires_action keys when anything is blocked, so the two agree.
+// requires_action keys when anything is blocked, so the two agree — see
+// pulse() below, which reads renderParams cached here to redraw between
+// polls without a fresh sessions read.
 async function drawAttention(deck, btn, sessions, pulse) {
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const longest = queue.length && queue[0].ts ? formatAge(Date.now() / 1000 - queue[0].ts) : "";
+  // Cached every poll (not just on change), same convention refresh() uses
+  // for session buttons, so pulse()'s faster tick has something to redraw
+  // from without calling getLiveSessions() itself.
+  btn.renderParams = { count: queue.length, longest };
   const drawn = `attention ${queue.length} ${longest} ${pulse}`;
   if (btn.drawn !== drawn) {
     await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
@@ -264,7 +271,7 @@ async function drawAttention(deck, btn, sessions, pulse) {
   return queue.length;
 }
 
-// Stats view: the same 14 buttons, repurposed as an all-time stats board.
+// Stats view: the same 13 session buttons, repurposed as an all-time stats board.
 // Reuses the `drawn`-signature diffing that `refresh` uses for sessions, so
 // switching modes just redraws everything once (the signatures never match
 // across modes) and needs no explicit invalidation.
@@ -396,24 +403,34 @@ async function refreshNested(deck, buttons, nestedView) {
 
 // Flashes every requires_action key between its normal red and a brighter
 // red — the one state that's actually blocked on you, so the one worth
-// catching your eye. Runs on its own faster tick alongside the main poll
-// rather than inside it: `refresh` only redraws on change, but a pulse must
-// redraw on a fixed beat regardless. `btn.drawn` is left alone so the next
-// `refresh` still recognises a steady frame as unchanged.
-async function pulse(deck, buttons, isStatsMode, isDisconnected) {
+// catching your eye. The attention key joins the same beat, and only when
+// its cached count is nonzero — a CLEAR key stays dark and still. Runs on
+// its own faster tick alongside the main poll rather than inside it:
+// `refresh` only redraws on change, but a pulse must redraw on a fixed beat
+// regardless. `btn.drawn` is left alone so the next `refresh`/`drawAttention`
+// still recognises a steady frame as unchanged.
+async function pulse(deck, buttons, attentionButton, isStatsMode, isDisconnected) {
   let bright = false;
   while (!isDisconnected()) {
     bright = !bright;
     if (!isStatsMode()) {
       try {
-        await Promise.all(
-          buttons
+        await Promise.all([
+          ...buttons
             .filter((btn) => btn.renderParams?.state === "requires_action" || (btn.renderParams?.nestedStates?.length ?? 0) > 0)
             .map(async (btn) => {
               const buf = await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
-            })
-        );
+            }),
+          ...(attentionButton.renderParams?.count > 0
+            ? [
+                (async () => {
+                  const buf = await renderAttention({ ...attentionButton, ...attentionButton.renderParams, pulse: bright });
+                  await deck.fillKeyBuffer(attentionButton.index, buf, { format: "rgba" });
+                })(),
+              ]
+            : []),
+        ]);
       } catch (err) {
         console.error("pulse failed:", err.message);
       }
@@ -450,7 +467,7 @@ async function run() {
 
   let disconnected = false;
   // Toggled by pressing the usage key; the key itself keeps rendering the
-  // same either way — it's the 14 session buttons that switch content.
+  // same either way — it's the 13 session buttons that switch content.
   let statsMode = false;
   // { folder, order: [session_id, ...] } while the nested-session overlay is
   // showing, otherwise null. `order` is captured once when the overlay opens
@@ -499,7 +516,7 @@ async function run() {
 
   // Runs alongside the poll loop below, not inside it — it needs a much
   // faster beat than the 2s poll to read as a pulse.
-  pulse(deck, buttons, () => statsMode || !!nestedView, () => disconnected);
+  pulse(deck, buttons, attentionButton, () => statsMode || !!nestedView, () => disconnected);
 
   while (!disconnected) {
     try {
