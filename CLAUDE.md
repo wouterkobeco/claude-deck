@@ -11,8 +11,7 @@ npm run slots-check    # project grouping / slot assignment
 npm run tasks-check    # "task X of Y" numbering
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
-npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial
-npm run transcript-check # the rest of the transcript tail scan (model, effort)
+npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
 ```
 
 The checks are the test suite: plain `node scripts/*-check.mjs` files that
@@ -128,20 +127,34 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   ranks blocked ahead of waiting and longest-stuck first inside each group.
   It's transient triage — you read it, act, and leave — so there's no muscle
   memory for it to break, and it re-sorts while it's up so a session that gets
-  unblocked leaves the queue you're looking at. The detail board is *not* an
-  exception: its shape is fixed for the visit.
+  unblocked leaves the queue you're looking at. When the last one clears, the
+  poll loop leaves too (`view` flips back to `sessions` the moment
+  `refreshAttention`'s returned count hits 0) — an empty queue must not look
+  like the daemon died. The detail board is *not* an exception: its shape is
+  fixed for the visit, but a session that ends mid-visit isn't held stale
+  either — `refreshDetail` blanks every tile and returns `null`, and the poll
+  loop leaves the board the same way.
 - **Redraw is diffed** on the `btn.drawn` signature string in `refresh()` and in
   every other `refresh*`. Any new visual input must be added to that string or
   it will not appear until something else changes — a real bug twice already
-  (the queue tiles' context gauge froze because `accent` and `context` were
-  drawn but not signed). `refreshDetail` builds one `params` object and both
-  renders and signs it, which is the shape to copy.
+  on the queue tiles (`accent` and `context` drawn but not signed, then
+  `progress` drawn nowhere at all). All three `refresh*` functions now build
+  one `params` object per key and both render and sign it (`` `queue
+  ${JSON.stringify(params)}` ``, etc.) — a field can't be forgotten from one
+  without the other, because there's only the one object. Copy this shape for
+  any new board.
 - **Overlay boards must null `btn.renderParams`.** `pulse()` runs on its own
   400ms tick and is frozen while a non-`sessions` board is up, but it resumes
   the instant one is dismissed and redraws from whatever `renderParams` still
   holds — the pre-overlay data, however old. `refreshAttention` and
   `refreshDetail` both null it, so pulse finds nothing to redraw until the next
-  `refresh()` repopulates it, at most 2s later.
+  `refresh()` repopulates it, at most 2s later. The attention key has the
+  same problem from the other side: it's the one key `pulse()` still writes
+  to on an overlay board (see below), so it can freeze mid-`bright` the
+  instant the view changes, and its own `btn.drawn` signature won't have
+  changed to force a repaint. `run()`'s `setView()` helper nulls
+  `attentionButton.drawn` on every transition so the next `drawAttention` call
+  repaints it for real.
 - **Read-only, near-zero-install.** No hooks, no `settings.json` writes, no
   config file. The daemon itself only reads — from `~/.claude/`, VS Code's
   storage, and the usage endpoint. An earlier hook-based version was deleted;
@@ -172,7 +185,12 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Any press then leaves an overlay board, including the key that opened it —
   in the attention queue that press still focuses the window on the way out,
   which is the point of pressing one there; on the detail board its tiles have
-  no window of their own (`btn.assigned` is nulled), so they only dismiss.
+  no window of their own, so they only dismiss. The press handler nulls
+  `btn.assigned` itself the moment detail opens, rather than waiting for
+  `refreshDetail`'s own nulling on its first poll (up to 2s later) — without
+  that, the dismiss press still reads as "same key, same session" and the
+  press after it reopens detail instead of focusing the window, purely
+  depending on how fast you press.
 - **Nested (worktree) sessions don't get their own button.** `sessions.mjs`
   flags a session `nested: true` when its cwd sits inside — but isn't equal
   to — its matched VS Code window's folder (a background worktree checkout).

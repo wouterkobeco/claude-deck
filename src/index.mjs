@@ -66,7 +66,10 @@ export function accentFor(folder) {
 const ATTENTION_RANK = { requires_action: 0, waiting: 1 };
 export function attentionQueue(sessions, nowSeconds) {
   return sessions
-    .filter((s) => s.state in ATTENTION_RANK)
+    // Not `s.state in ATTENTION_RANK`: `in` walks the prototype chain, so a
+    // status of e.g. "constructor" would pass and then sort as NaN.
+    // Unreachable given the registry's fixed vocabulary, but free to guard.
+    .filter((s) => ATTENTION_RANK[s.state] !== undefined)
     .sort(
       (a, b) =>
         ATTENTION_RANK[a.state] - ATTENTION_RANK[b.state] ||
@@ -423,20 +426,15 @@ async function refreshAttention(deck, buttons, attentionButton) {
       const { label, project, age } = keyFields(session);
       const accent = accentFor(session.folder);
 
-      // Every value renderKey below actually draws must be in this signature
-      // — accent and context were missing, which left the gauge frozen until
-      // some other field happened to change (see refresh()'s equivalent).
-      const drawn = `queue ${session.state} ${accent} ${project} ${label} ${age} ${session.context}`;
+      // One object drives both the render call and the drawn signature (the
+      // shape refreshDetail set and refresh() now also follows) so a field
+      // drawn but not signed can't happen — that's what left this same
+      // tile's gauge frozen once already, and dropped its task counter a
+      // second time.
+      const params = { state: session.state, label, accent, project, context: session.context, age, progress: session.progress };
+      const drawn = `queue ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
-      const buf = await renderKey({
-        ...btn,
-        state: session.state,
-        label,
-        accent,
-        project,
-        context: session.context,
-        age,
-      });
+      const buf = await renderKey({ ...btn, ...params });
       await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
       btn.drawn = drawn;
     })
@@ -468,23 +466,26 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       }
       const { label, project, age } = keyFields(session);
       const accent = accentFor(session.folder);
-      const progress = session.progress;
       // Every field on this key describes this session and no other. A
       // worktree session folded onto the key reports itself through its own
       // margin square's colour instead — the key going green for work whose
       // title and context gauge belong to a different session was worse than
       // a small square.
       const nestedStates = btn.nestedSessions.map((n) => n.state);
-      // Cached every poll (not just on change) so the pulse loop below can
-      // redraw a requires_action key between polls without re-deriving it
+      // One object drives both the render call and the drawn signature — the
+      // shape refreshDetail set and the other refresh* functions now also
+      // follow — so a field rendered but not signed can't happen. Cached on
+      // the button every poll (not just on change) so the pulse loop below
+      // can redraw a requires_action key between polls without re-deriving it
       // from a fresh getLiveSessions() call.
-      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context, nestedStates, age };
+      const params = { state: session.state, label, accent, project, progress: session.progress, context: session.context, nestedStates, age };
+      btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are
       // no-ops once a board has settled.
-      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label} ${nestedStates} ${age}`;
+      const drawn = `session ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
-      await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...btn.renderParams }), { format: "rgba" });
+      await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...params }), { format: "rgba" });
       btn.drawn = drawn;
     })
   );
@@ -506,7 +507,26 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
 async function refreshDetail(deck, buttons, view) {
   const sessions = await getLiveSessions();
   const session = sessions.find((s) => s.session_id === view.session_id);
-  if (!session) return sessions; // it ended while you were looking at it; any press exits
+  if (!session) {
+    // It ended while you were looking at it. Stale-but-plausible tiles (a
+    // busy STATE tile whose age has stopped advancing, tasks for a session
+    // that no longer exists) are worse than blank, so every tile is blanked
+    // here rather than left however it last drew — and renderParams is
+    // nulled the same as the found-session path below, so pulse() doesn't
+    // repaint this frame the instant the poll loop drops back to the
+    // sessions board.
+    await Promise.all(
+      buttons.map(async (btn) => {
+        btn.assigned = null;
+        btn.renderParams = null;
+        if (btn.drawn !== null) {
+          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
+          btn.drawn = null;
+        }
+      })
+    );
+    return null; // tells the poll loop there's nothing left to show
+  }
 
   // Sessions already holding a board key of their own (everReal — a real
   // session that later cd'd into a worktree, or this session itself) are not
@@ -582,11 +602,11 @@ async function refreshDetail(deck, buttons, view) {
 // `refresh` only redraws on change, but a pulse must redraw on a fixed beat
 // regardless. `btn.drawn` is left alone so the next `refresh`/`drawAttention`
 // still recognises a steady frame as unchanged.
-async function pulse(deck, buttons, attentionButton, isStatsMode, isDisconnected) {
+async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnected) {
   let bright = false;
   while (!isDisconnected()) {
     bright = !bright;
-    if (!isStatsMode()) {
+    if (!isOverlayView()) {
       try {
         await Promise.all([
           ...buttons
@@ -657,6 +677,17 @@ async function run() {
   // what it did — this is what makes a second press on the same button mean
   // "again", and any other key in between break that chain.
   let lastPress = null;
+  // Every view change goes through here so the attention key can't stick on
+  // a bright pulse frame: pulse() writes without touching btn.drawn, so if the
+  // view flips away from "sessions" mid-pulse the attention key can freeze on
+  // whichever frame it was mid-write, and its own signature never changes to
+  // force a repaint. Nulling attentionButton.drawn on every transition costs
+  // one redundant redraw at worst and guarantees the next drawAttention call
+  // repaints it for real.
+  const setView = (next) => {
+    view = next;
+    attentionButton.drawn = null;
+  };
   deck.on("error", (err) => {
     console.error("Stream Deck error:", err);
     disconnected = true;
@@ -672,7 +703,7 @@ async function run() {
     // Any press leaves an overlay, including the key that opened it.
     if (view.kind === "attention" || view.kind === "detail") {
       const wasAttention = view.kind === "attention";
-      view = { kind: "sessions" };
+      setView({ kind: "sessions" });
       // In the queue a session key still focuses its window on the way out —
       // that's the whole point of pressing one there.
       if (wasAttention && btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
@@ -680,7 +711,7 @@ async function run() {
       return;
     }
     if (isUsage) {
-      view = view.kind === "stats" ? { kind: "sessions" } : { kind: "stats" };
+      setView(view.kind === "stats" ? { kind: "sessions" } : { kind: "stats" });
       lastPress = { index: control.index, session_id: null };
       return;
     }
@@ -688,7 +719,7 @@ async function run() {
       // Dark key, nothing queued: a press has nothing to show, so it does
       // nothing rather than opening an empty board. `attentionCount` is what
       // the last drawAttention() returned.
-      if (attentionCount > 0) view = { kind: "attention" };
+      if (attentionCount > 0) setView({ kind: "attention" });
       lastPress = { index: control.index, session_id: null };
       return;
     }
@@ -703,7 +734,15 @@ async function run() {
     // so any other key in between breaks the chain.
     const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
     if (isRepeat) {
-      view = { kind: "detail", session_id: sessionId };
+      setView({ kind: "detail", session_id: sessionId });
+      // Without this, the button that opened the detail board keeps reporting
+      // its old session_id (refreshDetail only nulls it on its first poll,
+      // up to 2s later) — so the *next* press, which is meant to just dismiss
+      // the overlay, still looks like "same key, same session" and the press
+      // after that reads as another repeat, reopening detail instead of
+      // focusing the window. Nulling it here makes the outcome depend on what
+      // was pressed, not on how fast.
+      btn.assigned = null;
     } else if (btn?.assigned) {
       focusWindow(btn.assigned.folder, btn.assigned.ide);
     }
@@ -731,8 +770,22 @@ async function run() {
         attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);
+        // The queue re-sorts while it's up so an unblocked session leaves it;
+        // when the last one clears, you should leave too — otherwise a
+        // drained queue is thirteen dark keys plus a dim CLEAR key,
+        // indistinguishable at a glance from the daemon having died.
+        if (attentionCount === 0) setView({ kind: "sessions" });
       } else if (view.kind === "detail") {
-        attentionCount = await drawAttention(deck, attentionButton, await refreshDetail(deck, buttons, view), false);
+        const detailSessions = await refreshDetail(deck, buttons, view);
+        if (detailSessions === null) {
+          // The session ended mid-visit; refreshDetail already blanked every
+          // tile and nulled renderParams. Leave the board rather than sit on
+          // it forever.
+          setView({ kind: "sessions" });
+          attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
+        } else {
+          attentionCount = await drawAttention(deck, attentionButton, detailSessions, false);
+        }
       } else {
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
