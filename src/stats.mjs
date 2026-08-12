@@ -109,8 +109,12 @@ export function computeStats(raw) {
     { label: "Current streak", value: `${currentStreak} days` },
     { label: "Input tokens", value: fmt(totals.input) },
     { label: "Output tokens", value: fmt(totals.output) },
-    { label: "Cache read", value: fmt(totals.cacheRead) },
-    { label: "Cache write", value: fmt(totals.cacheWrite) },
+    // Read and write share one tile: they're the same mechanism measured two
+    // ways, and the board has exactly 13 slots. Two tiles here made 14 with
+    // the reset pair prepended in index.mjs, so the last one was silently
+    // dropped — the session board's "extras fall off" rule is right for
+    // sessions competing for space and wrong for a fixed list of facts.
+    { label: "Cache r/w", value: `${fmt(totals.cacheRead)} / ${fmt(totals.cacheWrite)}` },
   ];
 }
 

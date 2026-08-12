@@ -41,9 +41,15 @@ const stats = computeStats({
   firstSessionDate: "2026-08-01T00:00:00.000Z",
   lastComputedDate: "2026-08-08",
 });
-assert.equal(stats.length, 12);
+// 11 stats + the 2 reset tiles index.mjs prepends = 13, which is exactly the
+// number of buttons the stats board has. This assertion is the thing that
+// tells you a new stat pushed one off the end: the board truncates silently,
+// so nothing else would.
+assert.equal(stats.length, 11);
 assert.deepEqual(stats[0], { label: "Favorite model", value: "Opus 4.8" });
 assert.deepEqual(stats[4], { label: "Most active day", value: "Aug 8" });
+// Cache read and write share one tile so the list fits the board.
+assert.deepEqual(stats[10], { label: "Cache r/w", value: "1.0k / 51" });
 console.log("OK: computeStats");
 
 if (process.argv.includes("--live")) {
