@@ -16,6 +16,17 @@ const STATE_COLORS = {
 
 const SHELL_DOT = "#1565c0"; // blue — a background shell is still running
 
+// Colours for the nested-session squares. Deliberately brighter than
+// STATE_COLORS: those are key backgrounds and are dark by design, so a busy
+// square drawn in the busy background colour would disappear into a busy key.
+const MARKER_COLORS = {
+  busy: "#69f0ae",
+  waiting: "#ffc107",
+  requires_action: "#ff5252",
+  shell: "#90caf9",
+  idle: "#ffffff",
+};
+
 function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }
@@ -37,7 +48,7 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedCount }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
@@ -79,17 +90,26 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const squaresBottom = height - footHeight - 2;
   const maxSquares = Math.max(0, Math.floor((squaresBottom - squaresTop) / squarePitch));
   const shellDot = state === "shell";
-  const totalMarkers = (shellDot ? 1 : 0) + (nestedCount ?? 0);
+  const nested = nestedStates ?? [];
+  const totalMarkers = (shellDot ? 1 : 0) + nested.length;
   const visibleMarkers = Math.min(totalMarkers, maxSquares);
   const overflowMarker = totalMarkers > maxSquares;
   // Shell marker first (it's about this session itself), nested markers
-  // after (children of it) — trimmed to what actually fits.
-  const markers = [...(shellDot ? [true] : []), ...Array(nestedCount ?? 0).fill(false)].slice(0, visibleMarkers);
+  // after (children of it) — trimmed to what actually fits. A nested marker
+  // carries its own session's state as its colour: those sessions have no key
+  // of their own, so this square is the only place their state can show. The
+  // two keep separate dim alphas because the blue shell dot is already dark
+  // against a key background, where the state colours are bright.
+  const markers = [
+    ...(shellDot ? [{ fill: SHELL_DOT, dim: "55", full: "" }] : []),
+    ...nested.map((st) => ({ fill: MARKER_COLORS[st] ?? MARKER_COLORS.idle, dim: "33", full: "ee" })),
+  ].slice(0, visibleMarkers);
   const squares = markers
-    .map((isShell, i) => {
-      const dim = i === visibleMarkers - 1 && overflowMarker && !pulse;
-      const fill = isShell ? `${SHELL_DOT}${dim ? "55" : ""}` : `#ffffff${dim ? "33" : "ee"}`;
-      return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareWidth}" height="${squareHeight}" fill="${fill}" />`;
+    .map(({ fill, dim, full }, i) => {
+      const dimmed = i === visibleMarkers - 1 && overflowMarker && !pulse;
+      return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareWidth}" height="${squareHeight}" fill="${fill}${
+        dimmed ? dim : full
+      }" />`;
     })
     .join("");
 

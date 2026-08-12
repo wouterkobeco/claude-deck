@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots } from "../src/index.mjs";
+import { assignSlots, accentFor } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -132,5 +132,43 @@ eq(
   [{ session_id: "w1", folder: E, nested: true }],
   "previously-promoted session reverts to an ordinary nested child"
 );
+
+// A real session that cd's into a worktree mid-task (EnterWorktree) keeps its
+// own button instead of collapsing into an indicator — otherwise a busy key
+// blanks out in the middle of the work it's reporting on.
+const F = "/projects/zeta";
+const nestedBySlot7 = new Array(5).fill(null);
+assignSlots([s("f1", F), s("f2", F)], slots, nestedBySlot7);
+eq(slots, ["f1", "f2", null, null, null], "two real sessions in one project");
+assignSlots([s("f1", F, true), s("f2", F)], slots, nestedBySlot7);
+eq(slots, ["f1", "f2", null, null, null], "settled session keeps its slot after entering a worktree");
+eq(nestedBySlot7[0], [], "and does not become its own nested child");
+
+// ...but a session first seen inside a worktree still is one, even when its
+// folder already has a real session — that's the background-checkout case the
+// indicator exists for.
+assignSlots([s("f1", F), s("f2", F), s("w9", F, true)], slots, nestedBySlot7);
+eq(slots, ["f1", "f2", null, null, null], "session first seen nested claims no slot");
+eq(nestedBySlot7[0].map((n) => n.session_id), ["w9"], "session first seen nested stays an indicator");
+
+// Accents come from what's free, not from position % 8. folderOrder is never
+// pruned, so a long-lived folder plus enough churn used to hand a new project
+// the colour of one still on the board: position 8 wrapped onto position 0.
+// Colours are only guaranteed distinct up to ACCENTS.length live folders —
+// past that something must repeat, and that isn't what this guards.
+const acc = (i) => `/projects/acc${i}`;
+const wide = new Array(9).fill(null);
+
+// One folder stays live throughout; seven others appear alongside it...
+assignSlots([s("acc0", acc(0))], wide);
+const first = accentFor(acc(0));
+assignSlots(Array.from({ length: 8 }, (_, i) => s(`acc${i}`, acc(i))), wide);
+eq(new Set(Array.from({ length: 8 }, (_, i) => accentFor(acc(i)))).size, 8, "eight live folders get eight distinct accents");
+eq(accentFor(acc(0)), first, "a folder keeps its colour as others appear");
+
+// ...then go away, and a ninth folder arrives while the first is still shown.
+assignSlots([s("acc0", acc(0)), s("acc8", acc(8))], wide);
+eq(accentFor(acc(8)) !== first, true, "a new folder does not reuse a live folder's colour after the list wraps");
+eq(accentFor(acc(0)), first, "and the long-lived folder still keeps its own");
 
 console.log("OK: project grouping");

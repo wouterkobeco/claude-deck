@@ -30,10 +30,31 @@ const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292
 const folderOrder = new Map();
 const sessionOrder = new Map();
 const nestedOrder = new Map();
+// Sessions ever seen with a non-nested cwd. Never pruned, same as folderOrder:
+// a set of dead session ids costs nothing, and a resumed session keeping its
+// real button is the behaviour we want anyway.
+const everReal = new Set();
 let arrivals = 0;
 
+// Colour is picked from what no other live folder is using, not from
+// ACCENTS[position % 8]. Position grows for the daemon's lifetime and is
+// deliberately never pruned, so the modulo guaranteed a collision: once nine
+// folders have been seen, positions 0 and 8 are the same colour, and two
+// projects sharing one defeats the entire purpose of the accent.
+//
+// Assigned once, at first sight of a folder, and kept — a project that goes
+// away and comes back reclaims its colour, as it reclaims its slot. The
+// remaining collision is a folder returning after its colour was handed to
+// someone else; rarer than the modulo wrap, and not worth recolouring a
+// settled board to prevent.
+const folderAccent = new Map();
+function claimAccent(folder, liveFolders) {
+  const taken = new Set([...liveFolders].filter((f) => f !== folder).map((f) => folderAccent.get(f)));
+  return ACCENTS.find((c) => !taken.has(c)) ?? ACCENTS[folderAccent.size % ACCENTS.length];
+}
+
 export function accentFor(folder) {
-  return ACCENTS[(folderOrder.get(folder) ?? 0) % ACCENTS.length];
+  return folderAccent.get(folder) ?? ACCENTS[0];
 }
 
 // Picks one stable file inside a folder to use as the focus target. Stable
@@ -115,6 +136,24 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   let real = sessions.filter((s) => !s.nested);
   let nested = sessions.filter((s) => s.nested);
 
+  // A session that has ever reported a non-nested cwd stays real, even once
+  // its cwd moves into a worktree. `nested` is really a property of where a
+  // session *started*: one that runs EnterWorktree mid-task looks identical
+  // to a background checkout from the cwd alone, and demoting it blanks out a
+  // busy green key in the middle of the work it's reporting on. Same
+  // first-seen rule as everything else here — only a session already nested
+  // the first time it appeared becomes an indicator.
+  //
+  // Deliberately not `sessionOrder.has()`: an orphan-promoted stand-in (see
+  // below) is in there too, and those must still revert once a genuine real
+  // session shows up for their folder.
+  for (const s of real) everReal.add(s.session_id);
+  const settled = nested.filter((s) => everReal.has(s.session_id));
+  if (settled.length) {
+    real = [...real, ...settled];
+    nested = nested.filter((s) => !everReal.has(s.session_id));
+  }
+
   // A folder with no real session at all would otherwise vanish from the
   // board entirely — no primary button to attach its nested sessions to.
   // The common cause is an interactive session that simply cd'd into a
@@ -133,8 +172,10 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     nested = nested.filter((s) => s.session_id !== promoted.session_id);
   }
 
+  const liveFolders = new Set(real.map((s) => s.folder));
   for (const s of real) {
     if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);
+    if (!folderAccent.has(s.folder)) folderAccent.set(s.folder, claimAccent(s.folder, liveFolders));
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
   for (const s of nested) {
@@ -247,15 +288,20 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       const accent = accentFor(session.folder);
       const project = session.folder.split("/").filter(Boolean).pop() ?? "";
       const progress = session.progress;
-      const nestedCount = btn.nestedSessions.length;
+      // Every field on this key describes this session and no other. A
+      // worktree session folded onto the key reports itself through its own
+      // margin square's colour instead — the key going green for work whose
+      // title and context gauge belong to a different session was worse than
+      // a small square.
+      const nestedStates = btn.nestedSessions.map((n) => n.state);
       // Cached every poll (not just on change) so the pulse loop below can
       // redraw a requires_action key between polls without re-deriving it
       // from a fresh getLiveSessions() call.
-      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context, nestedCount };
+      btn.renderParams = { state: session.state, label, accent, project, progress, context: session.context, nestedStates };
 
       // Skip the re-encode when nothing visible changed — most polls are
       // no-ops once a board has settled.
-      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label} ${nestedCount}`;
+      const drawn = `${session.state} ${accent} ${project} ${progress?.current}/${progress?.total} ${session.context} ${label} ${nestedStates}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...btn.renderParams }), { format: "rgba" });
       btn.drawn = drawn;
@@ -282,7 +328,7 @@ async function refreshNested(deck, buttons, nestedView) {
       // 400ms tick and reads whatever btn.renderParams already holds —
       // which, without this, would still be each button's pre-overlay data,
       // stale by however long the overlay was open. Nulling it here means
-      // pulse's filter (state/nestedCount) finds nothing to redraw until the
+      // pulse's filter (state/nestedStates) finds nothing to redraw until the
       // next refresh() repopulates it, at most 2s later.
       btn.renderParams = null;
 
@@ -322,7 +368,7 @@ async function pulse(deck, buttons, isStatsMode, isDisconnected) {
       try {
         await Promise.all(
           buttons
-            .filter((btn) => btn.renderParams?.state === "requires_action" || (btn.renderParams?.nestedCount ?? 0) > 0)
+            .filter((btn) => btn.renderParams?.state === "requires_action" || (btn.renderParams?.nestedStates?.length ?? 0) > 0)
             .map(async (btn) => {
               const buf = await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });

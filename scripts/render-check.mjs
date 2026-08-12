@@ -27,11 +27,14 @@ const outPath = new URL("./render-check-output.png", import.meta.url).pathname;
 await sharp(buf, { raw: { width, height, channels: 4 } }).png().toFile(outPath);
 console.log(`OK: wrote ${outPath}`);
 
-// Nested-session indicator: a count that fits inside the column, and one
-// large enough to force the overflow-flash square.
-for (const [name, nestedCount] of [
-  ["small", 4],
-  ["overflow", 25],
+// Nested-session indicator: a set that fits inside the column, one large
+// enough to force the overflow-flash square, and one mixing every state so
+// each marker colour is exercised — a nested session has no key of its own,
+// so its square is the only place its state shows.
+for (const [name, nestedStates] of [
+  ["small", ["idle", "idle", "idle", "idle"]],
+  ["overflow", Array(25).fill("idle")],
+  ["states", ["busy", "waiting", "requires_action", "shell", "idle"]],
 ]) {
   const buf = await renderKey({
     width,
@@ -40,7 +43,7 @@ for (const [name, nestedCount] of [
     label: "kob-backend",
     accent: "#4fc3f7",
     project: "kob-backend",
-    nestedCount,
+    nestedStates,
   });
   if (buf.length !== expected) {
     console.error(`FAILED (nested ${name}): expected ${expected} bytes, got ${buf.length}`);
@@ -78,7 +81,7 @@ const marginBuf = await renderKey({
   label: "a very long aiTitle that would otherwise span the full key width",
   accent: "#4fc3f7",
   project: "kob-backend",
-  nestedCount: 6,
+  nestedStates: Array(6).fill("idle"),
 });
 if (marginBuf.length !== expected) {
   console.error(`FAILED (label margin): expected ${expected} bytes, got ${marginBuf.length}`);
@@ -88,4 +91,29 @@ await sharp(marginBuf, { raw: { width, height, channels: 4 } })
   .png()
   .toFile(new URL("./render-check-margin.png", import.meta.url).pathname);
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping");
+// Background-shell state: busy green, blue dot bottom-left in the reserved
+// foot row — alone, and sharing that row with the task counter on the right.
+for (const [name, progress] of [
+  ["shell", null],
+  ["shell-progress", { current: 3, total: 7 }],
+]) {
+  const buf = await renderKey({
+    width,
+    height,
+    state: "shell",
+    label: "run quality tests on beast container",
+    accent: "#4fc3f7",
+    project: "kob-backend",
+    progress,
+    context: 41,
+  });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot");
