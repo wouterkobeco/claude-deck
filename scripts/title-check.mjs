@@ -8,9 +8,9 @@
 // Run: node scripts/title-check.mjs
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTranscriptSignals } from "../src/sessions.mjs";
+import { readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-title-check-"));
 const path = join(dir, "transcript.jsonl");
@@ -128,5 +128,32 @@ assert.equal((await signals([userTurnLine])).toolPending, false, "no tool lines 
 console.log("OK: compaction silence signals");
 
 console.log("OK: model / effort");
+
+// The directory name Claude Code derives from a cwd flattens *every*
+// non-alphanumeric, not just `/` and `.`. Worktrees named `feat+thing` are the
+// case that caught this: aiming at the wrong directory fails silently, so the
+// only symptom was a key with no title and no model.
+assert.equal(
+  transcriptPathFor({ cwd: "/Users/x/p/.claude/worktrees/feat+thing", sessionId: "abc" }),
+  join(homedir(), ".claude/projects/-Users-x-p--claude-worktrees-feat-thing/abc.jsonl"),
+  "+ and _ flatten to - like every other non-alphanumeric"
+);
+assert.equal(
+  transcriptPathFor({ cwd: "/Users/x/my_proj.v2", sessionId: "abc" }),
+  join(homedir(), ".claude/projects/-Users-x-my-proj-v2/abc.jsonl")
+);
+console.log("OK: transcript path encoding");
+
+// Claude Code's own interrupt/error entries are assistant lines claiming
+// `<synthetic>`. The scan looks past them for the last real turn.
+const synthetic = JSON.stringify({ type: "assistant", message: { model: "<synthetic>" } });
+const afterInterrupt = await signals([
+  JSON.stringify({ type: "assistant", effort: "high", message: { model: "claude-opus-5" } }),
+  synthetic,
+]);
+assert.equal(afterInterrupt.model, "claude-opus-5", "<synthetic> is not a model");
+assert.equal(afterInterrupt.effort, "high");
+assert.equal((await signals([synthetic])).model, null, "nothing but synthetic reports no model");
+console.log("OK: synthetic model lines skipped");
 
 await rm(dir, { recursive: true, force: true });

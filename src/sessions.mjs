@@ -68,10 +68,17 @@ function isAlive(pid) {
 
 /**
  * Claude Code stores a session's transcript under a directory named after its
- * cwd, with every `/` and `.` flattened to `-`.
+ * cwd, with every character outside [a-zA-Z0-9] flattened to `-`.
+ *
+ * It is the full class, not just `/` and `.`: a worktree named `feat+thing`
+ * lands in `-…-worktrees-feat-thing`, and encoding only the two obvious
+ * characters aimed us at a path that doesn't exist. That failure is silent by
+ * design — every read here is try/catch — so those sessions simply lost their
+ * title, model tile and blocked/compacting detection with nothing to show for
+ * it.
  */
-function transcriptPathFor({ cwd, sessionId }) {
-  return join(PROJECTS_DIR, cwd.replace(/[/.]/g, "-"), `${sessionId}.jsonl`);
+export function transcriptPathFor({ cwd, sessionId }) {
+  return join(PROJECTS_DIR, cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
 }
 
 // /clear writes a plain command line into the same transcript rather than
@@ -196,7 +203,11 @@ export async function readTranscriptSignals(transcriptPath) {
       if (!modelResolved && line.includes('"type":"assistant"')) {
         try {
           const obj = JSON.parse(line);
-          if (obj.message?.model) {
+          // Claude Code writes its own interrupt and API-error entries as
+          // assistant lines claiming `model: "<synthetic>"`. Those are the
+          // moments you're most likely to be looking at the deck, and the tile
+          // would read "<synthetic>" — keep scanning back for a real turn.
+          if (obj.message?.model && obj.message.model !== "<synthetic>") {
             model = obj.message.model;
             effort = obj.effort ?? null;
             modelResolved = true;
