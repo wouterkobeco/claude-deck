@@ -250,6 +250,36 @@ eq(withNested.length, 13, "layout still fills the board");
 eq(withNested.slice(11).map((t) => t.kind), ["nested", "nested"], "worktree tiles sit at the tail");
 eq(withNested.slice(5, 11).every((t) => t.kind === "task"), true, "tasks fill the space in front of them");
 
+// Task numbering is `tasks.indexOf(t) + 1` — absolute position in the full
+// list — and holdTiles reads a held task tile back by `tasks[number - 1]`.
+// The 20-task case above happens to put in_progress at index 0, so
+// taskWindow's start is 0 too and absolute numbering (1..6) is
+// indistinguishable from window-relative numbering (also 1..6) — it would
+// not notice that pairing breaking. Put in_progress mid-list instead.
+const midTasks = Array.from({ length: 20 }, (_, i) => dTask(`Task ${i + 1}`, i === 10 ? "in_progress" : "pending"));
+const midNested = [{ session_id: "w1", state: "busy" }, { session_id: "w2", state: "idle" }];
+const mid = detailLayout({ session: dSession, tasks: midTasks, nested: midNested, age: "40m", slotCount: 13 });
+const midTaskTiles = mid.slice(5, 11);
+eq(
+  midTaskTiles.map((t) => t.number),
+  [8, 9, 10, 11, 12, 13],
+  "task numbering stays absolute (tasks.indexOf + 1), not reset to 1 at the window's start"
+);
+eq(
+  midTaskTiles.find((t) => t.status === "in_progress").number,
+  11,
+  "the active task (array index 10) keeps its true number 11"
+);
+// And holdTiles must read the same task back by that same absolute number —
+// the one arithmetic this whole export-for-testability exists to guard.
+const midHeld = holdTiles(mid, mid, midTasks, midNested);
+const midActiveSlot = midTaskTiles.findIndex((t) => t.status === "in_progress") + 5;
+eq(
+  midHeld[midActiveSlot],
+  { kind: "task", number: 11, subject: "Task 11", status: "in_progress" },
+  "holdTiles re-reads the active task by its absolute number, not its position in the window"
+);
+
 // After /clear the transcript still holds the pre-clear session name; the
 // header must go blank rather than present it as this session's title.
 const cleared = detailLayout({

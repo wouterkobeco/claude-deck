@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, renderAttention, renderTask, splitLabel } from "../src/render.mjs";
+import { renderKey, formatAge, renderAttention, renderTask, renderStat, splitLabel } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -202,4 +202,44 @@ for (const status of ["completed", "in_progress", "pending"]) {
     .toFile(new URL(`./render-check-task-${status}.png`, import.meta.url).pathname);
 }
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles");
+// The detail board's STATE/CONTEXT/MODEL stat tiles — renderStat is only
+// ever called through refreshDetail, never directly by any check until now.
+// "requires_action" plus the longest age format (h+mm) is the longest string
+// the board ever puts in one of these.
+for (const [name, label, value] of [
+  ["state-busy", "STATE", "busy 40m"],
+  ["state-blocked-longest", "STATE", "requires_action 2h14m"],
+  ["context", "CONTEXT", "41%"],
+  ["context-unknown", "CONTEXT", "—"],
+  ["model", "MODEL", "opus-5 high"],
+  ["model-unknown", "MODEL", "—"],
+]) {
+  const buf = await renderStat({ width, height, label, value });
+  if (buf.length !== expected) {
+    console.error(`FAILED (stat ${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-stat-${name}.png`, import.meta.url).pathname);
+}
+
+// The detail board's title spans two keys with no accent bar at all
+// (`project: ""`, refreshDetail's header tiles) — every renderKey case above
+// passes a real project name, so this shape was never rendered by a check.
+for (const [name, label] of [
+  ["title-a", "serializing client-block"],
+  ["title-b", "mutations"],
+  ["title-empty", ""],
+]) {
+  const buf = await renderKey({ width, height, state: "busy", label, accent: "#4fc3f7", project: "" });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles");
