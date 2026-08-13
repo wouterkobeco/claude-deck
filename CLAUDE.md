@@ -115,8 +115,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   not just run.
 - `src/usage.mjs` — the two rate-limit windows for the bottom-right key. These
   numbers exist only server-side, so it reads the CLI's own OAuth token from the
-  login keychain and asks the API, cached 60s. The only outbound network call in
-  the project, and the only credential it touches.
+  login keychain and asks the API, cached 5 minutes. The only outbound network
+  call in the project, and the only credential it touches. **That endpoint is
+  shared, and it 429s you for other clients' traffic.** Every Claude Code
+  session on the machine polls it with the same token; measured over 21
+  requests at a strict 1/min, 19% came back 429 — including the first request
+  from a cold process. It sends no ratelimit headers and answers
+  `retry-after: 0`, so there is nothing to obey: each consecutive 429 waits one
+  TTL longer (5m, 10m, 20m, capped at 30m) and one success drops back to the
+  plain TTL. Don't shorten the TTL to make the key livelier — these are 5-hour
+  and 7-day windows, and the cost of asking more often is paid in 429s. Set
+  `USAGE_LOG=1` to append one line per request (timing, status, headers, live
+  session count) to `~/.claude/streamdeck-usage.jsonl` before changing any of
+  this.
 - `src/stats.mjs` — all-time stats board (favorite model, total tokens,
   streaks, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output (see the

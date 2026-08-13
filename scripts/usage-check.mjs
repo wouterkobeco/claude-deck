@@ -2,7 +2,7 @@
 // field names above can be confirmed against a real account.
 // Run: node scripts/usage-check.mjs [--live]
 import assert from "node:assert/strict";
-import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil } from "../src/usage.mjs";
+import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil, TTL_MS } from "../src/usage.mjs";
 
 assert.deepEqual(
   parseUsage({
@@ -50,6 +50,45 @@ assert.equal(results[0].session, 1);
 await getUsage(Date.now(), slowFetcher);
 assert.equal(calls, 1, "a cached value must not trigger another request");
 console.log("OK: getUsage request sharing");
+
+// 429 backoff. The endpoint 429s bursts it never warned about — no
+// ratelimit headers, and a `retry-after: 0` that would have us retry
+// immediately — so each consecutive 429 waits a TTL longer than the last, and
+// one success drops straight back to the plain TTL. Times are driven by the
+// `now` argument; nothing here sleeps or touches the network.
+let denials = 0;
+const rateLimited = async () => {
+  denials++;
+  throw new Error("usage endpoint returned 429");
+};
+
+// A TTL after the last good fetch above, so this one goes out — and is denied.
+await getUsage(Date.now() + TTL_MS, rateLimited);
+assert.equal(denials, 1);
+assert.equal(calls, 1, "a denied request must not blank the cached value");
+
+// One TTL on, the plain cache would have expired; the backoff must hold it.
+await getUsage(Date.now() + TTL_MS, rateLimited);
+assert.equal(denials, 1, "the first 429 must buy a TTL of quiet on top of the cache");
+
+// Two TTLs on it asks again, is denied again, and doubles to a 2-TTL wait.
+await getUsage(Date.now() + 2 * TTL_MS, rateLimited);
+assert.equal(denials, 2);
+await getUsage(Date.now() + 2 * TTL_MS + 30_000, rateLimited);
+assert.equal(denials, 2, "a second 429 must wait longer than the first");
+
+// Whatever the key was showing before the 429s, it is still showing — a
+// rate-limited lookup is not a reason to blank a number that is minutes old.
+const held = await getUsage(Date.now(), rateLimited);
+assert.equal(held.session, 1, "the last good value survives a run of 429s");
+
+// A success clears the backoff: the next request is due one plain TTL later,
+// not three.
+await getUsage(Date.now() + 3 * TTL_MS, slowFetcher);
+assert.equal(calls, 2);
+await getUsage(Date.now() + TTL_MS, slowFetcher);
+assert.equal(calls, 3, "one success must drop the backoff back to the plain TTL");
+console.log("OK: getUsage 429 backoff");
 
 if (process.argv.includes("--live")) {
   console.log(JSON.stringify(await fetchUsage(), null, 2));

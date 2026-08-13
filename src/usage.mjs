@@ -31,10 +31,20 @@ async function logRequest(record) {
 // — they only exist server-side — so this asks the API with the subscription's
 // OAuth token, the one the CLI itself stores in the login keychain.
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const TTL_MS = 60_000;
+// Five minutes, not one: these are 5-hour and 7-day windows, so a minute's
+// resolution buys nothing, and the endpoint is shared with every Claude Code
+// session on the machine — measured, a well-behaved 1/min client still lost
+// 19% of its requests to 429s it wasn't causing.
+export const TTL_MS = 300_000;
+// A 429 carries no retry-after worth reading (the endpoint answers `0`) and no
+// ratelimit headers at all, so backing off is guesswork: wait a TTL longer each
+// consecutive time, up to half an hour, and drop back to the plain TTL on the
+// first success.
+const MAX_BACKOFF_MS = 1_800_000;
 
 let cache = { at: 0, value: { session: null, week: null, sessionResetsAt: null, weekResetsAt: null } };
 let lastError = null;
+let backoffMs = 0;
 // The request currently in flight, if any — see getUsage.
 let inflight = null;
 
@@ -100,7 +110,7 @@ export async function fetchUsage() {
  * persistent outage doesn't fill the log.
  */
 export async function getUsage(now = Date.now(), fetcher = fetchUsage) {
-  if (now - cache.at < TTL_MS) return cache.value;
+  if (now - cache.at < TTL_MS + backoffMs) return cache.value;
   // `cache.at` isn't written until the fetch resolves, so without this a
   // request still in flight looks exactly like no request at all and the next
   // 2s poll starts another one. A single slow response then becomes a request
@@ -113,11 +123,15 @@ export async function getUsage(now = Date.now(), fetcher = fetchUsage) {
     try {
       cache = { at: Date.now(), value: parseUsage(await fetcher()) };
       lastError = null;
+      backoffMs = 0;
     } catch (err) {
-      // A 429 means we have already asked too often; retrying in half a TTL
-      // is the opposite of what it is telling us, so it waits the full one.
-      // Other failures are more likely transient and keep the short retry.
+      // A 429 means we have already asked too often; retrying sooner is the
+      // opposite of what it is telling us, so each consecutive one waits a TTL
+      // longer than the last. Other failures are more likely transient and keep
+      // the short retry, and leave the backoff alone — a network blip is not
+      // the server asking for room.
       const rateLimited = err.message.includes("429");
+      if (rateLimited) backoffMs = Math.min(backoffMs ? backoffMs * 2 : TTL_MS, MAX_BACKOFF_MS);
       cache = { ...cache, at: rateLimited ? Date.now() : Date.now() - TTL_MS / 2 };
       if (err.message !== lastError) {
         console.error("usage lookup failed:", err.message);
