@@ -3,26 +3,39 @@ import sharp from "sharp";
 const BUSY = "#2e7d32"; // green — actively working
 
 // Keyed by the session registry's own status vocabulary.
-const STATE_COLORS = {
+export const STATE_COLORS = {
   busy: BUSY,
   // `shell` is "turn over, but a background shell it started is still
   // running" — work in flight either way, so it reads as busy rather than as
   // its own colour. What it isn't is the margin square's job, below.
   shell: BUSY,
   requires_action: "#c62828", // red — blocked on you
-  waiting: "#e6a700", // amber — waiting on input
+  // Dark gold, not the bright amber this used to be. Every background here has
+  // to carry white body text and the bright marker squares below; at #e6a700
+  // (L* 73) that text was 2.1:1 and the markers 1.3:1 — the one key on the
+  // board where the light-on-dark rule the rest of the palette follows broke.
+  // This sits at L* 47 with the others (36–46), keeps ≥53 ΔE from all three,
+  // and gives white 5.0:1.
+  waiting: "#886000", // dark gold — waiting on input
   idle: "#555555", // gray
 };
 
-const SHELL_DOT = "#1565c0"; // blue — a background shell is still running
-
-// Colours for the nested-session squares. Deliberately brighter than
-// STATE_COLORS: those are key backgrounds and are dark by design, so a busy
-// square drawn in the busy background colour would disappear into a busy key.
-const MARKER_COLORS = {
+// Colours for the nested-session squares, and for the shell marker. Deliberately
+// brighter than STATE_COLORS: those are key backgrounds and are dark by design,
+// so a busy square drawn in the busy background colour would disappear into a
+// busy key.
+export const MARKER_COLORS = {
   busy: "#69f0ae",
   waiting: "#ffc107",
-  requires_action: "#ff5252",
+  // Pale rather than the #ff5252 the pulse uses: red is the darkest hue at any
+  // given saturation, and at #ff5252 this square measured 1.6:1 on the busy key
+  // — the marker for "a subagent here is blocked on you" was the least visible
+  // one on the board. #ffa4a4 is as light as red goes before it stops reading
+  // as red at 3×6px (it's 43 ΔE from the white idle marker; much lighter and
+  // they converge). 2.7:1 is the ceiling for this hue, below the 2.9 the rest
+  // of the set clears — and the case is partly carried anyway by the key
+  // itself, which `mostUrgent` has already turned red and set pulsing.
+  requires_action: "#ffa4a4",
   shell: "#90caf9",
   idle: "#ffffff",
 };
@@ -145,17 +158,19 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // after (children of it) — trimmed to what actually fits. A nested marker
   // carries its own session's state as its colour: those sessions have no key
   // of their own, so this square is the only place their state can show. The
-  // two keep separate dim alphas because the blue shell dot is already dark
-  // against a key background, where the state colours are bright.
+  // shell marker draws in the same light blue as a nested session in shell
+  // state — it used to have its own dark #1565c0, which measured 1.0–1.3:1
+  // against the three dark key backgrounds, i.e. invisible on the red one.
+  // Same concept, so: same colour, same alphas.
   const markers = [
-    ...(shellDot ? [{ fill: SHELL_DOT, dim: "55", full: "" }] : []),
-    ...nested.map((st) => ({ fill: MARKER_COLORS[st] ?? MARKER_COLORS.idle, dim: "33", full: "ee" })),
+    ...(shellDot ? [MARKER_COLORS.shell] : []),
+    ...nested.map((st) => MARKER_COLORS[st] ?? MARKER_COLORS.idle),
   ].slice(0, visibleMarkers);
   const squares = markers
-    .map(({ fill, dim, full }, i) => {
+    .map((fill, i) => {
       const dimmed = i === visibleMarkers - 1 && overflowMarker && !pulse;
       return `<rect x="3" y="${squaresTop + i * squarePitch}" width="${squareWidth}" height="${squareHeight}" fill="${fill}${
-        dimmed ? dim : full
+        dimmed ? "33" : "ee"
       }" />`;
     })
     .join("");
@@ -194,11 +209,17 @@ export async function renderKey({ width, height, state, label, accent, project, 
       ${
         // The lower border doubles as the context gauge when known — plain
         // dark line otherwise. Keeps the header a constant height either way.
+        // The coloured fill is inset 1px so a line of the dark track always
+        // sits between it and the accent above: drawn flush, the gauge butted
+        // straight onto the accent bar at 1.0–1.7:1 for nearly every
+        // accent/level pair, and simply wasn't there on some of them. 1px of
+        // gauge that reads beats 2px that doesn't; growing the header instead
+        // would push a 4-line body off the bottom of the key.
         project
           ? typeof context === "number"
             ? `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000cc" />
-               <rect y="${titleHeight - titleBorder}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
-                     height="${titleBorder}" fill="${usageColor(context)}" />`
+               <rect y="${titleHeight - titleBorder + 1}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
+                     height="${titleBorder - 1}" fill="${usageColor(context)}" />`
             : `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000aa" />`
           : ""
       }
@@ -237,7 +258,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
  * Green under half, amber past that, red once a window is nearly spent. Bright
  * enough to read as a few pixels sitting on a light accent colour.
  */
-function usageColor(pct) {
+export function usageColor(pct) {
   return pct >= 85 ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
 }
 
@@ -342,7 +363,7 @@ export async function renderStat({ width, height, label, value }) {
       <text x="50%" y="${height * 0.22}" font-family="sans-serif" font-size="${capSize}"
             font-weight="bold" letter-spacing="0.5" fill="#ffffff99" text-anchor="middle"
             dominant-baseline="middle">${escapeXml(caps)}</text>
-      <text font-family="sans-serif" font-size="${valueSize}" font-weight="600" fill="#ffab70"
+      <text font-family="sans-serif" font-size="${valueSize}" font-weight="600" fill="#ff8a65"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
     </svg>`;
 

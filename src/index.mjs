@@ -33,7 +33,12 @@ const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md"
 // stable across restarts but can hand two windows the same colour, and
 // telling windows apart is the whole point. Sorting would instead reshuffle
 // existing colours whenever a new window appears.
-const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#a1887f"];
+// All eight are light (L* 57–94): the accent bar carries dark caps text, and it
+// has to separate from the state colour filling the rest of the key. The last
+// slot is a light warm grey rather than the brown 300 it was — brown sat only
+// 25 ΔE from the idle grey background, the closest any accent came to a state,
+// and it was the accent doing the least to say which project this is.
+export const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#bcaaa4"];
 
 // First-seen order for both grouping and colour, so a project's block and its
 // stripe always agree. Folders are kept after their last session ends: if the

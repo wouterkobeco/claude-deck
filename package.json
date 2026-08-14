@@ -14,6 +14,7 @@
     "stats-check": "node scripts/stats-check.mjs",
     "title-check": "node scripts/title-check.mjs",
     "tasks-check": "node scripts/tasks-check.mjs",
+    "colors-check": "node scripts/colors-check.mjs",
     "board-shot": "node scripts/board-shot.mjs"
   },
   "keywords": [

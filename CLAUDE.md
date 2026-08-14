@@ -12,6 +12,7 @@ npm run tasks-check    # "task X of Y" numbering
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
+npm run colors-check   # palette contrast + separation floors
 ```
 
 The checks are the test suite: plain `node scripts/*-check.mjs` files that
@@ -112,7 +113,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - `src/render.mjs` — builds an SVG string per key and rasterizes with sharp.
   Pure: takes geometry + data, returns a buffer. Text fitting is hand-rolled
   character-width estimation, so layout changes need `render-check` looked at,
-  not just run.
+  not just run. **The palette is three tiers separated by lightness** —
+  `STATE_COLORS` fill a whole key and stay dark (L\* 36–47), `ACCENTS` are the
+  light identity bar (57–94), `MARKER_COLORS` and the usage gauge are a few
+  bright pixels drawn on top. Everything small is light-on-dark; that one rule
+  is why white body text, 3×6px markers and a 1px gauge all stay readable on
+  fifteen keys in four states. `colors-check` asserts the floors, so a hex
+  nudged to taste can't quietly make one marker invisible on one key in one
+  state — which is otherwise only findable by looking at that key, in that
+  state, on the actual deck. Two floors there are deliberately lower than the
+  rest and say so in comments: red markers (red is the darkest hue, and light
+  enough to clear the others converges on the white idle square) and the gauge,
+  which is checked against the dark track it's inset onto rather than the
+  accent it would otherwise vanish into.
 - `src/usage.mjs` — the two rate-limit windows for the bottom-right key. These
   numbers exist only server-side, so it reads the CLI's own OAuth token from the
   login keychain and asks the API, cached 5 minutes. The only outbound network
