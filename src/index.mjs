@@ -23,6 +23,9 @@ const RECONNECT_MS = 5000;
 // USB HID link across up to 14 keys at once (13 session keys plus the
 // attention key).
 const PULSE_MS = 400;
+// The attention key blinks to announce a *new* waiter, then settles to solid
+// red — a key that flashes for an hour stops meaning anything.
+const ATTENTION_BLINK_MS = 5000;
 const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore"];
 
 // Accent colours identifying which VS Code window a session belongs to.
@@ -367,6 +370,10 @@ async function drawAttention(deck, btn, sessions, pulse) {
   // for session buttons, so pulse()'s faster tick has something to redraw
   // from without calling getLiveSessions() itself.
   btn.renderParams = { count: queue.length, longest };
+  // Restart the 5s blink window whenever the queue grows — a new session
+  // waiting is news, the same ones still waiting is not.
+  if (queue.length > (btn.lastCount ?? 0)) btn.blinkUntil = Date.now() + ATTENTION_BLINK_MS;
+  btn.lastCount = queue.length;
   const drawn = `attention ${queue.length} ${longest} ${pulse}`;
   if (btn.drawn !== drawn) {
     await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count: queue.length, longest, pulse }), {
@@ -652,14 +659,22 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
                   : await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
             }),
-          ...(attentionButton.renderParams?.count > 0
-            ? [
-                (async () => {
-                  const buf = await renderAttention({ ...attentionButton, ...attentionButton.renderParams, pulse: bright });
-                  await deck.fillKeyBuffer(attentionButton.index, buf, { format: "rgba" });
-                })(),
-              ]
-            : []),
+          ...(() => {
+            // Blink only inside the 5s window drawAttention opened; after it
+            // closes, write exactly one steady frame — pulse never touches
+            // btn.drawn, so without that settle write the key could freeze on
+            // whatever bright frame the last in-window tick left behind.
+            const params = attentionButton.renderParams;
+            const blinking = params?.count > 0 && Date.now() < (attentionButton.blinkUntil ?? 0);
+            if (!params || (!blinking && !attentionButton.blinkSettle)) return [];
+            attentionButton.blinkSettle = blinking;
+            return [
+              (async () => {
+                const buf = await renderAttention({ ...attentionButton, ...params, pulse: blinking && bright });
+                await deck.fillKeyBuffer(attentionButton.index, buf, { format: "rgba" });
+              })(),
+            ];
+          })(),
         ]);
       } catch (err) {
         console.error("pulse failed:", err.message);
