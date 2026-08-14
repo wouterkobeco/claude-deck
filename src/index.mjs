@@ -850,7 +850,7 @@ async function run() {
           { label: "Session reset", value: sessionHours === null ? "—" : `${sessionHours}h` },
           { label: "Week reset", value: weekDays === null ? "—" : `${weekDays}d` },
         ];
-        const versionTile = { label: "Version", value: `v${pkg.version}` };
+        const versionTile = { label: "Version", value: pkg.version };
         const statTiles = [...resetTiles, ...(await getStats()), versionTile];
         // Same fixed slot as the detail board's back key, and assigned by
         // index rather than spliced: with an unreadable stats cache the list

@@ -123,7 +123,7 @@ await board("stats", [
   stat("Most active day", "Aug 4"),
   stat("Input tokens", "8.1M"),
   stat("Output tokens", "3.4M"),
-  stat("Version", "v1.1.15"),
+  stat("Version", "1.1.15"),
   renderBack,
   null,
   null,

@@ -452,7 +452,7 @@ export async function renderTask({ width, height, number, subject, status }) {
 export async function renderCompacting({ width, height, accent, project, phase = 0 }) {
   const capSize = Math.round(height * 0.11);
   const cx = width / 2;
-  const cy = height * 0.44;
+  const cy = height * 0.44 + 1;
   const r = Math.round(height * 0.2);
   const stroke = 4;
 
