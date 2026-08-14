@@ -1,4 +1,4 @@
-import { open, readdir, readFile } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +8,12 @@ const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
 const TASKS_DIR = join(CLAUDE_DIR, "tasks");
 const CTX_DIR = join(CLAUDE_DIR, "ctx");
 const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
-const TITLE_TAIL_BYTES = 65536;
+const TAIL_BYTES = 65536;
+// How long a subagent transcript can sit unwritten before the agent is assumed
+// gone. An agent that was interrupted never writes its `end_turn`, so without
+// this its marker would stay on the key forever; it also keeps the tail reads
+// below to the handful of files that could still be live.
+const SUBAGENT_IDLE_MAX_S = 600;
 // How long after a `/compact` command line the session can still be assumed
 // to be compacting. Real compactions run 70-120s; the cap is what stops a
 // canceled `/compact` (which leaves the command line with nothing after it)
@@ -79,7 +84,35 @@ function isAlive(pid) {
  * it.
  */
 export function transcriptPathFor({ cwd, sessionId }) {
-  return join(PROJECTS_DIR, cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
+  return join(projectDirFor(cwd), `${sessionId}.jsonl`);
+}
+
+function projectDirFor(cwd) {
+  return join(PROJECTS_DIR, cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+}
+
+/**
+ * The last `TAIL_BYTES` of a transcript, split into lines, newest last. These
+ * files run to megabytes and everything read from them is near the end.
+ * Returns [] rather than throwing: they're written by another process and a
+ * poll can land mid-write, or the file can be gone by the time we open it.
+ * The first line is likely a fragment — every caller parses per line and skips
+ * what won't parse.
+ */
+async function tailLines(path) {
+  let fh;
+  try {
+    fh = await open(path, "r");
+    const { size } = await fh.stat();
+    const start = Math.max(0, size - TAIL_BYTES);
+    const buffer = Buffer.alloc(size - start);
+    const { bytesRead } = await fh.read({ buffer, position: start });
+    return buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+  } catch {
+    return [];
+  } finally {
+    await fh?.close();
+  }
 }
 
 // /clear writes a plain command line into the same transcript rather than
@@ -119,14 +152,8 @@ const USER_LINE_MARKER = '"type":"user"';
  * reply. Good enough for a key that just needs your attention, not a promise.
  */
 export async function readTranscriptSignals(transcriptPath) {
-  let fh;
   try {
-    fh = await open(transcriptPath, "r");
-    const { size } = await fh.stat();
-    const start = Math.max(0, size - TITLE_TAIL_BYTES);
-    const buffer = Buffer.alloc(size - start);
-    const { bytesRead } = await fh.read({ buffer, position: start });
-    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    const lines = await tailLines(transcriptPath);
 
     let aiTitle = null,
       clearedEmpty = false,
@@ -214,9 +241,72 @@ export async function readTranscriptSignals(transcriptPath) {
     return { aiTitle, clearedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
   } catch {
     return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null, compactRequestedAt: null };
-  } finally {
-    await fh?.close();
   }
+}
+
+/**
+ * The subagents a session has running right now.
+ *
+ * An Agent-tool subagent — the thing behind "Waiting for 1 background agent to
+ * finish" — never registers in ~/.claude/sessions: it runs inside its parent's
+ * process, and exists on disk only as a transcript under the parent's own
+ * `<session id>/subagents/` directory. So the entrypoint rule in
+ * `getLiveSessions` can't see it; that one only finds *SDK* sessions, which
+ * are separate processes with registry entries of their own.
+ *
+ * Running is read from the newest `stop_reason` in that transcript, which is
+ * an exact marker rather than a guess: an agent waiting on a tool last stopped
+ * for "tool_use", and one that has handed its result back ends "end_turn" and
+ * writes nothing further. A just-spawned agent has no stop_reason yet and
+ * counts as running — its mtime is seconds old, and `SUBAGENT_IDLE_MAX_S` is
+ * what retires the other no-ending case, an agent interrupted mid-tool.
+ *
+ * Takes the directory rather than a session so the check can point it at a
+ * fixture. Every read is try/catch-skipped, same as everything else here.
+ */
+export async function readRunningSubagents(dir) {
+  let names;
+  try {
+    names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl"));
+  } catch {
+    return []; // no subagents dir — this session has never spawned one
+  }
+
+  const running = [];
+  for (const name of names) {
+    const path = join(dir, name);
+    let mtimeMs;
+    try {
+      ({ mtimeMs } = await stat(path));
+    } catch {
+      continue; // vanished between readdir and stat
+    }
+    if ((Date.now() - mtimeMs) / 1000 > SUBAGENT_IDLE_MAX_S) continue;
+
+    const lines = await tailLines(path);
+    let stopReason = null;
+    for (let i = lines.length - 1; i >= 0 && stopReason === null; i--) {
+      // Parse before trusting: "stop_reason" appears inside tool results and
+      // prose all the time, which is exactly the trap the /compact marker fell
+      // into. Only this line's own message counts.
+      if (!lines[i].includes("stop_reason")) continue;
+      try {
+        stopReason = JSON.parse(lines[i]).message?.stop_reason ?? null;
+      } catch {
+        // truncated line at the start of the tail slice — keep scanning
+      }
+    }
+    if (stopReason === "end_turn") continue;
+
+    let description = null;
+    try {
+      ({ description = null } = JSON.parse(await readFile(path.replace(/\.jsonl$/, ".meta.json"), "utf8")));
+    } catch {
+      // no meta yet, or mid-write — the tile falls back to the agent id
+    }
+    running.push({ id: name.replace(/^agent-|\.jsonl$/g, ""), description, ts: Math.floor(mtimeMs / 1000) });
+  }
+  return running;
 }
 
 /**
@@ -337,9 +427,11 @@ async function readContext(sessionId) {
  * without this a session that just asked you for a permission rule reads on
  * the deck as no different from one that's simply caught up.
  *
- * A session whose cwd is nested inside — but not equal to — the matched
- * window's folder (a background worktree checkout) is flagged `nested:
- * true`; index.mjs keeps those off the board's own slots.
+ * Two kinds of thing come back flagged `nested: true`, which index.mjs keeps
+ * off the board's own slots: an SDK session (a separate process with its own
+ * registry entry, told apart by `entrypoint`), and a running Agent-tool
+ * subagent, which has no registry entry at all and is read off disk by
+ * `readRunningSubagents`.
  */
 export async function getLiveSessions() {
   const [registry, locks] = await Promise.all([readJsonFiles(SESSIONS_DIR), readJsonFiles(IDE_DIR, [".lock"])]);
@@ -386,7 +478,27 @@ export async function getLiveSessions() {
     });
   }
 
-  return Promise.all(
+  // Subagents have no registry entry of their own, so they're synthesised
+  // here: nested, in their parent's folder, and busy — a running agent is by
+  // definition working. They carry no aiTitle/context/progress (none of that
+  // is written for them), so the transcript enrichment below is skipped and
+  // the Agent call's own description is what the tile reads.
+  const subagents = (
+    await Promise.all(
+      matched.map(async (s) =>
+        (await readRunningSubagents(join(projectDirFor(s.cwd), s.session_id, "subagents"))).map((a) => ({
+          ...s,
+          session_id: a.id,
+          nested: true,
+          name: a.description,
+          state: "busy",
+          ts: a.ts,
+        }))
+      )
+    )
+  ).flat();
+
+  const enriched = await Promise.all(
     matched.map(async (s) => {
       const { blockedOnDenial, compactRequestedAt, ...signals } = await readTranscriptSignals(
         transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })
@@ -411,4 +523,6 @@ export async function getLiveSessions() {
       };
     })
   );
+
+  return [...enriched, ...subagents];
 }

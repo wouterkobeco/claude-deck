@@ -58,11 +58,11 @@ does the usage key.
 
 ## Nice details
 
-- **Subagents don't get a key.** A session an SDK script started shows as a
-  small square on its project's key, coloured by its own state, and becomes a
-  readable tile on that project's detail board (and on the attention board, if
-  it blocks). A session *you* started gets its own key wherever its cwd is —
-  worktrees included.
+- **Subagents don't get a key.** A session an SDK script started, or an agent a
+  session spawned with the Agent tool, shows as a small square on its project's
+  key, coloured by its own state, and becomes a readable tile on that project's
+  detail board (and on the attention board, if it blocks). A session *you*
+  started gets its own key wherever its cwd is — worktrees included.
 - **A key's colour covers its block.** A project whose only activity is a
   subagent reads as working, not as a grey key with a 3px marker.
 - **Slots never move.** Keys are assigned first-seen and stay put, and a project

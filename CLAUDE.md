@@ -12,6 +12,7 @@ npm run tasks-check    # "task X of Y" numbering
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
+npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
 ```
 
@@ -239,7 +240,26 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   depending on how fast you press.
 - **Nested means spawned by another session, not "in a subdirectory".**
   `sessions.mjs` sets `nested: true` from `entrypoint`: `sdk-py`/`sdk-ts` is an
-  agent some script started, `cli` is one you started yourself. `assignSlots`
+  agent some script started, `cli` is one you started yourself.
+
+  **An Agent-tool subagent isn't in the registry at all** — background or not,
+  it runs inside its parent's process, so `entrypoint` never sees it and
+  "Waiting for 1 background agent to finish" showed nothing on the deck. It
+  exists on disk only as `projects/<slug>/<parent id>/subagents/agent-*.jsonl`
+  with a sibling `.meta.json` (the Agent call's own `description`), and
+  `readRunningSubagents` synthesises one nested pseudo-session per *running*
+  one — no registry entry, so no `state` either: a running agent is busy by
+  definition, and its parent's folder is its folder. Running is the newest
+  `stop_reason` in that transcript, which is exact rather than a guess:
+  "tool_use" is an agent waiting on a tool, "end_turn" is one that has handed
+  its result back and will write nothing more. Two cases never write an
+  ending — an agent spawned seconds ago and an agent interrupted mid-tool —
+  and both are settled by mtime: no ending plus a fresh file is running,
+  `SUBAGENT_IDLE_MAX_S` (10 min) quiet retires it. Don't reach for the parent
+  transcript's `tool_result` instead: a backgrounded agent's result lands the
+  moment it's *spawned*, so it says nothing about whether it's done.
+
+  `assignSlots`
   keeps nested ones off the board's slots; they group by folder onto the first
   button of that project's block as a small square coloured by their own state,
   and become readable tiles in two places — the attention queue if they block,
