@@ -7,6 +7,8 @@ import { fmt, formatModel, computeStats, getStats } from "../src/stats.mjs";
 assert.equal(fmt(950), "950");
 assert.equal(fmt(4371), "4.4k");
 assert.equal(fmt(66_287_987_000), "66.3b");
+assert.equal(fmt(66_287_987_000, 0), "66b"); // token tiles drop the decimal
+assert.equal(fmt(950, 0), "950");
 console.log("OK: fmt");
 
 assert.equal(formatModel("claude-opus-4-8"), "Opus 4.8");

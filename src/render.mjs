@@ -369,10 +369,14 @@ export async function renderAttention({ width, height, count, longest, pulse }) 
  * while that view is toggled on). A small caps label over a big value,
  * value wrapped to at most 2 lines.
  */
-export async function renderStat({ width, height, label, value }) {
+// `big` is the stats board: its values are short (a duration, a count, a
+// version) and the whole key is the number, so it can afford the larger face.
+// The detail board's tiles keep the smaller one — "opus-5 high" and "busy 12m"
+// wrap at 0.24 and read worse for being louder.
+export async function renderStat({ width, height, label, value, big = false }) {
   const capSize = Math.round(height * 0.1);
   const caps = fitCaps(label, width, capSize);
-  const valueSize = Math.round(height * 0.19);
+  const valueSize = Math.round(height * (big ? 0.24 : 0.19));
 
   let lines = wrapLabel(value, width, valueSize);
   if (lines.length > 2) {

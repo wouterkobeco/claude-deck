@@ -5,11 +5,16 @@ import { join } from "node:path";
 const STATS_PATH = join(homedir(), ".claude", "stats-cache.json");
 const TTL_MS = 30_000;
 
-/** "68613583898" -> "68.6b". Matches the compact style Claude Code itself uses. */
-export function fmt(n) {
-  if (n >= 1e9) return (n / 1e9).toFixed(1) + "b";
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + "m";
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+/**
+ * "68613583898" -> "68.6b". Matches the compact style Claude Code itself uses.
+ * `digits: 0` drops the decimal — the token counts read as magnitudes, and one
+ * decimal is a false precision that just eats width at the larger value font.
+ * Session counts keep it: "1.3k" and "1k" are a real difference there.
+ */
+export function fmt(n, digits = 1) {
+  if (n >= 1e9) return (n / 1e9).toFixed(digits) + "b";
+  if (n >= 1e6) return (n / 1e6).toFixed(digits) + "m";
+  if (n >= 1e3) return (n / 1e3).toFixed(digits) + "k";
   return String(Math.round(n));
 }
 
@@ -63,7 +68,7 @@ export function computeStats(raw) {
 
   return [
     { label: "Favorite model", value: topModel ? formatModel(topModel) : "—" },
-    { label: "Total tokens", value: fmt(totalTokens) },
+    { label: "Total tokens", value: fmt(totalTokens, 0) },
     { label: "Sessions", value: fmt(totalSessions ?? 0) },
     { label: "Active days", value: `${activeDates.length}/${spanDays}` },
     {
@@ -72,8 +77,8 @@ export function computeStats(raw) {
         ? new Date(`${mostActive.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" })
         : "—",
     },
-    { label: "Input tokens", value: fmt(totals.input) },
-    { label: "Output tokens", value: fmt(totals.output) },
+    { label: "Input tokens", value: fmt(totals.input, 0) },
+    { label: "Output tokens", value: fmt(totals.output, 0) },
     // Seven tiles: index.mjs brackets this list with the reset pair before it
     // and the version after, then puts the back key on the bottom-left button
     // (index 10). An eighth tile here would land under that key and never be

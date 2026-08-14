@@ -419,7 +419,7 @@ async function refreshStats(deck, buttons, stats) {
       // One tile in the list isn't a stat: the back key, spliced in at
       // DETAIL_BACK_INDEX by the caller the same way the detail board does it.
       const render = stat.kind === "back" ? renderBack : renderStat;
-      await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...stat }), { format: "rgba" });
+      await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...stat, big: true }), { format: "rgba" });
       btn.drawn = drawn;
     })
   );

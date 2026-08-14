@@ -61,7 +61,7 @@ async function board(name, tiles) {
 }
 
 const key = (params) => (geom) => renderKey({ ...geom, ...params });
-const stat = (label, value) => (geom) => renderStat({ ...geom, label, value });
+const stat = (label, value, big = false) => (geom) => renderStat({ ...geom, label, value, big });
 const task = (number, subject, status) => (geom) => renderTask({ ...geom, number, subject, status });
 
 // --- sessions board: the normal view ---------------------------------------
@@ -114,16 +114,16 @@ await board("attention", [
 
 // --- stats board: the usage key's second press -----------------------------
 await board("stats", [
-  stat("Session reset", "3h"),
-  stat("Week reset", "4d"),
-  stat("Favorite model", "Opus 5"),
-  stat("Total tokens", "412.6M"),
-  stat("Sessions", "1,284"),
-  stat("Active days", "96/121"),
-  stat("Most active day", "Aug 4"),
-  stat("Input tokens", "8.1M"),
-  stat("Output tokens", "3.4M"),
-  stat("Version", "1.1.15"),
+  stat("Session reset", "3h", true),
+  stat("Week reset", "4d", true),
+  stat("Favorite model", "Opus 5", true),
+  stat("Total tokens", "413m", true),
+  stat("Sessions", "1,284", true),
+  stat("Active days", "96/121", true),
+  stat("Most active day", "Aug 4", true),
+  stat("Input tokens", "8m", true),
+  stat("Output tokens", "3m", true),
+  stat("Version", "1.1.15", true),
   renderBack,
   null,
   null,
