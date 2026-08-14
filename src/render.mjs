@@ -96,7 +96,13 @@ export function taskSquares(progress, width) {
   const n = Math.max(1, progress.total);
   const done = progress.current - (progress.active ? 1 : 0);
   const w = (width - 2 * FOOT_MARGIN - (n - 1)) / n;
-  return Array.from({ length: n }, (_, i) => ({ x: FOOT_MARGIN + i * (w + 1), width: w, done: i < done }));
+  return Array.from({ length: n }, (_, i) => ({
+    x: FOOT_MARGIN + i * (w + 1),
+    width: w,
+    // The square right after the done run *is* the running one — that's how
+    // `done` was derived — so which task is ongoing costs no extra data.
+    state: i < done ? "done" : i === done && progress.active ? "active" : "todo",
+  }));
 }
 
 /** Uppercases a project name and truncates it to what fits the accent bar. */
@@ -244,8 +250,13 @@ export async function renderKey({ width, height, state, label, accent, project, 
           ? taskSquares(progress, width)
               .map(
                 (s) =>
+                  // Done green, ongoing bright white, still-to-do the same
+                  // white at a third opacity. The ongoing one deliberately
+                  // doesn't borrow a state hue — amber and green already mean
+                  // "waiting" and "busy" elsewhere on the board — so it's the
+                  // to-do ink turned all the way up instead.
                   `<rect x="${s.x}" y="${height - 9}" width="${s.width}" height="6" fill="${
-                    s.done ? "#69f0ae" : "#ffffff33"
+                    { done: "#69f0ae", active: "#ffffffcc", todo: "#ffffff33" }[s.state]
                   }" />`
               )
               .join("")

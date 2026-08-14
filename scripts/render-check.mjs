@@ -33,11 +33,15 @@ eq(formatAge(NaN), "", "non-numeric input");
 {
   const sq = taskSquares({ current: 2, total: 5, active: "doing task 2" }, 72);
   eq(sq.length, 5, "one square per task");
-  eq(sq.filter((s) => s.done).length, 1, "in-progress task is not done");
+  eq(sq.filter((s) => s.state === "done").length, 1, "in-progress task is not done");
+  eq(sq[1].state, "active", "the square after the done run is the ongoing one");
+  eq(sq[2].state, "todo", "everything past the ongoing one is to-do");
   eq(+(sq[1].x - (sq[0].x + sq[0].width)).toFixed(3), 1, "1px gap between squares");
   eq(sq[0].x, 3, "3px margin before the first square");
   eq(Math.round(sq[4].x + sq[4].width), 69, "3px margin after the last square");
-  eq(taskSquares({ current: 2, total: 5, active: null }, 72).filter((s) => s.done).length, 2, "nothing active counts current as done");
+  const idle = taskSquares({ current: 2, total: 5, active: null }, 72);
+  eq(idle.filter((s) => s.state === "done").length, 2, "nothing active counts current as done");
+  eq(idle.filter((s) => s.state === "active").length, 0, "nothing active means no ongoing square");
 }
 
 const width = 72;
