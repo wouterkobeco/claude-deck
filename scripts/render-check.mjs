@@ -26,15 +26,17 @@ eq(formatAge(8040), "2h14m", "hours and minutes");
 eq(formatAge(-1), "", "negative input");
 eq(formatAge(NaN), "", "non-numeric input");
 
-// The foot counter as squares: total squares across the width with 1px gaps,
-// and `current` only counts as done once nothing is active — task 2 running
-// means one square green, task 2 being the furthest completed means two.
+// The foot counter as squares: total squares across the width with 1px gaps
+// and a 3px margin at each end, and `current` only counts as done once nothing
+// is active — task 2 running means one square green, task 2 being the furthest
+// completed means two.
 {
   const sq = taskSquares({ current: 2, total: 5, active: "doing task 2" }, 72);
   eq(sq.length, 5, "one square per task");
   eq(sq.filter((s) => s.done).length, 1, "in-progress task is not done");
-  eq(sq[1].x - (sq[0].x + sq[0].width), 1, "1px gap between squares");
-  eq(Math.round(sq[4].x + sq[4].width), 72, "squares span the full width");
+  eq(+(sq[1].x - (sq[0].x + sq[0].width)).toFixed(3), 1, "1px gap between squares");
+  eq(sq[0].x, 3, "3px margin before the first square");
+  eq(Math.round(sq[4].x + sq[4].width), 69, "3px margin after the last square");
   eq(taskSquares({ current: 2, total: 5, active: null }, 72).filter((s) => s.done).length, 2, "nothing active counts current as done");
 }
 

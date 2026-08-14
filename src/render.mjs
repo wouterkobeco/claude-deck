@@ -81,16 +81,22 @@ function wrapLabel(label, width, fontSize) {
 }
 
 /**
- * The foot counter as data: one square per task across the full key width,
- * 1px gaps, green once completed. `current` counts the in-progress task, so
- * it only reads as done when nothing is active (`active` null means the
- * counter has moved on to the furthest-along *completed* task).
+ * The foot counter as data: one square per task across the key width, 1px
+ * gaps, green once completed. `current` counts the in-progress task, so it
+ * only reads as done when nothing is active (`active` null means the counter
+ * has moved on to the furthest-along *completed* task).
+ *
+ * The row is inset by FOOT_MARGIN so the first and last squares don't run into
+ * the key's edges — on the left column that edge is the physical bezel, on the
+ * right it's the edge of the deck.
  */
+const FOOT_MARGIN = 3;
+
 export function taskSquares(progress, width) {
   const n = Math.max(1, progress.total);
   const done = progress.current - (progress.active ? 1 : 0);
-  const w = (width - (n - 1)) / n;
-  return Array.from({ length: n }, (_, i) => ({ x: i * (w + 1), width: w, done: i < done }));
+  const w = (width - 2 * FOOT_MARGIN - (n - 1)) / n;
+  return Array.from({ length: n }, (_, i) => ({ x: FOOT_MARGIN + i * (w + 1), width: w, done: i < done }));
 }
 
 /** Uppercases a project name and truncates it to what fits the accent bar. */
@@ -238,7 +244,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
           ? taskSquares(progress, width)
               .map(
                 (s) =>
-                  `<rect x="${s.x}" y="${height - 9}" width="${s.width}" height="8" fill="${
+                  `<rect x="${s.x}" y="${height - 9}" width="${s.width}" height="6" fill="${
                     s.done ? "#69f0ae" : "#ffffff33"
                   }" />`
               )
