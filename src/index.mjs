@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, splitLabel } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, splitLabel, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -671,16 +671,22 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
               (btn) =>
                 btn.renderParams?.state === "requires_action" ||
                 btn.renderParams?.state === "compacting" ||
-                (btn.renderParams?.nestedStates?.length ?? 0) > 0
+                (btn.renderParams?.nestedStates?.length ?? 0) > 0 ||
+                btn.renderParams?.context >= CONTEXT_CRITICAL
             )
             .map(async (btn) => {
               // The sweep advances a twelfth per 400ms tick — a full turn every
               // ~5s, slow enough to read as deliberate against a compaction
-              // that runs a minute or two.
+              // that runs a minute or two. The gauge breathes at a third of
+              // that (~14s a cycle): it says "this session is nearly full", a
+              // thing that stays true for a long time and needs noticing at
+              // some point, not now — anything faster reads as an alarm and
+              // competes with the requires_action keys, which are the ones
+              // actually asking for you.
               const buf =
                 btn.renderParams.state === "compacting"
                   ? await renderCompacting({ ...btn, ...btn.renderParams, phase: (tick % 12) / 12 })
-                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright });
+                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright, contextPhase: (tick % 36) / 36 });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
             }),
           ...(() => {

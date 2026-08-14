@@ -109,12 +109,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - **Requires-action keys pulse.** `pulse()` in `index.mjs` is a second loop
   alongside the main poll, ticking every `PULSE_MS` (400ms) — the 2s poll is
   far too slow to read as animation. It redraws only the keys with something
-  flashing on them — `requires_action` keys, keys carrying nested markers, and
-  the attention key when its count is nonzero — reusing `btn.renderParams`
-  (cached every poll in `refresh()`/`drawAttention()`, not just on change)
-  rather than re-deriving from a fresh session read. It never touches
-  `btn.drawn`, so the next `refresh()` still recognises a steady frame as
-  unchanged and leaves the button alone.
+  flashing on them — `requires_action` keys, keys carrying nested markers, keys
+  whose context gauge has gone red, and the attention key when its count is
+  nonzero — reusing `btn.renderParams` (cached every poll in
+  `refresh()`/`drawAttention()`, not just on change) rather than re-deriving
+  from a fresh session read. It never touches `btn.drawn`, so the next
+  `refresh()` still recognises a steady frame as unchanged and leaves the
+  button alone.
+  **The beats are deliberately different speeds**, because they say different
+  things: `requires_action` alternates every tick (0.8s) because it's blocked
+  on you *now*, the compaction ring turns once every ~5s, and a red context
+  gauge breathes once every ~14s (`tick % 36`). "Nearly full" stays true for a
+  long time and wants noticing eventually, not immediately — at the fast beat
+  it reads as an alarm and competes with the keys that are actually asking for
+  you. `gaugeColor` breathes red *brighter*, never dimmer: the gauge is 4px on
+  a near-black track held to a contrast floor, and fading below that floor for
+  half of every cycle is a gauge that keeps vanishing. Phase 0 is exactly
+  `usageColor`, so every board that doesn't pulse draws what it always did.
 - `src/render.mjs` — builds an SVG string per key and rasterizes with sharp.
   Pure: takes geometry + data, returns a buffer. Text fitting is hand-rolled
   character-width estimation, so layout changes need `render-check` looked at,

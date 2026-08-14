@@ -9,7 +9,7 @@
 // from the palette as it stands, then rounded down — they're the current
 // design's own guarantees, not aspirations.
 
-import { STATE_COLORS, MARKER_COLORS, usageColor, gaugeHeight } from "../src/render.mjs";
+import { STATE_COLORS, MARKER_COLORS, usageColor, gaugeHeight, gaugeColor, CONTEXT_CRITICAL } from "../src/render.mjs";
 import { ACCENTS } from "../src/index.mjs";
 
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
@@ -123,6 +123,25 @@ ACCENTS.forEach((accent, i) => {
 const track = over("#000000", 0.8, "#ffffff"); // #000000cc over any accent ≈ this or darker
 for (const pct of [0, 49, 50, 84, 85, 100]) {
   check(`gauge at ${pct}% on its track`, contrast(usageColor(pct), track), 3.0);
+}
+
+// Past CONTEXT_CRITICAL the gauge breathes, so every frame of that breath has
+// to clear the same floor — a breath that fades out of legibility is a gauge
+// that keeps disappearing. It brightens rather than dims for exactly that
+// reason, which the first check below is what proves.
+for (const phase of [0, 0.25, 0.5, 0.75]) {
+  check(`red gauge mid-breath (phase ${phase})`, contrast(gaugeColor(100, phase), track), 3.0);
+}
+// And it has to be a breath: the same colour below the threshold, a swing wide
+// enough to see above it. 20 is roughly "obvious side by side" in CIE76.
+if (gaugeColor(CONTEXT_CRITICAL - 1, 0.5) !== usageColor(CONTEXT_CRITICAL - 1)) {
+  console.error("FAILED: an amber gauge must not pulse");
+  failed = true;
+}
+check("the red gauge's breath is wide enough to see", deltaE(gaugeColor(100, 0), gaugeColor(100, 0.5)), 20);
+if (gaugeColor(100, 0) !== usageColor(100)) {
+  console.error("FAILED: a steady frame must be the plain red every other board draws");
+  failed = true;
 }
 
 // Green and amber are literally the marker colours, so the board speaks one

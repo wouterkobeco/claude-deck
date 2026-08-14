@@ -114,7 +114,11 @@ function fitCaps(project, width, fontSize) {
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, nestedStates, shell }) {
+// `contextPhase` is where in its slow breath a red context gauge sits, 0–1,
+// advanced by pulse(). Every other caller leaves it at 0 — the steady frame is
+// the brightest one, so a board that never pulses looks the same as it always
+// did.
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room.
@@ -231,7 +235,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
           ? typeof context === "number"
             ? `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000cc" />
                <rect y="${titleHeight - titleBorder + 1}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
-                     height="${gaugeHeight(context)}" fill="${usageColor(context)}" />`
+                     height="${gaugeHeight(context)}" fill="${gaugeColor(context, contextPhase)}" />`
             : `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000aa" />`
           : ""
       }
@@ -271,12 +275,45 @@ export async function renderKey({ width, height, state, label, accent, project, 
     .toBuffer();
 }
 
+// Nearly spent: the level where the gauge goes red, gets its extra 2px, and
+// starts breathing. One constant so those three can't drift apart.
+export const CONTEXT_CRITICAL = 85;
+
 /**
  * Green under half, amber past that, red once a window is nearly spent. Bright
  * enough to read as a few pixels sitting on a light accent colour.
  */
 export function usageColor(pct) {
-  return pct >= 85 ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
+  return pct >= CONTEXT_CRITICAL ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
+}
+
+// The far end of the red gauge's breath: the same red run up towards white.
+const CONTEXT_BREATH = "#ffc2bb";
+
+/**
+ * The gauge's colour at `phase` (0–1 of one breath). Below the red threshold,
+ * and at phase 0 anywhere, this is exactly `usageColor` — so the steady frame
+ * every non-pulsing board draws looks as it always did.
+ *
+ * Red breathes *brighter*, not dimmer, which is what makes it safe: the gauge
+ * is three or four pixels on a near-black track, held to a contrast floor by
+ * `colors-check`, and fading out of that floor for half of every cycle is just
+ * a gauge that keeps disappearing. Going the other way, the dimmest frame is
+ * the one already checked. A cosine, so both turns are gentle and it reads as
+ * breathing rather than as a staircase of 400ms steps.
+ */
+export function gaugeColor(pct, phase = 0) {
+  const base = usageColor(pct);
+  if (pct < CONTEXT_CRITICAL) return base;
+  const t = 0.5 - 0.5 * Math.cos(2 * Math.PI * phase);
+  return mix(base, CONTEXT_BREATH, t);
+}
+
+/** Straight sRGB lerp between two #rrggbb colours. */
+function mix(a, b, t) {
+  const parse = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [ca, cb] = [parse(a), parse(b)];
+  return "#" + ca.map((v, i) => Math.round(v + (cb[i] - v) * t).toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -289,7 +326,7 @@ export function usageColor(pct) {
  * the header can't get taller without pushing a 4-line body off the key.
  */
 export function gaugeHeight(pct) {
-  return pct >= 85 ? 4 : 2;
+  return pct >= CONTEXT_CRITICAL ? 4 : 2;
 }
 
 /**

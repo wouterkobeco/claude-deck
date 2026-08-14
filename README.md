@@ -9,8 +9,9 @@ VS Code window.
 Every key is one live session: the project name in caps along the top in that
 project's colour, the session's own title under it, a `done/total` counter when
 it's working through a task list, and a thin gauge along the bottom for how full
-its context window is (green, amber past 50%, red past 85%). Press a key to
-focus that window.
+its context window is (green, amber past 50%, red past 85%, and once it's red
+it breathes — about one slow cycle every 14s). Press a key to focus that
+window.
 
 | Colour | Status | Meaning |
 |---|---|---|
