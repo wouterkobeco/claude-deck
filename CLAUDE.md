@@ -122,10 +122,14 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   gauge breathes once every ~14s (`tick % 36`). "Nearly full" stays true for a
   long time and wants noticing eventually, not immediately — at the fast beat
   it reads as an alarm and competes with the keys that are actually asking for
-  you. `gaugeColor` breathes red *brighter*, never dimmer: the gauge is 4px on
+  you. `gaugeColor` breathes red *brighter*, never dimmer: the gauge is 2px on
   a near-black track held to a contrast floor, and fading below that floor for
   half of every cycle is a gauge that keeps vanishing. Phase 0 is exactly
   `usageColor`, so every board that doesn't pulse draws what it always did.
+  The breath also **replaced** the gauge's second channel: red used to draw at
+  4px (`gaugeHeight`, now gone) because colour alone is weak at 72px across a
+  room. Motion carries further than either, so the height is flat again — two
+  signals for one fact, and the thicker one spilled onto the key's background.
 - `src/render.mjs` — builds an SVG string per key and rasterizes with sharp.
   Pure: takes geometry + data, returns a buffer. Text fitting is hand-rolled
   character-width estimation, so layout changes need `render-check` looked at,

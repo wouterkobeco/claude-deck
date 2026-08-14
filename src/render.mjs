@@ -235,7 +235,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
           ? typeof context === "number"
             ? `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000cc" />
                <rect y="${titleHeight - titleBorder + 1}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
-                     height="${gaugeHeight(context)}" fill="${gaugeColor(context, contextPhase)}" />`
+                     height="${GAUGE_HEIGHT}" fill="${gaugeColor(context, contextPhase)}" />`
             : `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000aa" />`
           : ""
       }
@@ -316,18 +316,13 @@ function mix(a, b, t) {
   return "#" + ca.map((v, i) => Math.round(v + (cb[i] - v) * t).toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Gauge thickness in px, keyed to the same thresholds as `usageColor`: 2px
- * green and orange, 4px red. Colour alone is a weak signal at 72px across a
- * room; height is the one that reads peripherally — so height is spent on the
- * one distinction worth catching from across the room (nearly spent vs not),
- * and green/orange are told apart by colour alone. The extra pixels grow
- * *down*, past the header's dark border and onto the key's own background —
- * the header can't get taller without pushing a 4-line body off the key.
- */
-export function gaugeHeight(pct) {
-  return pct >= CONTEXT_CRITICAL ? 4 : 2;
-}
+// One thickness at every level. Red used to draw at 4px, because colour alone
+// is a weak signal at 72px across a room and height was the channel that read
+// peripherally — but motion reads from further away than either, and the
+// breath now carries "nearly spent" on its own. Two signals for one fact left
+// the red gauge spilling 2px past the header's dark border onto the key's
+// background, which is a lot of key for a thing the breath already says.
+const GAUGE_HEIGHT = 2;
 
 /**
  * Usage key: the two rate-limit windows Claude Code's /usage reports, stacked.

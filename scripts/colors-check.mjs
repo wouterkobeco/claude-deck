@@ -9,7 +9,7 @@
 // from the palette as it stands, then rounded down — they're the current
 // design's own guarantees, not aspirations.
 
-import { STATE_COLORS, MARKER_COLORS, usageColor, gaugeHeight, gaugeColor, CONTEXT_CRITICAL } from "../src/render.mjs";
+import { STATE_COLORS, MARKER_COLORS, usageColor, gaugeColor, CONTEXT_CRITICAL } from "../src/render.mjs";
 import { ACCENTS } from "../src/index.mjs";
 
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
@@ -166,21 +166,7 @@ if (!(darkest > lightest)) {
   failed = true;
 }
 
-// Height is the second channel of the same signal, so it must switch on the
-// exact same percentage the red colour does — a threshold nudged in one and
-// not the other gives you a thin red line, which is neither reading. Green and
-// orange share a height on purpose: height carries "nearly spent", colour
-// carries the rest.
-for (let pct = 0; pct <= 100; pct++) {
-  const tier = { "#69f0ae": 2, "#ffc107": 2, "#ff5252": 4 }[usageColor(pct)];
-  if (gaugeHeight(pct) !== tier) {
-    console.error(`FAILED: gaugeHeight(${pct}) is ${gaugeHeight(pct)}, expected ${tier} for ${usageColor(pct)}`);
-    failed = true;
-  }
-}
-
 if (failed) process.exit(1);
 console.log("OK: state text contrast, marker contrast, state separation");
 console.log("OK: accent caps, accent separation, accent vs state");
 console.log("OK: gauge on track, gauge/marker vocabulary, tier stratification");
-console.log("OK: gauge height tracks gauge colour");
