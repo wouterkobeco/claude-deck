@@ -68,20 +68,16 @@ function wrapLabel(label, width, fontSize) {
 }
 
 /**
- * The foot counter, fitted: "task x/y" at full size, dropping the vowel
- * ("tsk x/y") when the count runs wide, then shrinking the font as a last
- * resort. Same hand-rolled width estimation as every other fit here — 0.55em
- * per character covers digits and lowercase sans.
+ * The foot counter as data: one square per task across the full key width,
+ * 1px gaps, green once completed. `current` counts the in-progress task, so
+ * it only reads as done when nothing is active (`active` null means the
+ * counter has moved on to the furthest-along *completed* task).
  */
-export function fitProgress(progress, width, fontSize) {
-  const budget = width * 0.92;
-  const est = (text, size) => text.length * size * 0.55;
-  const count = `${progress.current}/${progress.total}`;
-  for (const text of [`task ${count}`, `tsk ${count}`]) {
-    if (est(text, fontSize) <= budget) return { text, size: fontSize };
-  }
-  const text = `tsk ${count}`;
-  return { text, size: Math.max(9, Math.floor(budget / (text.length * 0.55))) };
+export function taskSquares(progress, width) {
+  const n = Math.max(1, progress.total);
+  const done = progress.current - (progress.active ? 1 : 0);
+  const w = (width - (n - 1)) / n;
+  return Array.from({ length: n }, (_, i) => ({ x: i * (w + 1), width: w, done: i < done }));
 }
 
 /** Uppercases a project name and truncates it to what fits the accent bar. */
@@ -118,11 +114,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const fontSize = Math.round(height * 0.19);
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
-  const progressSize = Math.round(height * 0.19);
-  // The fitted text may come back smaller than progressSize; the foot row's
-  // height stays keyed to progressSize so the layout above never shifts.
-  const foot = progress ? fitProgress(progress, width, progressSize) : null;
-  const footHeight = progress ? progressSize * 1.15 : 0;
+  const footHeight = progress ? 10 : 0;
   const maxLines = progress ? 3 : 4;
 
   // Left-margin indicator column: a blue square when a background shell is
@@ -195,8 +187,6 @@ export async function renderKey({ width, height, state, label, accent, project, 
     .map((line, i) => `<tspan x="${textLeftX}" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`)
     .join("");
 
-  const done = progress ? Math.round((progress.current / Math.max(1, progress.total)) * width) : 0;
-
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="${color}" />
@@ -224,11 +214,14 @@ export async function renderKey({ width, height, state, label, accent, project, 
       ${squares}
       ${
         progress
-          ? `<rect y="${height - 3}" width="${width}" height="3" fill="#00000055" />
-             <rect y="${height - 3}" width="${done}" height="3" fill="#ffffffcc" />
-             <text x="50%" y="${height - footHeight / 2 - 2}" font-family="sans-serif"
-                   font-size="${foot.size}" fill="#ffffffdd" text-anchor="middle"
-                   dominant-baseline="middle">${foot.text}</text>`
+          ? taskSquares(progress, width)
+              .map(
+                (s) =>
+                  `<rect x="${s.x}" y="${height - 9}" width="${s.width}" height="8" fill="${
+                    s.done ? "#69f0ae" : "#ffffff33"
+                  }" />`
+              )
+              .join("")
           : ""
       }
     </svg>`;

@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, fitProgress, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -26,12 +26,17 @@ eq(formatAge(8040), "2h14m", "hours and minutes");
 eq(formatAge(-1), "", "negative input");
 eq(formatAge(NaN), "", "non-numeric input");
 
-// The foot counter's three fit tiers at key size (72px, 14px font): the word
-// intact, the vowel dropped, then a smaller font — in that order, because
-// "task 2/5" must never shrink just to make room "task 12/20" would need.
-eq(JSON.stringify(fitProgress({ current: 2, total: 5 }, 72, 14)), '{"text":"task 2/5","size":14}', "narrow count keeps the word");
-eq(JSON.stringify(fitProgress({ current: 12, total: 20 }, 72, 14)), '{"text":"tsk 12/20","size":13}', "wide count drops the vowel first");
-eq(JSON.stringify(fitProgress({ current: 123, total: 456 }, 72, 14)), '{"text":"tsk 123/456","size":10}', "very wide count shrinks the font");
+// The foot counter as squares: total squares across the width with 1px gaps,
+// and `current` only counts as done once nothing is active — task 2 running
+// means one square green, task 2 being the furthest completed means two.
+{
+  const sq = taskSquares({ current: 2, total: 5, active: "doing task 2" }, 72);
+  eq(sq.length, 5, "one square per task");
+  eq(sq.filter((s) => s.done).length, 1, "in-progress task is not done");
+  eq(sq[1].x - (sq[0].x + sq[0].width), 1, "1px gap between squares");
+  eq(Math.round(sq[4].x + sq[4].width), 72, "squares span the full width");
+  eq(taskSquares({ current: 2, total: 5, active: null }, 72).filter((s) => s.done).length, 2, "nothing active counts current as done");
+}
 
 const width = 72;
 const height = 72;
