@@ -269,14 +269,16 @@ export function usageColor(pct) {
 }
 
 /**
- * Gauge thickness in px, keyed to the same thresholds as `usageColor`: 1px
- * green, 2px orange, 3px red. Colour alone is a weak signal at 72px across a
- * room; height is the one that reads peripherally. The extra pixels grow
+ * Gauge thickness in px, keyed to the same thresholds as `usageColor`: 2px
+ * green and orange, 4px red. Colour alone is a weak signal at 72px across a
+ * room; height is the one that reads peripherally — so height is spent on the
+ * one distinction worth catching from across the room (nearly spent vs not),
+ * and green/orange are told apart by colour alone. The extra pixels grow
  * *down*, past the header's dark border and onto the key's own background —
  * the header can't get taller without pushing a 4-line body off the key.
  */
 export function gaugeHeight(pct) {
-  return pct >= 85 ? 3 : pct >= 50 ? 2 : 1;
+  return pct >= 85 ? 4 : 2;
 }
 
 /**

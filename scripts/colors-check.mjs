@@ -148,10 +148,12 @@ if (!(darkest > lightest)) {
 }
 
 // Height is the second channel of the same signal, so it must switch on the
-// exact same percentages the colour does — a threshold nudged in one and not
-// the other gives you an orange 1px line, which is neither reading.
+// exact same percentage the red colour does — a threshold nudged in one and
+// not the other gives you a thin red line, which is neither reading. Green and
+// orange share a height on purpose: height carries "nearly spent", colour
+// carries the rest.
 for (let pct = 0; pct <= 100; pct++) {
-  const tier = { "#69f0ae": 1, "#ffc107": 2, "#ff5252": 3 }[usageColor(pct)];
+  const tier = { "#69f0ae": 2, "#ffc107": 2, "#ff5252": 4 }[usageColor(pct)];
   if (gaugeHeight(pct) !== tier) {
     console.error(`FAILED: gaugeHeight(${pct}) is ${gaugeHeight(pct)}, expected ${tier} for ${usageColor(pct)}`);
     failed = true;
