@@ -225,7 +225,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
           ? typeof context === "number"
             ? `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000cc" />
                <rect y="${titleHeight - titleBorder + 1}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
-                     height="${titleBorder - 1}" fill="${usageColor(context)}" />`
+                     height="${gaugeHeight(context)}" fill="${usageColor(context)}" />`
             : `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000aa" />`
           : ""
       }
@@ -266,6 +266,17 @@ export async function renderKey({ width, height, state, label, accent, project, 
  */
 export function usageColor(pct) {
   return pct >= 85 ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
+}
+
+/**
+ * Gauge thickness in px, keyed to the same thresholds as `usageColor`: 1px
+ * green, 2px orange, 3px red. Colour alone is a weak signal at 72px across a
+ * room; height is the one that reads peripherally. The extra pixels grow
+ * *down*, past the header's dark border and onto the key's own background —
+ * the header can't get taller without pushing a 4-line body off the key.
+ */
+export function gaugeHeight(pct) {
+  return pct >= 85 ? 3 : pct >= 50 ? 2 : 1;
 }
 
 /**
