@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent, DETAIL_BACK_INDEX } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -315,5 +315,19 @@ eq(mostUrgent(["idle"]), "idle", "a key with no subsessions keeps its own state"
 eq(mostUrgent(["busy", "idle"]), "busy", "order of the states must not matter");
 // An unrecognised state must not outrank a real one just by being unknown.
 eq(mostUrgent(["busy", "no-such-state"]), "busy", "unknown state loses to a known one");
+
+// A second press anywhere in the same project means "tell me more": the
+// project's keys are one block, so moving along it is the same gesture as
+// pressing one key twice.
+const p1 = { index: 0, session_id: "a", folder: "/repo" };
+const p2 = { index: 1, session_id: "b", folder: "/repo" };
+const other = { index: 2, session_id: "c", folder: "/elsewhere" };
+const empty = { index: 3, session_id: null, folder: null };
+eq(isRepeatPress(null, p1), false, "the first press of all focuses, never opens detail");
+eq(isRepeatPress(p1, p1), true, "the same key twice still opens detail");
+eq(isRepeatPress(p1, p2), true, "a sibling session of the same project counts as the second press");
+eq(isRepeatPress(other, p1), false, "a key from another project breaks the chain");
+eq(isRepeatPress(p1, empty), false, "an empty key has nothing to tell you about");
+eq(isRepeatPress(empty, p1), false, "and pressing one breaks the chain rather than continuing it");
 
 console.log("OK: project grouping");

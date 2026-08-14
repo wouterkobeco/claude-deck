@@ -226,18 +226,25 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **13 session slots**. Extra sessions past that are dropped silently, by
   design.
 - **A second press means "tell me more".** Tracked as a global "was the
-  immediately preceding press this same key for this same session" check
-  (`lastPress`), not a timeout, so any other key in between breaks the chain.
-  First press focuses the window, second opens that session's detail board.
+  immediately preceding press in this same project" check (`lastPress` against
+  `isRepeatPress`), not a timeout, so any key outside the project breaks the
+  chain. First press focuses the window, second opens the pressed session's
+  detail board. **The match is on the folder, not the key**: a project's
+  sessions sit in one contiguous block, so moving along that block is the same
+  gesture as pressing one key twice — either way you're already looking at that
+  project. Matching the key instead made a two-session project need a press on
+  one specific key of the pair, which is exactly the muscle-memory detail the
+  board is meant to remove. `isRepeatPress` is exported and covered by
+  `slots-check` because none of this is visible without a deck.
   Any press then leaves an overlay board, including the key that opened it —
   in the attention queue that press still focuses the window on the way out,
   which is the point of pressing one there; on the detail board its tiles have
-  no window of their own, so they only dismiss. The press handler nulls
-  `btn.assigned` itself the moment detail opens, rather than waiting for
-  `refreshDetail`'s own nulling on its first poll (up to 2s later) — without
-  that, the dismiss press still reads as "same key, same session" and the
-  press after it reopens detail instead of focusing the window, purely
-  depending on how fast you press.
+  no window of their own, so they only dismiss. **Leaving a board clears the
+  chain**, in `setView` and again for every press the detail board swallows.
+  Without it, the press that dismisses detail (or a poll-loop exit, when the
+  session ends underneath you) leaves its project sitting in `lastPress`, and
+  the next press on that project reopens the board you just left instead of
+  focusing its window.
 - **Nested means spawned by another session, not "in a subdirectory".**
   `sessions.mjs` sets `nested: true` from `entrypoint`: `sdk-py`/`sdk-ts` is an
   agent some script started, `cli` is one you started yourself.

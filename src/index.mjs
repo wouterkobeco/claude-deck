@@ -275,6 +275,22 @@ function keyFields(session) {
 // attention keys included — so it owes you an unambiguous way out.
 export const DETAIL_BACK_INDEX = 10;
 
+/**
+ * Does this press mean "tell me more" about the session it lands on? True when
+ * the press before it was on the same project — matched on the folder, not the
+ * key, so a project's block behaves as one thing: its keys sit together, and
+ * going from one of its sessions to another is the same gesture as pressing
+ * one key twice. Either way you're already looking at that project, and the
+ * second press asks about it.
+ *
+ * "Before" means immediately before, not within some timeout, so any key
+ * outside the project breaks the chain. A press on an empty key can't start
+ * one (no session to tell you about) and, having no folder, can't continue one.
+ */
+export function isRepeatPress(previous, press) {
+  return press.session_id !== null && press.folder !== null && previous?.folder === press.folder;
+}
+
 export function detailLayout({ session, tasks, nested, age, slotCount }) {
   // Same title as the session's own key, clearedEmpty rule included — after a
   // /clear the two header keys go blank rather than showing the session name
@@ -745,8 +761,8 @@ async function run() {
   // just holds the most recent value.
   let attentionCount = 0;
   // The immediately preceding key-down, updated on every press regardless of
-  // what it did — this is what makes a second press on the same button mean
-  // "again", and any other key in between break that chain.
+  // what it did — this is what makes a second press within one project mean
+  // "again", and any key outside it break that chain.
   let lastPress = null;
   // Every view change goes through here so the attention key can't stick on
   // a bright pulse frame: pulse() writes without touching btn.drawn, so if the
@@ -755,9 +771,15 @@ async function run() {
   // force a repaint. Nulling attentionButton.drawn on every transition costs
   // one redundant redraw at worst and guarantees the next drawAttention call
   // repaints it for real.
+  // It also clears the press chain, which matters for the transitions the poll
+  // loop makes on its own: a detail board whose session ends drops you back to
+  // the sessions board still holding the press that opened it, and the next
+  // press on that project would reopen the board you were just thrown out of.
+  // Presses that do want to seed a chain set `lastPress` after calling this.
   const setView = (next) => {
     view = next;
     attentionButton.drawn = null;
+    lastPress = null;
   };
   deck.on("error", (err) => {
     console.error("Stream Deck error:", err);
@@ -769,7 +791,8 @@ async function run() {
     const isAttention = control.index === attentionButton.index;
     const btn = isUsage || isAttention ? null : buttons[control.index];
     const sessionId = btn?.assigned?.session_id ?? null;
-    const press = { index: control.index, session_id: sessionId };
+    const folder = btn?.assigned?.folder ?? null;
+    const press = { index: control.index, session_id: sessionId, folder };
 
     // The detail board owns the whole deck, so it leaves only by its own back
     // key. Every other key there is a tile describing something — pressing a
@@ -777,7 +800,12 @@ async function run() {
     // right there saying so.
     if (view.kind === "detail") {
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
-      lastPress = press;
+      // Nothing here seeds a repeat: the tiles aren't session keys, and the
+      // back key may still be sitting on a session whose project matches the
+      // one you press next — which would reopen the board you just left.
+      // `refreshDetail` nulls every `assigned` on its first poll, but that's
+      // up to 2s away, and the outcome must not depend on how fast you press.
+      lastPress = null;
       return;
     }
     // The queue is the opposite: it's transient triage, so any press leaves.
@@ -791,7 +819,6 @@ async function run() {
     }
     if (isUsage) {
       setView(view.kind === "stats" ? { kind: "sessions" } : { kind: "stats" });
-      lastPress = { index: control.index, session_id: null };
       return;
     }
     if (isAttention) {
@@ -799,38 +826,28 @@ async function run() {
       // nothing rather than opening an empty board. `attentionCount` is what
       // the last drawAttention() returned.
       if (attentionCount > 0) setView({ kind: "attention" });
-      lastPress = { index: control.index, session_id: null };
+      // Pressed while dark it changes no view, so it clears the chain itself:
+      // a key that does nothing must still count as "something else in between".
+      lastPress = null;
       return;
     }
     if (view.kind === "stats") {
       // Stat tiles aren't clickable; the back key is, same as on the detail
       // board. (The usage key still toggles the board off, handled above.)
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
-      lastPress = press;
+      lastPress = null;
       return;
     }
 
-    // A second press on the same key for the same session opens that
-    // session's detail board; the first still focuses its window. "Second"
-    // means the immediately preceding press, not a press within some timeout,
-    // so any other key in between breaks the chain.
-    const isRepeat = sessionId !== null && lastPress?.index === control.index && lastPress?.session_id === sessionId;
+    const isRepeat = isRepeatPress(lastPress, press);
     // Both presses focus the window: between the two you may well have
     // alt-tabbed somewhere else, and a press that opens the detail board but
     // leaves you looking at Safari has done half its job.
     if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
-    if (isRepeat) {
-      setView({ kind: "detail", session_id: sessionId });
-      // Without this, the button that opened the detail board keeps reporting
-      // its old session_id (refreshDetail only nulls it on its first poll,
-      // up to 2s later) — so the *next* press, which is meant to just dismiss
-      // the overlay, still looks like "same key, same session" and the press
-      // after that reads as another repeat, reopening detail instead of
-      // focusing the window. Nulling it here makes the outcome depend on what
-      // was pressed, not on how fast.
-      btn.assigned = null;
-    }
-    lastPress = press;
+    // setView cleared the chain, so the press that opened detail can't also
+    // seed the next one — see the detail branch above for the other half.
+    if (isRepeat) setView({ kind: "detail", session_id: sessionId });
+    else lastPress = press;
   });
 
   // Runs alongside the poll loop below, not inside it — it needs a much

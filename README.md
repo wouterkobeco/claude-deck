@@ -40,7 +40,8 @@ dropped back to the normal board.
 
 ![The attention board](docs/img/board-attention.png)
 
-**Detail** — press a session key a second time in a row and that one session
+**Detail** — press a second key of the same project in a row (the same key
+twice counts) and that one session
 takes over all 15 keys: its title across two keys, then state, context and
 model, then its task list (done dimmed, in-progress bright), and pinned to the
 end, the subagents it has running. `BACK` returns.
