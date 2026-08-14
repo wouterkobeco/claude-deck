@@ -122,6 +122,23 @@ assignSlots([s("f1", F), s("f2", F), s("w9", F, true)], slots, nestedBySlot7);
 eq(slots, ["f1", "f2", null, null, null], "a subagent claims no slot");
 eq(nestedBySlot7[0].map((n) => n.session_id), ["w9"], "it attaches to the block's first key");
 
+// ...unless it names a parent, which an Agent-tool subagent always does. Then
+// it goes on that session's key, not the block's first. Attaching by folder
+// painted an idle key green for a sibling's agent — with three sessions open
+// in one repo, the key that went busy was whichever the daemon happened to see
+// first, which after a restart is readdir order and means nothing at all.
+const nestedBySlot8 = new Array(5).fill(null);
+assignSlots([s("f1", F), s("f2", F), { ...s("w8", F, true), parent: "f2" }], slots, nestedBySlot8);
+eq(nestedBySlot8[0], [], "the block's first key stays clean when the agent isn't its own");
+eq(nestedBySlot8[1].map((n) => n.session_id), ["w8"], "a subagent lands on its parent's key");
+
+// Both kinds at once: the parented one on its parent, the parentless sdk
+// session still on the block's first key. Neither rule eats the other.
+const nestedBySlot9 = new Array(5).fill(null);
+assignSlots([s("f1", F), s("f2", F), { ...s("w8", F, true), parent: "f2" }, s("sdk1", F, true)], slots, nestedBySlot9);
+eq(nestedBySlot9[0].map((n) => n.session_id), ["sdk1"], "a parentless sdk session still folds onto the block");
+eq(nestedBySlot9[1].map((n) => n.session_id), ["w8"], "and the parented one stays on its parent");
+
 // Accents come from what's free, not from position % 8. folderOrder is never
 // pruned, so a long-lived folder plus enough churn used to hand a new project
 // the colour of one still on the board: position 8 wrapped onto position 0.

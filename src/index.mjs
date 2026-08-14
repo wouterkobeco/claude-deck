@@ -222,12 +222,28 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     // their own first-seen order (nestedOrder), not whatever order this
     // particular poll happened to report them in.
     const isPrimary = i === 0 || visible[i - 1].folder !== s.folder;
-    if (isPrimary) {
-      nestedBySlot[i] = nested
-        .filter((n) => n.folder === s.folder)
-        .sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
+    const own = nestedFor(s, nested, isPrimary);
+    if (isPrimary || own.length) {
+      nestedBySlot[i] = own.sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
     }
   });
+}
+
+/**
+ * The nested sessions that belong on `session`'s key.
+ *
+ * An Agent-tool subagent knows the session that spawned it, so it lands on
+ * that session's own key — a folder with three sessions open in it must not
+ * green an idle key for an agent two keys over, which is exactly what
+ * attaching by folder did. An SDK session has no parent key to land on (it's a
+ * separate process nobody on the board owns), so it keeps the old behaviour
+ * and falls back to the project's block; `primary` is what keeps that to one
+ * key per project.
+ */
+export function nestedFor(session, nested, primary) {
+  return nested.filter((n) =>
+    n.parent ? n.parent === session.session_id : primary && n.folder === session.folder
+  );
 }
 
 // The three things every board derives from a session the same way. One copy
@@ -583,11 +599,14 @@ async function refreshDetail(deck, buttons, view) {
     return null; // tells the poll loop there's nothing left to show
   }
 
-  // The subagents this project has running: sdk sessions, which never hold a
-  // board key of their own, so this board and the margin markers are the only
-  // places they appear at all. They're short-lived, so one may well vanish
-  // between two polls.
-  const nested = sessions.filter((s) => s.nested && s.folder === session.folder);
+  // The subagents this session has running, plus the project's sdk sessions,
+  // which never hold a board key of their own — this board and the margin
+  // markers are the only places they appear at all. Same rule as the margin
+  // markers (`nestedFor`), so a tile and a marker can't disagree about whose
+  // agent it is; `primary` is true because a detail board is the one place
+  // per project you can be looking at. They're short-lived, so one may well
+  // vanish between two polls.
+  const nested = nestedFor(session, sessions.filter((s) => s.nested), true);
   const tasks = await readTaskList(session.session_id);
   const { age } = keyFields(session);
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });

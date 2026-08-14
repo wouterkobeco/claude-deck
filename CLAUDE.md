@@ -282,10 +282,24 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   moment it's *spawned*, so it says nothing about whether it's done.
 
   `assignSlots`
-  keeps nested ones off the board's slots; they group by folder onto the first
-  button of that project's block as a small square coloured by their own state,
-  and become readable tiles in two places — the attention queue if they block,
-  and the detail board of their project, pinned to its tail.
+  keeps nested ones off the board's slots; they attach to a key as a small
+  square coloured by their own state, and become readable tiles in two places —
+  the attention queue if they block, and the detail board they attach to,
+  pinned to its tail.
+
+  **Which key is `nestedFor`, and it goes by parent, not folder.** An
+  Agent-tool subagent carries the `parent` its synthesis in `sessions.mjs`
+  recorded, so it lands on the key of the session that actually spawned it —
+  and since `refresh` colours a key `mostUrgent([own, ...nested])`, that is the
+  difference between a busy agent tinting its own key and tinting a *sibling's*.
+  Folder-attachment shipped first and got this wrong: with three sessions open
+  in one repo, the greened key was whichever came first in the block, which
+  after a daemon restart is `readdir` order of `~/.claude/sessions` and means
+  nothing — an idle session that had just finished sat green for an agent two
+  keys over. An SDK session has no key of its own to point at and so carries no
+  `parent`; it keeps the old behaviour, folding onto the block's first key,
+  which is what the `primary` argument is for. `refreshDetail` calls the same
+  helper so a tile and a marker can never disagree about whose agent it is.
 
   **This used to be inferred from the cwd**, and that was wrong. Anything below
   the window's folder was called nested, which caught the SDK helpers *and*

@@ -483,12 +483,21 @@ export async function getLiveSessions() {
   // definition working. They carry no aiTitle/context/progress (none of that
   // is written for them), so the transcript enrichment below is skipped and
   // the Agent call's own description is what the tile reads.
+  //
+  // `parent` is the session that spawned it, kept because `session_id` is
+  // overwritten with the agent's own id just below. It's what lets index.mjs
+  // put the marker on the key of the session actually running the agent: a
+  // project with three sessions open in one folder would otherwise paint
+  // whichever key happens to come first in the block, and an idle session
+  // sitting green for a sibling's agent is a lie the deck can't be read past.
+  // An SDK session has no such key to land on and carries no `parent`.
   const subagents = (
     await Promise.all(
       matched.map(async (s) =>
         (await readRunningSubagents(join(projectDirFor(s.cwd), s.session_id, "subagents"))).map((a) => ({
           ...s,
           session_id: a.id,
+          parent: s.session_id,
           nested: true,
           name: a.description,
           state: "busy",
