@@ -416,7 +416,10 @@ async function refreshStats(deck, buttons, stats) {
       // as every other refresh*.
       const drawn = `stat ${JSON.stringify(stat)}`;
       if (btn.drawn === drawn) return;
-      await deck.fillKeyBuffer(btn.index, await renderStat({ ...btn, ...stat }), { format: "rgba" });
+      // One tile in the list isn't a stat: the back key, spliced in at
+      // DETAIL_BACK_INDEX by the caller the same way the detail board does it.
+      const render = stat.kind === "back" ? renderBack : renderStat;
+      await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...stat }), { format: "rgba" });
       btn.drawn = drawn;
     })
   );
@@ -800,8 +803,11 @@ async function run() {
       return;
     }
     if (view.kind === "stats") {
+      // Stat tiles aren't clickable; the back key is, same as on the detail
+      // board. (The usage key still toggles the board off, handled above.)
+      if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
       lastPress = press;
-      return; // stat tiles aren't clickable
+      return;
     }
 
     // A second press on the same key for the same session opens that
@@ -844,7 +850,13 @@ async function run() {
           { label: "Session reset", value: sessionHours === null ? "—" : `${sessionHours}h` },
           { label: "Week reset", value: weekDays === null ? "—" : `${weekDays}d` },
         ];
-        await refreshStats(deck, buttons, [...resetTiles, ...(await getStats())]);
+        const versionTile = { label: "Version", value: `v${pkg.version}` };
+        const statTiles = [...resetTiles, ...(await getStats()), versionTile];
+        // Same fixed slot as the detail board's back key, and assigned by
+        // index rather than spliced: with an unreadable stats cache the list
+        // is short, and the way out must still be on the bottom-left button.
+        statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
+        await refreshStats(deck, buttons, statTiles);
         attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);

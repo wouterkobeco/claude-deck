@@ -13,15 +13,6 @@ export function fmt(n) {
   return String(Math.round(n));
 }
 
-/** Milliseconds -> "8d 20h 7m". */
-export function formatDuration(ms) {
-  const totalMin = Math.round(ms / 60_000);
-  const d = Math.floor(totalMin / 1440);
-  const h = Math.floor((totalMin % 1440) / 60);
-  const m = totalMin % 60;
-  return `${d}d ${h}h ${m}m`;
-}
-
 /** "claude-opus-4-8" -> "Opus 4.8"; drops a trailing date-stamp id like "-20250929". */
 export function formatModel(id) {
   const parts = id.replace(/^claude-/, "").split("-");
@@ -35,33 +26,11 @@ export function formatModel(id) {
   return version.length ? `${label} ${version.join(".")}` : label;
 }
 
-/**
- * Longest and current run of consecutive active days, from the dates already
- * present in dailyActivity — Claude Code only writes an entry for a day that
- * had a session, so gaps in the array are gaps in activity. "Current" is the
- * run ending on the most recent recorded day, not necessarily today: the
- * cache lags by up to a day, and treating that lag as a broken streak would
- * be wrong more often than it's right.
- */
-export function computeStreaks(dates) {
-  const sorted = [...new Set(dates)].sort();
-  let longest = 0,
-    run = 0,
-    prevDay = null;
-  for (const d of sorted) {
-    const day = Date.parse(`${d}T00:00:00Z`) / 86_400_000;
-    run = prevDay !== null && day - prevDay === 1 ? run + 1 : 1;
-    longest = Math.max(longest, run);
-    prevDay = day;
-  }
-  return { longest, current: run };
-}
-
 /** Ordered tiles for the stats board, or [] if the cache can't be read. */
 export function computeStats(raw) {
   if (!raw) return [];
 
-  const { modelUsage = {}, dailyActivity = [], totalSessions, longestSession, firstSessionDate, lastComputedDate } = raw;
+  const { modelUsage = {}, dailyActivity = [], totalSessions, firstSessionDate, lastComputedDate } = raw;
 
   let totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let topModel = null,
@@ -86,7 +55,6 @@ export function computeStats(raw) {
   const totalTokens = totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
 
   const activeDates = dailyActivity.map((d) => d.date);
-  const { longest: longestStreak, current: currentStreak } = computeStreaks(activeDates);
   const mostActive = dailyActivity.reduce((a, b) => (b.messageCount > (a?.messageCount ?? -1) ? b : a), null);
   const spanDays =
     firstSessionDate && lastComputedDate
@@ -104,17 +72,12 @@ export function computeStats(raw) {
         ? new Date(`${mostActive.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" })
         : "—",
     },
-    { label: "Longest session", value: longestSession ? formatDuration(longestSession.duration) : "—" },
-    { label: "Longest streak", value: `${longestStreak} days` },
-    { label: "Current streak", value: `${currentStreak} days` },
     { label: "Input tokens", value: fmt(totals.input) },
     { label: "Output tokens", value: fmt(totals.output) },
-    // Read and write share one tile: they're the same mechanism measured two
-    // ways, and the board has exactly 13 slots. Two tiles here made 14 with
-    // the reset pair prepended in index.mjs, so the last one was silently
-    // dropped — the session board's "extras fall off" rule is right for
-    // sessions competing for space and wrong for a fixed list of facts.
-    { label: "Cache r/w", value: `${fmt(totals.cacheRead)} / ${fmt(totals.cacheWrite)}` },
+    // Seven tiles: index.mjs brackets this list with the reset pair before it
+    // and the version after, then puts the back key on the bottom-left button
+    // (index 10). An eighth tile here would land under that key and never be
+    // seen.
   ];
 }
 

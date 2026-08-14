@@ -56,7 +56,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   "Week reset") isn't from stats.mjs — it's `usage.mjs`'s
   `sessionResetsAt`/`weekResetsAt` reduced to hours/days, prepended in
   `index.mjs` because they change by the hour/day while the all-time totals
-  barely move.
+  barely move. Its last tile is the daemon's own version, appended in
+  `index.mjs` for the same reason — `pkg` is already read there. It also gets a
+  back key at `DETAIL_BACK_INDEX`, like the detail board, but *assigned* at
+  that index rather than spliced: an unreadable stats cache makes the tile list
+  short, and the way out still has to be on the bottom-left button.
 - **One session across the whole deck: the detail view.** A second press on a
   session key (see the repeat-press rule below) opens `refreshDetail`, which
   takes over **all 15 keys** — usage and attention included, unlike every other
@@ -142,10 +146,13 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   session count) to `~/.claude/streamdeck-usage.jsonl` before changing any of
   this.
 - `src/stats.mjs` — all-time stats board (favorite model, total tokens,
-  streaks, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
-  validated against a real screenshot of the source tool's own output (see the
-  pinned `formatDuration` case in `stats-check`); don't change the formatting
-  helpers without re-checking against a real cache file.
+  sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
+  validated against a real screenshot of the source tool's own output; don't
+  change the formatting helpers without re-checking against a real cache file.
+  It returns exactly seven tiles — `index.mjs` brackets them with the reset
+  pair, the version tile and the back key to fill all 13 buttons, so an eighth
+  would land under the back key and never be seen (`stats-check` pins the
+  count).
 - `src/vscode-state.mjs` — best-effort reader of VS Code's `state.vscdb` via the
   `sqlite3` CLI, to find a file the target window already has open. Reads an
   undocumented internal format, so *every* failure path returns `null` and the

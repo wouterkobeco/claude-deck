@@ -48,7 +48,8 @@ end, the subagents it has running. `BACK` returns.
 ![The detail board](docs/img/board-detail.png)
 
 **Stats** — the usage key's second press: time until each rate-limit window
-resets, then all-time totals.
+resets, then all-time totals, and the daemon's own version. `BACK` returns, as
+does the usage key.
 
 ![The stats board](docs/img/board-stats.png)
 
