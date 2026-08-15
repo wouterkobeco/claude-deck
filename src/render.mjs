@@ -250,7 +250,11 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const squareHeight = 6;
   const squarePitch = 7; // squareHeight + 1px gap
   const marginWidth = 8;
-  const squaresTop = barHeight + 2;
+  // 5px under the accent bar, not 2: the body's first line sits lower than its
+  // own box's top edge, so markers flush at +2 read as sitting above the text
+  // they belong beside. Costs no marker — the column still fits 7 (6 with a
+  // foot counter).
+  const squaresTop = barHeight + 5;
   const squaresBottom = height - footHeight - 2;
   const maxSquares = Math.max(0, Math.floor((squaresBottom - squaresTop) / squarePitch));
   // `state` is the whole block's — it goes green when a subsession behind
