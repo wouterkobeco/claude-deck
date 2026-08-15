@@ -122,18 +122,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **The beats are deliberately different speeds**, because they say different
   things: `requires_action` alternates every tick (0.8s) because it's blocked
   on you *now*, the compaction ring turns once every ~5s, and a red context
-  gauge breathes once every ~7s (`tick % 18`). "Nearly full" stays true for a
-  long time and wants noticing eventually, not immediately — at the fast beat
-  it reads as an alarm and competes with the keys that are actually asking for
-  you. `gaugeColor` breathes red *brighter*, never dimmer, all the way to
-  white: the gauge is 2px on a near-black track held to a contrast floor, and
-  fading below that floor for half of every cycle is a gauge that keeps
-  vanishing. Phase 0 is exactly `usageColor`, so every board that doesn't pulse
-  draws what it always did. **Both the swing and the period shipped too timid
-  once** — a pale pink over 14s, which passed `colors-check` and was invisible
-  on the deck. The floor there is now a CIE76 ΔE of 40, not 20: this is 2px of
-  line seen a second apart from across a room, so "obvious side by side" isn't
-  the bar.
+  gauge flips red/white every other tick (`tick % 4`, so ~0.8s a colour) —
+  half the requires_action beat, so the two don't read as one alarm.
+  `gaugeColor` flashes red *brighter*, never dimmer: the gauge is 2px on a
+  near-black track held to a contrast floor, and dropping below that floor for
+  half of every cycle is a gauge that keeps vanishing. Phase 0 is exactly
+  `usageColor`, so every board that doesn't pulse draws what it always did.
+  **Two gradual versions shipped before this one and neither was visible on
+  the deck** — a pink cosine over 14s, then a white one over 7s, both passing
+  `colors-check`. 2px of line is too little to carry a gradient: most of a fade
+  is spent in the middle, looking like one steady colour. Hence a square wave,
+  and hence the ΔE floor there is 40 rather than 20 — "obvious side by side"
+  isn't the bar for a line this thin seen across a room.
   The breath also **replaced** the gauge's second channel: red used to draw at
   4px (`gaugeHeight`, now gone) because colour alone is weak at 72px across a
   room. Motion carries further than either, so the height is flat again — two

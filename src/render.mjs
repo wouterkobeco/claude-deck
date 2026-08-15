@@ -388,37 +388,29 @@ export function usageColor(pct) {
   return pct >= CONTEXT_CRITICAL ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
 }
 
-// The far end of the red gauge's breath: white. A pale pink sat here first and
-// the swing was real but unreadable — 2px of #ff5252 fading to #ffc2bb over
-// seven seconds is a hue change on a line thin enough that the eye reads it as
-// the same red. The gauge is the smallest animated thing on the board, so it
-// needs the widest swing on it, not the most tasteful one.
-const CONTEXT_BREATH = "#ffffff";
+// The other half of the red gauge's flash. A pale pink sat here first, then
+// white on a cosine, and neither could be seen on the deck: 2px of line fading
+// through the middle of a swing spends most of its time looking like one
+// steady colour. The gauge is the smallest animated thing on the board, so it
+// gets the crudest signal — two colours, no in-between.
+const CONTEXT_FLASH = "#ffffff";
 
 /**
- * The gauge's colour at `phase` (0–1 of one breath). Below the red threshold,
+ * The gauge's colour at `phase` (0–1 of one flash). Below the red threshold,
  * and at phase 0 anywhere, this is exactly `usageColor` — so the steady frame
  * every non-pulsing board draws looks as it always did.
  *
- * Red breathes *brighter*, not dimmer, which is what makes it safe: the gauge
- * is three or four pixels on a near-black track, held to a contrast floor by
- * `colors-check`, and fading out of that floor for half of every cycle is just
- * a gauge that keeps disappearing. Going the other way, the dimmest frame is
- * the one already checked. A cosine, so both turns are gentle and it reads as
- * breathing rather than as a staircase of 400ms steps.
+ * A square wave, not a fade: the second half of the cycle is white, full stop.
+ * The gauge is 2px on a near-black track, and anything gradual on a line that
+ * thin is a colour the eye never catches changing. It flashes *brighter*, not
+ * dimmer, for the same reason it always did — the dim end would drop below the
+ * contrast floor `colors-check` holds it to, which is a gauge that keeps
+ * vanishing rather than one that flashes.
  */
 export function gaugeColor(pct, phase = 0) {
   const base = usageColor(pct);
   if (pct < CONTEXT_CRITICAL) return base;
-  const t = 0.5 - 0.5 * Math.cos(2 * Math.PI * phase);
-  return mix(base, CONTEXT_BREATH, t);
-}
-
-/** Straight sRGB lerp between two #rrggbb colours. */
-function mix(a, b, t) {
-  const parse = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-  const [ca, cb] = [parse(a), parse(b)];
-  return "#" + ca.map((v, i) => Math.round(v + (cb[i] - v) * t).toString(16).padStart(2, "0")).join("");
+  return phase < 0.5 ? base : CONTEXT_FLASH;
 }
 
 // One thickness at every level. Red used to draw at 4px, because colour alone

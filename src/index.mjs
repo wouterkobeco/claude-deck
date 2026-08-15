@@ -704,18 +704,16 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
             .map(async (btn) => {
               // The sweep advances a twelfth per 400ms tick — a full turn every
               // ~5s, slow enough to read as deliberate against a compaction
-              // that runs a minute or two. The gauge breathes slower still
-              // (~7s a cycle): it says "this session is nearly full", a thing
-              // that stays true for a long time and needs noticing at some
-              // point, not now — anything near the requires_action beat reads
-              // as an alarm and competes with the keys actually asking for you.
-              // It was half this speed for a release and went unnoticed on the
-              // deck: a 14s cycle on a 2px line spends most of its time
-              // somewhere in the middle, holding still.
+              // that runs a minute or two. The red gauge flips red/white every
+              // other tick, i.e. about once a second: half the requires_action
+              // beat, so the two don't read as the same alarm, but a hard flip
+              // rather than anything gradual. Two slow fades shipped before it
+              // (a pink one, then a white one) and neither was visible on the
+              // deck — 2px of line is too little to carry a gradient.
               const buf =
                 btn.renderParams.state === "compacting"
                   ? await renderCompacting({ ...btn, ...btn.renderParams, phase: (tick % 12) / 12 })
-                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright, contextPhase: (tick % 18) / 18 });
+                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright, contextPhase: (tick % 4) / 4 });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
             }),
           ...(() => {

@@ -125,23 +125,23 @@ for (const pct of [0, 49, 50, 84, 85, 100]) {
   check(`gauge at ${pct}% on its track`, contrast(usageColor(pct), track), 3.0);
 }
 
-// Past CONTEXT_CRITICAL the gauge breathes, so every frame of that breath has
-// to clear the same floor — a breath that fades out of legibility is a gauge
-// that keeps disappearing. It brightens rather than dims for exactly that
-// reason, which the first check below is what proves.
+// Past CONTEXT_CRITICAL the gauge flashes, so both frames have to clear the
+// same floor — a flash that drops out of legibility is a gauge that keeps
+// disappearing. It brightens rather than dims for exactly that reason, which
+// the first check below is what proves.
 for (const phase of [0, 0.25, 0.5, 0.75]) {
-  check(`red gauge mid-breath (phase ${phase})`, contrast(gaugeColor(100, phase), track), 3.0);
+  check(`red gauge mid-flash (phase ${phase})`, contrast(gaugeColor(100, phase), track), 3.0);
 }
-// And it has to be a breath: the same colour below the threshold, a swing wide
+// And it has to be a flash: the same colour below the threshold, a swing wide
 // enough to see above it. 20 is roughly "obvious side by side" in CIE76 — and
 // side by side is the easy case. This is 2px of line, seen a second apart,
-// from across a room, which is why the floor here is 40 instead: a swing that
-// only survives a colour-picker went unnoticed on the actual deck.
+// from across a room, which is why the floor here is 40 instead: two fades
+// that only survived a colour-picker went unnoticed on the actual deck.
 if (gaugeColor(CONTEXT_CRITICAL - 1, 0.5) !== usageColor(CONTEXT_CRITICAL - 1)) {
   console.error("FAILED: an amber gauge must not pulse");
   failed = true;
 }
-check("the red gauge's breath is wide enough to see", deltaE(gaugeColor(100, 0), gaugeColor(100, 0.5)), 40);
+check("the red gauge's flash is wide enough to see", deltaE(gaugeColor(100, 0), gaugeColor(100, 0.5)), 40);
 if (gaugeColor(100, 0) !== usageColor(100)) {
   console.error("FAILED: a steady frame must be the plain red every other board draws");
   failed = true;
