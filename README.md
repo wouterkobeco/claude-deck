@@ -18,7 +18,7 @@ window.
 | green | `busy` | actively working |
 | red | `requires_action` | blocked on you — this key pulses |
 | amber | `waiting` | waiting on input |
-| blue dot | `shell` | dropped to a shell |
+| green + blue dot | `shell` | turn's over, but a shell it started in the background is still running |
 | gray | `idle` | idle |
 
 The last two keys leave the rotation, so 13 are session keys. Extra sessions
@@ -67,6 +67,11 @@ does the usage key.
   started gets its own key wherever its cwd is — worktrees included.
 - **A key's colour covers its block.** A project whose only activity is a
   subagent reads as working, not as a grey key with a 3px marker.
+- **A key uses the whole key.** Lines are filled to the width they really
+  reach — character widths are measured off the same font the keys are drawn
+  in, rather than guessed at one average width per character — and the left
+  marker column is held open only while a marker is in it, so a key with no
+  background activity gets those pixels for its title instead.
 - **Slots never move.** Keys are assigned first-seen and stay put, and a project
   keeps its slot and colour after its last session ends, so a returning project
   lands where it was. The attention board is the deliberate exception — it's
@@ -132,13 +137,15 @@ imports from `src/`, compares against expected values, and exits nonzero on
 mismatch.
 
 ```
-npm run render-check   # SVG -> key image pipeline, writes sample PNGs
-npm run slots-check    # project grouping / slot assignment / detail layout
-npm run tasks-check    # "task X of Y" numbering
-npm run usage-check    # rate-limit parse (--live prints the raw API response)
-npm run stats-check    # stats board formatting (--live prints the real tiles)
-npm run title-check    # title / cleared / blocked-on-denial / model / effort
-npm run board-shot     # re-render the screenshots above
+npm run render-check    # SVG -> key image pipeline, text fitting, sample PNGs
+npm run slots-check     # project grouping / slot assignment / detail layout
+npm run tasks-check     # "task X of Y" numbering
+npm run usage-check     # rate-limit parse (--live prints the raw API response)
+npm run stats-check     # stats board formatting (--live prints the real tiles)
+npm run title-check     # title / cleared / blocked-on-denial / model / effort
+npm run subagents-check # which Agent-tool subagents are still running
+npm run colors-check    # palette contrast + separation floors
+npm run board-shot      # re-render the screenshots above
 ```
 
 ## Known limits
