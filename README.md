@@ -10,7 +10,7 @@ Every key is one live session: the project name in caps along the top in that
 project's colour, the session's own title under it, a `done/total` counter when
 it's working through a task list, and a thin gauge along the bottom for how full
 its context window is (green, amber past 50%, red past 85%, and once it's red
-it breathes — about one slow cycle every 14s). Press a key to focus that
+it breathes red to white — about one slow cycle every 7s). Press a key to focus that
 window.
 
 | Colour | Status | Meaning |
@@ -43,7 +43,8 @@ dropped back to the normal board.
 
 **Detail** — press a second key of the same project in a row (the same key
 twice counts) and that one session
-takes over all 15 keys: its title across two keys, then state, context and
+takes over all 15 keys: its title across two keys, then state, context (a ring,
+in the same green/amber/red as the gauge) and
 model, then its task list (done dimmed, in-progress bright), and pinned to the
 end, the subagents it has running. `BACK` returns.
 

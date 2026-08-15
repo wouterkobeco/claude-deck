@@ -316,7 +316,15 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
     { kind: "label", label: titleA },
     { kind: "label", label: titleB },
     { kind: "stat", label: "STATE", value: age ? `${session.state} ${age}` : session.state },
-    { kind: "stat", label: "CONTEXT", value: typeof session.context === "number" ? `${session.context}%` : "—" },
+    // A ring when the number is known — `pie` is what renderStat draws, `value`
+    // is the dash it falls back to when the status line never wrote a context
+    // file for this session.
+    {
+      kind: "stat",
+      label: "CONTEXT",
+      value: typeof session.context === "number" ? `${session.context}%` : "—",
+      pie: typeof session.context === "number" ? session.context : null,
+    },
     {
       kind: "stat",
       label: "MODEL",
@@ -644,7 +652,7 @@ async function refreshDetail(deck, buttons, view) {
           : tile.kind === "task"
           ? { number: tile.number, subject: tile.subject, status: tile.status }
           : tile.kind === "stat"
-          ? { label: tile.label, value: tile.value }
+          ? { label: tile.label, value: tile.value, pie: tile.pie ?? null }
           : tile.kind === "nested"
           ? {
               state: tile.session.state,
@@ -696,16 +704,18 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
             .map(async (btn) => {
               // The sweep advances a twelfth per 400ms tick — a full turn every
               // ~5s, slow enough to read as deliberate against a compaction
-              // that runs a minute or two. The gauge breathes at a third of
-              // that (~14s a cycle): it says "this session is nearly full", a
-              // thing that stays true for a long time and needs noticing at
-              // some point, not now — anything faster reads as an alarm and
-              // competes with the requires_action keys, which are the ones
-              // actually asking for you.
+              // that runs a minute or two. The gauge breathes slower still
+              // (~7s a cycle): it says "this session is nearly full", a thing
+              // that stays true for a long time and needs noticing at some
+              // point, not now — anything near the requires_action beat reads
+              // as an alarm and competes with the keys actually asking for you.
+              // It was half this speed for a release and went unnoticed on the
+              // deck: a 14s cycle on a 2px line spends most of its time
+              // somewhere in the middle, holding still.
               const buf =
                 btn.renderParams.state === "compacting"
                   ? await renderCompacting({ ...btn, ...btn.renderParams, phase: (tick % 12) / 12 })
-                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright, contextPhase: (tick % 36) / 36 });
+                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright, contextPhase: (tick % 18) / 18 });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
             }),
           ...(() => {

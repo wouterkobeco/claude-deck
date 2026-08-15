@@ -281,15 +281,19 @@ for (const status of ["completed", "in_progress", "pending"]) {
 // ever called through refreshDetail, never directly by any check until now.
 // "requires_action" plus the longest age format (h+mm) is the longest string
 // the board ever puts in one of these.
-for (const [name, label, value] of [
+// The CONTEXT tile draws a ring instead of the text when `pie` is a number —
+// 100 is the case worth looking at, being the widest number in the smallest
+// hole and the only one that closes the ring completely.
+for (const [name, label, value, pie] of [
   ["state-busy", "STATE", "busy 40m"],
   ["state-blocked-longest", "STATE", "requires_action 2h14m"],
-  ["context", "CONTEXT", "41%"],
+  ["context", "CONTEXT", "41%", 41],
+  ["context-full", "CONTEXT", "100%", 100],
   ["context-unknown", "CONTEXT", "—"],
   ["model", "MODEL", "opus-5 high"],
   ["model-unknown", "MODEL", "—"],
 ]) {
-  const buf = await renderStat({ width, height, label, value });
+  const buf = await renderStat({ width, height, label, value, pie });
   if (buf.length !== expected) {
     console.error(`FAILED (stat ${name}): expected ${expected} bytes, got ${buf.length}`);
     process.exit(1);

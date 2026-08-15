@@ -66,7 +66,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   session key (see the repeat-press rule below) opens `refreshDetail`, which
   takes over **all 15 keys** — usage and attention included, unlike every other
   board, which draws only the 13 session keys. `detailLayout` lays out a
-  two-key title, STATE/CONTEXT/MODEL stat tiles, then that session's task list
+  two-key title, STATE/CONTEXT/MODEL stat tiles (CONTEXT passes `pie` to
+  `renderStat`, which draws a ring in `usageColor` instead of the value text —
+  the number keeps the hole but drops its `%`, which is what the ring says and
+  what stops "100" fitting), then that session's task list
   coloured by status, with its subagents (the sdk sessions it spawned)
   pinned to the tail — a twenty-task plan must not push the only way
   to see those off the board. Because it covers the whole deck it owes an
@@ -119,13 +122,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **The beats are deliberately different speeds**, because they say different
   things: `requires_action` alternates every tick (0.8s) because it's blocked
   on you *now*, the compaction ring turns once every ~5s, and a red context
-  gauge breathes once every ~14s (`tick % 36`). "Nearly full" stays true for a
+  gauge breathes once every ~7s (`tick % 18`). "Nearly full" stays true for a
   long time and wants noticing eventually, not immediately — at the fast beat
   it reads as an alarm and competes with the keys that are actually asking for
-  you. `gaugeColor` breathes red *brighter*, never dimmer: the gauge is 2px on
-  a near-black track held to a contrast floor, and fading below that floor for
-  half of every cycle is a gauge that keeps vanishing. Phase 0 is exactly
-  `usageColor`, so every board that doesn't pulse draws what it always did.
+  you. `gaugeColor` breathes red *brighter*, never dimmer, all the way to
+  white: the gauge is 2px on a near-black track held to a contrast floor, and
+  fading below that floor for half of every cycle is a gauge that keeps
+  vanishing. Phase 0 is exactly `usageColor`, so every board that doesn't pulse
+  draws what it always did. **Both the swing and the period shipped too timid
+  once** — a pale pink over 14s, which passed `colors-check` and was invisible
+  on the deck. The floor there is now a CIE76 ΔE of 40, not 20: this is 2px of
+  line seen a second apart from across a room, so "obvious side by side" isn't
+  the bar.
   The breath also **replaced** the gauge's second channel: red used to draw at
   4px (`gaugeHeight`, now gone) because colour alone is weak at 72px across a
   room. Motion carries further than either, so the height is flat again — two

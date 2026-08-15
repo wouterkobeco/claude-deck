@@ -224,7 +224,7 @@ eq(plain.length, DECK, "layout fills every key on the deck");
 eq(plain[DETAIL_BACK_INDEX], { kind: "back" }, "the back key sits on the bottom-left button");
 eq(plain.slice(0, 2).map((t) => t.kind), ["label", "label"], "title spans two tiles");
 eq(plain[2], { kind: "stat", label: "STATE", value: "busy 40m" }, "state tile carries the age");
-eq(plain[3], { kind: "stat", label: "CONTEXT", value: "41%" }, "context tile");
+eq(plain[3], { kind: "stat", label: "CONTEXT", value: "41%", pie: 41 }, "context tile");
 eq(plain[4], { kind: "stat", label: "MODEL", value: "opus-5 high" }, "model tile drops the vendor prefix");
 eq(plain[5], { kind: "task", number: 1, subject: "read the code", status: "pending" }, "tasks start after the header");
 eq(plain[6].status, "in_progress", "task status is carried through");
@@ -299,7 +299,7 @@ eq(cleared.slice(0, 2), [{ kind: "label", label: "" }, { kind: "label", label: "
 
 // A session with no context reported must not print "null%".
 const noCtx = detailLayout({ session: { ...dSession, context: null }, tasks: [], nested: [], age: "", slotCount: DECK });
-eq(noCtx[3], { kind: "stat", label: "CONTEXT", value: "—" }, "unknown context shows a dash");
+eq(noCtx[3], { kind: "stat", label: "CONTEXT", value: "—", pie: null }, "unknown context shows a dash, not a ring");
 
 // Holding the board's shape for a visit: content follows each tile, position
 // doesn't move. The case that matters is a subagent appearing while the board

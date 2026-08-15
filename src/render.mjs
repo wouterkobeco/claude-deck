@@ -388,8 +388,12 @@ export function usageColor(pct) {
   return pct >= CONTEXT_CRITICAL ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
 }
 
-// The far end of the red gauge's breath: the same red run up towards white.
-const CONTEXT_BREATH = "#ffc2bb";
+// The far end of the red gauge's breath: white. A pale pink sat here first and
+// the swing was real but unreadable — 2px of #ff5252 fading to #ffc2bb over
+// seven seconds is a hue change on a line thin enough that the eye reads it as
+// the same red. The gauge is the smallest animated thing on the board, so it
+// needs the widest swing on it, not the most tasteful one.
+const CONTEXT_BREATH = "#ffffff";
 
 /**
  * The gauge's colour at `phase` (0–1 of one breath). Below the red threshold,
@@ -506,9 +510,43 @@ export async function renderAttention({ width, height, count, longest, pulse }) 
 // version) and the whole key is the number, so it can afford the larger face.
 // The detail board's tiles keep the smaller one — "opus-5 high" and "busy 12m"
 // wrap at 0.24 and read worse for being louder.
-export async function renderStat({ width, height, label, value, big = false }) {
+export async function renderStat({ width, height, label, value, big = false, pie }) {
   const capSize = Math.round(height * 0.1);
   const caps = fitCaps(label, width, capSize);
+
+  // `pie` turns the tile into a ring — a percentage is a proportion, and a
+  // ring says "most of the way round" in a glance where three characters have
+  // to be read. Same colours as the key gauge (`usageColor`), so a red ring
+  // here and a red gauge on the session key are the same statement twice.
+  // The number stays in the hole, but drops the % sign: the ring is what the
+  // sign says, and "100%" doesn't fit across a hole this size.
+  if (typeof pie === "number") {
+    const pct = Math.min(100, Math.max(0, Math.round(pie)));
+    const r = Math.round(height * 0.22);
+    const stroke = Math.round(height * 0.12);
+    const cx = width / 2;
+    const cy = height * 0.62;
+    const circumference = 2 * Math.PI * r;
+    const filled = (circumference * pct) / 100;
+
+    const svg = `
+      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${width}" height="${height}" fill="#1b1b1b" />
+        <text x="50%" y="${height * 0.22}" font-family="sans-serif" font-size="${capSize}"
+              font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
+              dominant-baseline="middle">${escapeXml(caps)}</text>
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ffffff22" stroke-width="${stroke}" />
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${usageColor(pct)}" stroke-width="${stroke}"
+                stroke-dasharray="${filled} ${circumference - filled}"
+                transform="rotate(-90 ${cx} ${cy})" />
+        <text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${Math.round(height * 0.17)}"
+              font-weight="600" fill="#ffffff" text-anchor="middle"
+              dominant-baseline="middle">${pct}</text>
+      </svg>`;
+
+    return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+  }
+
   const valueSize = Math.round(height * (big ? 0.24 : 0.19));
 
   let lines = wrapLabel(value, width, valueSize);
