@@ -133,7 +133,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - `src/render.mjs` — builds an SVG string per key and rasterizes with sharp.
   Pure: takes geometry + data, returns a buffer. Text fitting is hand-rolled
   character-width estimation, so layout changes need `render-check` looked at,
-  not just run. **The palette is three tiers separated by lightness** —
+  not just run. **`CHAR_WIDTH` is measured off this pipeline's own raster**, not
+  copied from a font spec: `sans-serif` at weight 600 resolves to Helvetica Bold
+  here, `wrapLabel` fills each line to the width it really reaches, and
+  `render-check` renders a sample and asserts the estimate lands within a band
+  of the ink it covers — so a table that drifts from the installed font fails
+  rather than silently over- or under-filling every key. A line's budget must be
+  measured from where the text actually starts (`width - textLeftX - 3`, not
+  `width - marginWidth`); the flat 0.6em estimate this replaced was wrong in
+  both directions at once and hid that. **The palette is three tiers separated by lightness** —
   `STATE_COLORS` fill a whole key and stay dark (L\* 36–47), `ACCENTS` are the
   light identity bar (57–94), `MARKER_COLORS` and the usage gauge are a few
   bright pixels drawn on top. Everything small is light-on-dark; that one rule

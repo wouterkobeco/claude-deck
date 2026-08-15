@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel, wrapLabel, ellipsize, measureText } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -25,6 +25,52 @@ eq(formatAge(8040), "2h14m", "hours and minutes");
 // carries neither statusUpdatedAt nor updatedAt.
 eq(formatAge(-1), "", "negative input");
 eq(formatAge(NaN), "", "non-numeric input");
+
+// Wrapping at the real body-text geometry of a 72px key: 58px of text width
+// (11px in from the left for the marker column, 3px back off the right edge),
+// fontSize 14, letter-spacing 0.1. Lines are filled by measured width, so a run
+// of narrow letters gets far more of them than a run of wide ones — the flat
+// 0.6em-per-character estimate this replaced fit neither, and a space landing
+// on a line's edge (which draws nothing) cost a whole slot on top of that,
+// drawing "projec" / "t packa" on lines with room for "project".
+const wrap = (s) => wrapLabel(s, 58, 14, 0.1).join("|");
+eq(wrap("upgrade project packages"), "upgrade|project|package|s", "space never costs a slot");
+eq(wrap("iiiiiiiiiiiiiiii"), "iiiiiiiiiiiii|iii", "thirteen narrow letters fit");
+eq(wrap("mmmmmmmm"), "mmmm|mmmm", "only four wide ones do");
+eq(wrap("abcdefg hijk"), "abcdefg|hijk", "still breaks mid-word");
+eq(wrap("   "), "", "spaces only");
+// A glyph wider than the whole line still gets a line rather than looping.
+eq(wrapLabel("mmm", 2, 14).join("|"), "m|m|m", "narrower than one character");
+eq(ellipsize("abcdefghijklmnopq", 58, 14, 0.1), "abcde…", "truncation measures the ellipsis too");
+
+// The table above is only worth having while it still describes the font
+// fontconfig actually hands this pipeline. Render a line and compare the
+// estimate against the ink it really covers — ink runs a little narrower than
+// the advance widths (the first and last glyph's side bearings are outside
+// it), so this asserts a band, not equality. A wrong or stale table blows
+// straight through it; a re-measured one sits mid-band.
+{
+  const sample = "upgrade project packages";
+  const svg = `<svg width="600" height="40" xmlns="http://www.w3.org/2000/svg"><rect width="600" height="40" fill="#000"/>
+    <text x="10" y="25" font-family="sans-serif" font-size="14" font-weight="600" letter-spacing="0.1" fill="#fff">${sample}</text></svg>`;
+  const { data, info } = await sharp(Buffer.from(svg)).raw().toBuffer({ resolveWithObject: true });
+  let min = Infinity;
+  let max = -1;
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      if (data[(y * info.width + x) * info.channels] > 40) {
+        if (x < min) min = x;
+        if (x > max) max = x;
+      }
+    }
+  }
+  const ink = max - min + 1;
+  const ratio = measureText(sample, 14, 0.1) / ink;
+  if (!(ratio > 0.98 && ratio < 1.06)) {
+    console.error(`FAILED (char width table): estimate/ink = ${ratio.toFixed(3)}, want 0.98-1.06 (ink ${ink}px)`);
+    process.exit(1);
+  }
+}
 
 // The foot counter as squares: total squares across the width with 1px gaps
 // and a 3px margin at each end, and `current` only counts as done once nothing

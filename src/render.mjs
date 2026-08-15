@@ -72,12 +72,104 @@ function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }
 
-/** Splits into fixed-width chunks — no word-boundary awareness, breaks mid-word. */
-function wrapLabel(label, width, fontSize) {
-  const maxChars = Math.max(3, Math.floor(width / (fontSize * 0.6)));
+/**
+ * Per-character advance widths as a fraction of the font size, so a line is
+ * filled to the pixel it actually reaches rather than to a flat average.
+ *
+ * Measured off this pipeline's own raster, not copied from a spec sheet:
+ * fontconfig resolves `sans-serif` + `font-weight: 600` to Helvetica Bold here,
+ * and every text this module wraps is that one face. Re-measure by rendering
+ * `(cH)*20` against `H*20` and dividing the ink-width difference by the font
+ * size — that is where these numbers came from.
+ *
+ * Anything unlisted falls back to CHAR_WIDTH_DEFAULT (an average lowercase
+ * letter): an em dash or a CJK glyph then wraps roughly rather than not at all.
+ */
+const CHAR_WIDTH_DEFAULT = 0.6;
+const CHAR_WIDTH = {};
+for (const [w, chars] of [
+  [0.29, " Iijl.,:;!|'`"],
+  [0.30, "/\\()[]{}"],
+  [0.35, "ft-"],
+  [0.40, "r"],
+  [0.51, "z"],
+  [0.57, "aceksvxy0123456789_J"],
+  [0.62, "bdghnopquFLTZ"],
+  [0.68, "EPSVXY?"],
+  [0.73, "ABCDHKNRU"],
+  [0.79, "wGOQ"],
+  [0.84, "M"],
+  [0.90, "m"],
+  [0.95, "W"],
+  [1.0, "…%@"],
+]) {
+  for (const c of chars) CHAR_WIDTH[c] = w;
+}
+
+const charWidth = (c, fontSize, letterSpacing) => (CHAR_WIDTH[c] ?? CHAR_WIDTH_DEFAULT) * fontSize + letterSpacing;
+
+export function measureText(s, fontSize, letterSpacing = 0) {
+  let total = 0;
+  for (const c of s) total += charWidth(c, fontSize, letterSpacing);
+  return total;
+}
+
+/**
+ * Fills each line to the width it really reaches — no word-boundary awareness,
+ * breaks mid-word.
+ *
+ * A space at either edge of a line renders as nothing (SVG collapses it), so it
+ * must not be charged for: it is held pending and only committed once a
+ * non-space follows it *on the same line*. Slicing by a flat character count
+ * did neither, and drew "projec" / "t packa" on lines with room for "project".
+ */
+export function wrapLabel(label, width, fontSize, letterSpacing = 0) {
   const lines = [];
-  for (let i = 0; i < label.length; i += maxChars) lines.push(label.slice(i, i + maxChars));
+  let line = "";
+  let used = 0;
+  let pendingSpace = false;
+  for (const c of label) {
+    if (c === " ") {
+      pendingSpace = line !== "";
+      continue;
+    }
+    const w = charWidth(c, fontSize, letterSpacing);
+    const gap = pendingSpace ? charWidth(" ", fontSize, letterSpacing) : 0;
+    // `line !== ""` is what guarantees progress: a character wider than the
+    // whole key still gets a line of its own instead of looping forever.
+    if (line !== "" && used + gap + w > width) {
+      lines.push(line);
+      line = c;
+      used = w;
+    } else {
+      line += (pendingSpace ? " " : "") + c;
+      used += gap + w;
+    }
+    pendingSpace = false;
+  }
+  if (line !== "") lines.push(line);
   return lines;
+}
+
+// Shared by each text's `letter-spacing` attribute and by the width budget
+// wrapLabel/fitCaps spend against it — the fit is only exact while they agree.
+const BODY_LETTER_SPACING = 0.1;
+const CAPS_LETTER_SPACING = 0.5;
+
+/** Truncates to what fits `width` with a trailing ellipsis, measured the same way. */
+export function ellipsize(line, width, fontSize, letterSpacing = 0) {
+  const budget = width - charWidth("…", fontSize, letterSpacing);
+  let out = "";
+  let used = 0;
+  for (const c of line) {
+    const w = charWidth(c, fontSize, letterSpacing);
+    if (used + w > budget) break;
+    out += c;
+    used += w;
+  }
+  // A width too narrow for even one character plus the ellipsis still has to
+  // show *something* about the line it stands for.
+  return (out || line.slice(0, 1)) + "…";
 }
 
 /**
@@ -107,10 +199,11 @@ export function taskSquares(progress, width) {
 
 /** Uppercases a project name and truncates it to what fits the accent bar. */
 function fitCaps(project, width, fontSize) {
-  // 0.66 covers uppercase + the letter-spacing below; 0.9 keeps a side margin.
-  const maxChars = Math.max(3, Math.floor((width * 0.9) / (fontSize * 0.66)));
+  const budget = width * 0.9; // keeps a side margin
   const upper = project.toUpperCase();
-  return upper.length <= maxChars ? upper : upper.slice(0, maxChars - 1) + "…";
+  return measureText(upper, fontSize, CAPS_LETTER_SPACING) <= budget
+    ? upper
+    : ellipsize(upper, budget, fontSize, CAPS_LETTER_SPACING);
 }
 
 /** Renders a solid-color key with a left-aligned, fixed-width-wrapped label. Returns a raw RGBA buffer. */
@@ -194,19 +287,21 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // The label's wrap width and left edge both make room for the margin
   // column above — not just drawn on top of it — so a long line can't run
   // through the squares.
-  const textWidth = width - marginWidth;
   const textLeftX = marginWidth + 3;
+  // Budgeted from where the text actually starts, with the same 3px inset kept
+  // on the right. `width - marginWidth` was 3px too generous on each side and
+  // got away with it only while lines were cut by a flat, over-wide
+  // character estimate; filled to the pixel, that ran the last glyph off the key.
+  const textWidth = width - textLeftX - 3;
 
   // Lowercase body against the header's uppercase caps, so the two rows read
   // as distinct typographic levels rather than fighting for the same weight.
-  let lines = wrapLabel(label.toLowerCase(), textWidth, fontSize);
+  let lines = wrapLabel(label.toLowerCase(), textWidth, fontSize, BODY_LETTER_SPACING);
   if (lines.length > maxLines) {
     // aiTitle can be a full sentence; anything past what the key can show
     // vertically gets cut, with the last visible line ellipsized.
-    const maxChars = Math.max(3, Math.floor(textWidth / (fontSize * 0.6)));
     lines = lines.slice(0, maxLines);
-    const last = lines[maxLines - 1];
-    lines[maxLines - 1] = last.slice(0, Math.max(1, maxChars - 1)) + "…";
+    lines[maxLines - 1] = ellipsize(lines[maxLines - 1], textWidth, fontSize, BODY_LETTER_SPACING);
   }
 
   // Top-align the body under the accent bar, regardless of how many lines
@@ -242,11 +337,11 @@ export async function renderKey({ width, height, state, label, accent, project, 
       ${
         caps
           ? `<text x="50%" y="${titleTopPad + titleBorder + titleTextRow / 2}" font-family="sans-serif" font-size="${capSize}"
-                   font-weight="bold" letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
+                   font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#000000bb" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
           : ""
       }
-      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="0.1" fill="#ffffff"
+      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="${BODY_LETTER_SPACING}" fill="#ffffff"
             text-anchor="start" dominant-baseline="middle">${tspans}</text>
       ${squares}
       ${
@@ -344,7 +439,7 @@ export async function renderUsage({ width, height, session, week }) {
       const barY = top + half - 7;
       return `
         <text x="50%" y="${top + half * 0.26}" font-family="sans-serif" font-size="${capSize}"
-              font-weight="bold" letter-spacing="0.5" fill="#ffffff99" text-anchor="middle"
+              font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
               dominant-baseline="middle">${caps}</text>
         <text x="50%" y="${top + half * 0.62}" font-family="sans-serif" font-size="${pctSize}"
               fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${known ? shown + "%" : "—"}</text>
@@ -385,7 +480,7 @@ export async function renderAttention({ width, height, count, longest, pulse }) 
         quiet
           ? ""
           : `<text x="50%" y="${height * 0.66}" font-family="sans-serif" font-size="${capSize}"
-                   font-weight="bold" letter-spacing="0.5" fill="#ffffffcc" text-anchor="middle"
+                   font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffffcc" text-anchor="middle"
                    dominant-baseline="middle">WAITING</text>
              <text x="50%" y="${height * 0.85}" font-family="sans-serif" font-size="${capSize}"
                    fill="#ffffff99" text-anchor="middle"
@@ -412,9 +507,8 @@ export async function renderStat({ width, height, label, value, big = false }) {
 
   let lines = wrapLabel(value, width, valueSize);
   if (lines.length > 2) {
-    const maxChars = Math.max(3, Math.floor(width / (valueSize * 0.6)));
     lines = lines.slice(0, 2);
-    lines[1] = lines[1].slice(0, Math.max(1, maxChars - 1)) + "…";
+    lines[1] = ellipsize(lines[1], width, valueSize);
   }
   const lineHeight = valueSize * 1.1;
   const valueTop = height * 0.62;
@@ -427,7 +521,7 @@ export async function renderStat({ width, height, label, value, big = false }) {
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="#1b1b1b" />
       <text x="50%" y="${height * 0.22}" font-family="sans-serif" font-size="${capSize}"
-            font-weight="bold" letter-spacing="0.5" fill="#ffffff99" text-anchor="middle"
+            font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
             dominant-baseline="middle">${escapeXml(caps)}</text>
       <text font-family="sans-serif" font-size="${valueSize}" font-weight="600" fill="#ff8a65"
             text-anchor="middle" dominant-baseline="middle">${tspans}</text>
@@ -457,9 +551,8 @@ export async function renderTask({ width, height, number, subject, status }) {
   let lines = wrapLabel((subject ?? "").toLowerCase(), width - 6, fontSize);
   const maxLines = 4;
   if (lines.length > maxLines) {
-    const maxChars = Math.max(3, Math.floor((width - 6) / (fontSize * 0.6)));
     lines = lines.slice(0, maxLines);
-    lines[maxLines - 1] = lines[maxLines - 1].slice(0, Math.max(1, maxChars - 1)) + "…";
+    lines[maxLines - 1] = ellipsize(lines[maxLines - 1], width - 6, fontSize);
   }
   const startY = height * 0.3 + lineHeight / 2;
   const tspans = lines.map((line, i) => `<tspan x="3" y="${startY + i * lineHeight}">${escapeXml(line)}</tspan>`).join("");
@@ -468,7 +561,7 @@ export async function renderTask({ width, height, number, subject, status }) {
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="${bg}" />
       <text x="3" y="${height * 0.13}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-            letter-spacing="0.5" fill="${text}" dominant-baseline="middle">${number}</text>
+            letter-spacing="${CAPS_LETTER_SPACING}" fill="${text}" dominant-baseline="middle">${number}</text>
       <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" fill="${text}"
             text-anchor="start" dominant-baseline="middle">${tspans}</text>
     </svg>`;
@@ -505,7 +598,7 @@ export async function renderCompacting({ width, height, accent, project, phase =
       ${
         project
           ? `<text x="50%" y="7.5" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-                   letter-spacing="0.5" fill="#000000bb" text-anchor="middle"
+                   letter-spacing="${CAPS_LETTER_SPACING}" fill="#000000bb" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(fitCaps(project, width, capSize))}</text>`
           : ""
       }
@@ -514,7 +607,7 @@ export async function renderCompacting({ width, height, accent, project, phase =
               stroke-linecap="round" stroke-dasharray="${arc} ${circumference - arc}"
               stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})" />
       <text x="50%" y="${height * 0.84}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-            letter-spacing="0.5" fill="#ffffffdd" text-anchor="middle"
+            letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffffdd" text-anchor="middle"
             dominant-baseline="middle">COMPACTING</text>
     </svg>`;
 
@@ -535,7 +628,7 @@ export async function renderBack({ width, height }) {
       <text x="50%" y="${height * 0.44}" font-family="sans-serif" font-size="${Math.round(height * 0.42)}"
             fill="#ffffffdd" text-anchor="middle" dominant-baseline="middle">←</text>
       <text x="50%" y="${height * 0.78}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-            letter-spacing="0.5" fill="#ffffff99" text-anchor="middle" dominant-baseline="middle">BACK</text>
+            letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle" dominant-baseline="middle">BACK</text>
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
