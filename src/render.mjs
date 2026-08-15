@@ -242,11 +242,10 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // Left-margin indicator column: a blue square when a background shell is
   // still running, then one white square per nested (worktree) session
   // sharing this button's project folder — so either kind of hidden
-  // background activity shows at a glance. The margin is always reserved,
-  // whether or not anything is in it, so a key's body text sits at a
-  // consistent left edge across the whole board. When more markers would fit
-  // than the column has vertical room for, the last visible one flashes
-  // (driven by `pulse`) instead of being dropped.
+  // background activity shows at a glance. The column is reserved only when
+  // something is actually in it — see the body text below. When more markers
+  // would fit than the column has vertical room for, the last visible one
+  // flashes (driven by `pulse`) instead of being dropped.
   const squareWidth = 3;
   const squareHeight = 6;
   const squarePitch = 7; // squareHeight + 1px gap
@@ -284,10 +283,17 @@ export async function renderKey({ width, height, state, label, accent, project, 
     })
     .join("");
 
-  // The label's wrap width and left edge both make room for the margin
-  // column above — not just drawn on top of it — so a long line can't run
-  // through the squares.
-  const textLeftX = marginWidth + 3;
+  // The label's wrap width and left edge both make room for the marker column
+  // — not just drawn on top of it — so a long line can't run through the
+  // squares. But only when there are squares: an empty column is 8px of a
+  // 72px key, a seventh of the line, and holding it open for markers that
+  // aren't there costs a word on most keys.
+  //
+  // The price is that the left edge moves when a key's first marker appears,
+  // rather than staying put board-wide. That's paid on a key whose body is
+  // re-wrapping at that moment anyway — a subagent starting is exactly when
+  // its parent's aiTitle changes too.
+  const textLeftX = (totalMarkers > 0 ? marginWidth : 0) + 3;
   // Budgeted from where the text actually starts, with the same 3px inset kept
   // on the right. `width - marginWidth` was 3px too generous on each side and
   // got away with it only while lines were cut by a flat, over-wide

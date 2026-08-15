@@ -159,6 +159,40 @@ await sharp(overlayBuf, { raw: { width, height, channels: 4 } })
   .png()
   .toFile(new URL("./render-check-overlay.png", import.meta.url).pathname);
 
+// The marker column is reserved only while a marker is in it, so the body
+// starts at x=11 on a key with nested activity and at x=3 on one without —
+// read straight back off the raster, because an off-by-one here is a word per
+// key and is invisible anywhere but the deck. The nested state is `busy`
+// (green marker) rather than idle so the only pure-white pixels in the body
+// rows are the text itself.
+for (const [name, nestedStates, wantLeft] of [
+  ["margin reserved", ["busy"], 11],
+  ["margin reclaimed", [], 3],
+]) {
+  const buf = await renderKey({
+    width,
+    height,
+    state: "busy",
+    label: "wide open",
+    accent: "#4fc3f7",
+    project: "kob-backend",
+    nestedStates,
+  });
+  let left = Infinity;
+  // Body rows only: below the title bar, above the foot row. Half-lit red is
+  // what separates white text from everything else that can appear in those
+  // rows — the green marker (r=0x69) and the busy background (r=0x2e) are both
+  // under it, and a plain 255 test would land on the second column of an
+  // antialiased glyph rather than its first.
+  for (let y = 18; y < height - 10; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = (y * width + x) * 4;
+      if (buf[p] > 128 && buf[p + 2] > 128 && x < left) left = x;
+    }
+  }
+  eq(left, wantLeft, name);
+}
+
 // A long label plus nested squares together: the label must wrap inside the
 // reserved margin instead of centering across the full key width.
 const marginBuf = await renderKey({
