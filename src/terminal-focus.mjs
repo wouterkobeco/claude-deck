@@ -108,16 +108,35 @@ async function psTable() {
  */
 export async function requestFocus(session, { path = FOCUS_FILE, readProcessTable = psTable } = {}) {
   if (!session?.pid) return;
+  const host = session.host ?? null;
+  // A remote session's chain is not walkable here. Its pids belong to another
+  // machine, so the local table either doesn't know them or — the case that
+  // actually hurts — knows a completely unrelated process wearing the same
+  // number. The chain is instead computed during the poll's own fetch, where
+  // the remote process table already arrives, and travels on the session: a
+  // press must never wait on ssh. No chain means no request at all, because
+  // both alternatives (guessing locally, or sending the bare pid) reveal
+  // someone else's terminal rather than nothing.
+  if (host && !session.ancestors?.length) return;
   const mine = ++issued;
   const tmp = `${path}.${mine}.tmp`;
   try {
-    const table = await readProcessTable();
+    // Only a local session needs the table, and only a local session waits for
+    // it — this is inside the `issued` guard either way, so a remote press
+    // still loses to a newer one.
+    const pids = host ? session.ancestors : ancestorChain(session.pid, await readProcessTable());
     if (mine !== issued) return; // a newer press was issued while ps ran
     await writeFile(
       tmp,
       JSON.stringify({
-        pids: ancestorChain(session.pid, table),
+        pids,
         sessionId: session.session_id ?? null,
+        // Named explicitly, never omitted. Pids are unique per machine, so a
+        // remote pid is an ordinary number here and a local window would match
+        // it by coincidence. The extension compares this against its own host
+        // and ignores anything that isn't its own; `null` has to be a value it
+        // can compare, not an absence it has to guess about.
+        host,
         ts: Date.now(),
       })
     );

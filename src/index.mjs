@@ -219,11 +219,6 @@ async function anchorFile(folder) {
 // forgotten rather than checked.
 async function focusWindow(session, requestedAt) {
   const { folder, ide, host } = session;
-  // A remote session's folder is another machine's path. Raising its window is
-  // spec B — see docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
-  // Until then a remote key reads and does not act, which is quieter than
-  // searching this filesystem for a directory that is not on it.
-  if (host) return;
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`
@@ -254,12 +249,47 @@ async function focusWindow(session, requestedAt) {
     requestedAt?.set(session.session_id, Date.now());
     requestFocus(session);
   }
-  const file = (app === "Visual Studio Code" ? await openFileIn(folder) : null) ?? (await anchorFile(folder));
-  if (!file) {
+  const file = app === "Visual Studio Code" ? await openFileIn(folder, host) : null;
+
+  // A remote window is raised through the `code` CLI, not `open`. Its documents
+  // are `vscode-remote://` URIs and `open` has no idea what to do with one; the
+  // CLI hands the URI to the running instance, which focuses the window that
+  // already has that file — no new tab, no new window. `anchorFile` is not a
+  // fallback here either: it probes this machine's filesystem for a path that
+  // lives on another one. The folder URI is the fallback instead, and it is safe
+  // for the same reason the raise is reachable at all — we only get here because
+  // a window published this host, so a window with that folder exists to focus.
+  //
+  // `docs/roadmap-reveal-terminal.md` ruled the `code` CLI out, but for *local*
+  // windows, where `open -a` works and `code -r` would replace a window's
+  // contents. Neither applies here.
+  if (host) {
+    // No `--folder-uri` fallback, deliberately. It looks safe — a window
+    // published this host, so surely one exists to focus — but `storageDirFor`
+    // only ever matches a window's `folder`, and a *multi-root* window records
+    // a `workspace` instead. Every press on a session inside one would find no
+    // file, fall through, and have `code` match the folder against windows
+    // opened *on* that folder rather than windows containing it: a brand new
+    // window and a second SSH connection, on every press, not as a race.
+    // Skipping the raise costs one half of the press; the reveal above still
+    // fires, and CLAUDE.md is explicit that multi-root windows are the case
+    // this feature helps most.
+    if (!file) {
+      console.error(`focus failed for ${host}:${folder}: no open file found to raise its window`);
+      return;
+    }
+    execFile("code", ["--file-uri", file], (err, _stdout, stderr) => {
+      if (err) console.error(`focus failed for ${host}:${folder}:`, stderr || err.message);
+    });
+    return;
+  }
+
+  const target = file ?? (await anchorFile(folder));
+  if (!target) {
     console.error(`focus failed for ${folder}: no file found to open`);
     return;
   }
-  execFile("open", ["-a", app, file], (err, _stdout, stderr) => {
+  execFile("open", ["-a", app, target], (err, _stdout, stderr) => {
     if (err) console.error(`focus failed for ${folder}:`, stderr || err.message);
   });
 }
@@ -474,14 +504,18 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // No extension in this session's window — today's rule, unchanged.
   if (matching.length === 0) return sameProject;
 
-  // A remote window can never reveal a terminal (that is the deferred spec B),
-  // so the extension's answer is a permanent "no" rather than "not yet" — the
-  // same case `askedLongAgo` handles for a local session no window will ever
-  // report. Without this, `requestedAt` is never populated for a remote
-  // session (focusWindow returns before it is set), so the grace period never
-  // expires and the `.some()` below is false forever: the detail board would be
-  // unreachable for every remote key, silently.
-  if (press.host) return sameProject;
+  // A remote press used to short-circuit to `sameProject` here, because a
+  // remote window could never reveal a terminal and so could never report one
+  // active — the extension's answer was a permanent "no" rather than "not yet",
+  // and `askedLongAgo` could not arm because `focusWindow` returned before
+  // `requestedAt` was set. That guard is gone with the thing that justified it:
+  // a remote session is revealable now, so it takes the ordinary path below.
+  //
+  // Worth keeping the shape of that mistake in view. The guard read as correct
+  // in isolation right up until a later change removed its precondition, which
+  // is the same way the in-flight and eviction guards went wrong during the
+  // first half of this feature. A guard that encodes "X is impossible" needs
+  // deleting in the commit that makes X possible.
 
   // This session was asked for a while ago and no window has ever reported
   // it active: proof it can't be revealed through the extension (see the

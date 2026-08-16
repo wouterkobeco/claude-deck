@@ -50,8 +50,8 @@ state colour, `aiTitle` body, task counter, subagent markers, detail board,
 attention queue. The context gauge is the one exception and is spec C — it
 exists only because a status line writes it, and the remote has none.
 
-Pressing a remote key is spec B. Until it ships, a remote key is a status light:
-it reads, it does not act.
+Pressing a remote key was spec B, and has since shipped — see the follow-on
+section below for what the two probes actually answered.
 
 ## Non-goals
 
@@ -374,21 +374,36 @@ into the denominator so the two sides describe the same population.
 
 ## Follow-on specs
 
-**B — pressing a remote key.** Blocked on two probes, each ~10 minutes:
+**B — pressing a remote key. Shipped.** Both probes came back yes, measured
+against the live host rather than reasoned about:
 
-1. Does a `ui` extension host resolve `Terminal.processId` for a remote
-   terminal? If yes, terminal focus is the ancestry walk run against a remote
-   `ps` fetched alongside the tree, plus `host` on the focus request so a local window
-   holding an equal pid does not reveal an unrelated terminal. If no, terminal
-   focus is out for remote.
-2. Does `code --file-uri vscode-remote://…` focus the existing window, or
-   replace/spawn? `docs/roadmap-reveal-terminal.md` ruled out the `code` CLI for
-   *local* windows, where `open -a` works; this case is untested. If it spawns,
-   remote presses cannot raise a window and that degradation is documented
-   rather than worked around.
+1. **A `ui` extension host does resolve `Terminal.processId` for a remote
+   terminal.** A focus request carrying the Pi's own pid chain matched, and
+   `terminal.show()` revealed it. This was the one the spec called a possible
+   blocker, and it was not one.
+2. **`code --file-uri vscode-remote://…` focuses the existing window** — no new
+   window, and no new tab when the file is already open there. VS Code stores
+   the encoded URI itself in `resourceJSON.external`, so nothing rebuilds
+   `ssh-remote%2B<host>` by hand. `docs/roadmap-reveal-terminal.md` ruled the
+   `code` CLI out for *local* windows, where `open -a` works and `code -r` would
+   replace a window's contents; neither objection applies here.
 
-Until B ships, `focusWindow` must short-circuit on a remote session rather than
-run `anchorFile`/`openFileIn` against a remote path on the local filesystem.
+Two things it forced that the sketch above did not anticipate:
+
+**The ancestry is walked during the poll, not at press time.** A press runs
+inside a synchronous key handler, so it may not wait on ssh — and the local
+process table is worse than useless for a remote session, because its pids name
+unrelated local processes rather than nothing at all. Call 1's pid listing gained
+a second column for this, which is why it now prefers `ps` over `/proc`.
+
+**The `isRepeatPress` guard written for B's absence had to go with it.** While a
+remote reveal was impossible, a remote press short-circuited to the folder rule;
+once it became possible, that guard made a *sibling* remote key read as a repeat,
+so a project's second remote session would open the detail board instead of
+revealing its own terminal. It read as correct in isolation right up to the
+commit that removed its precondition — the third time that shape appeared in this
+feature, after the in-flight and eviction guards. **A guard encoding "X is
+impossible" belongs in the commit that makes X possible.**
 
 **C — the context gauge on remote.** `npm run remote:install -- <host>` merges
 the status line block README documents into the remote's

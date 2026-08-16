@@ -43,8 +43,11 @@ assert.equal(readWindowStates(dir3)[0].host, null, "a window with no host reads 
 // --- call 1 framing -------------------------------------------------------
 import { sshArgs, splitTreeStream } from "../src/remote-fs.mjs";
 
+// Each line is `pid ppid`. The pid set must come out exactly as it did when
+// the line held a pid alone — that set is what `isAlive` is, and a regression
+// there drops every remote session as dead.
 const treeStream = Buffer.concat([
-  Buffer.from("2187779\n1\n412\n---\n"),
+  Buffer.from("2187779 2187575\n1 0\n412 1\n---\n"),
   Buffer.from("TAR-BYTES-\x00\x01\x02"),
 ]);
 const split = splitTreeStream(treeStream);
@@ -55,9 +58,22 @@ assert.equal(split.tar.toString("binary"), "TAR-BYTES-\x00\x01\x02", "tar bytes 
 const twice = splitTreeStream(Buffer.from("7\n---\nA\n---\nB"));
 assert.equal(twice.tar.toString(), "A\n---\nB", "only the first separator splits the stream");
 
+// The second column is the ppid table the ancestry walk needs. It is fetched
+// here, during the poll, because a key press must never wait on ssh.
+assert.equal(split.ppids.get(2187779), 2187575, "the ppid column is kept");
+assert.equal(split.ppids.get(412), 1, "for every line that has one");
+
+// A host with no usable `ps` falls back to a pid-only listing. That must still
+// yield a correct pid set — sessions stay alive — and simply no ancestry, which
+// costs the terminal reveal and nothing else.
+const pidsOnly = splitTreeStream(Buffer.from("2187779\n1\n412\n---\ntar"));
+assert.deepEqual([...pidsOnly.pids].sort((a, b) => a - b), [1, 412, 2187779], "a pid-only listing still parses");
+assert.equal(pidsOnly.ppids.size, 0, "and yields no ancestry rather than a wrong one");
+
 // A host that answered nothing is empty, never a throw.
 assert.deepEqual([...splitTreeStream(Buffer.alloc(0)).pids], [], "an empty stream has no pids");
 assert.equal(splitTreeStream(Buffer.alloc(0)).tar.length, 0, "an empty stream has no tar");
+assert.equal(splitTreeStream(Buffer.alloc(0)).ppids.size, 0, "an empty stream has no ancestry");
 
 // --- ssh argv -------------------------------------------------------------
 const argv = sshArgs("192.168.2.6", "/tmp/cm/%r@%h:%p");
@@ -174,6 +190,28 @@ assert.deepEqual(deadRemote, [], "a pid absent from the host's list drops the se
 // Two sources at once, which is the daemon's real shape.
 const both = await getLiveSessions([localSource(fx), remoteSource]);
 assert.equal(both.length, 2, "sources concatenate");
+
+// The ancestor chain is computed here, during the poll, from the host's own
+// process table — never at press time, because the press is a synchronous key
+// handler that cannot wait on ssh, and never from the local table, whose pids
+// mean something else entirely on this machine.
+const withPpids = await getLiveSessions([
+  { ...remoteSource, ppids: new Map([[process.pid, 4242], [4242, 77]]) },
+]);
+assert.deepEqual(
+  withPpids[0].ancestors,
+  [process.pid, 4242, 77],
+  "a remote session carries its chain, walked from the host's own ppid table"
+);
+
+// A host whose `ps` produced no second column yields no chain rather than a
+// wrong one. The reveal is lost for that host; the session is not.
+const noPpids = await getLiveSessions([{ ...remoteSource, ppids: new Map() }]);
+assert.equal(noPpids[0].ancestors, undefined, "no ppid table means no chain, not a guessed one");
+
+// A local session has no chain stamped at all — `requestFocus` walks this
+// machine's live table at press time, which is both correct and current.
+assert.equal(localOut[0].ancestors, undefined, "a local session carries no precomputed chain");
 
 // The canned tail above returns what the fixture file happens to contain, so
 // the deepEqual cannot tell an injected tail from a local read. Give this one

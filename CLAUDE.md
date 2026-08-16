@@ -15,6 +15,7 @@ npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effo
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
+npm run vscode-state-check   # which window's storage answers for a folder
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
@@ -283,6 +284,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `sqlite3` CLI, to find a file the target window already has open. Reads an
   undocumented internal format, so *every* failure path returns `null` and the
   caller falls back to a static anchor file. Never make this throw.
+  **A remote window is found under a different URI and answers with a different
+  thing.** Its `workspace.json` records
+  `vscode-remote://ssh-remote%2B<host><path>` rather than `file://<path>` — note
+  the percent-encoded `+` — and its editors carry the encoded URI in
+  `external`, which is returned verbatim rather than rebuilt, because the raise
+  goes through `code --file-uri` and re-encoding an authority by hand is a bug
+  waiting to happen. The authority is checked rather than assumed: one folder's
+  storage can outlive it being reopened against a different host, and raising
+  the wrong host's window is the confusion `folderKeyFor` prevents a layer up.
+  **`storageDirFor` only ever matches a window's `folder`**, and a multi-root
+  window records a `workspace` instead — so it finds nothing for those, which is
+  why the remote branch of `focusWindow` skips the raise rather than guessing
+  with `--folder-uri`.
 - `src/terminal-focus.mjs` — asks the VS Code window that owns a session's
   terminal to reveal it. The join is process ancestry: `Terminal.processId` is
   the shell's pid and Claude is a descendant of it, so the daemon writes the
@@ -297,6 +311,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   holds the newest press and the extension needs no ordering logic of its own.
   Best-effort throughout, like `vscode-state.mjs` — every failure degrades to
   today's behaviour, the window raised and the terminal untouched.
+  **Self-routing stops being enough once a host is in play.** A pid is unique
+  per machine and nothing else in the request is, so a remote chain full of
+  ordinary numbers would match a local terminal by coincidence and reveal a
+  stranger's. The request therefore carries `host` and a window acts only on its
+  own; `null` is the local value on both sides, compared rather than assumed, so
+  a request written before the field existed still reads as local — which is
+  what it was. A **remote** session's chain is not walked here at all: it is
+  computed during the poll from the `ps` table the fetch already collects, and
+  travels on the session. A press is a synchronous key handler and may not wait
+  on ssh, and walking the local table for a remote pid is worse than walking
+  nothing, because it finds unrelated local processes rather than none.
 - `src/window-state.mjs` — the reverse of `terminal-focus.mjs`: the daemon asks
   for a terminal there and learns what actually happened here. Reads
   `~/.claude/streamdeck-windows/<extension host pid>.json`, one per open VS Code
@@ -484,6 +509,22 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   up), but prove it on a scratch window before doing it to one with real work in
   it. A window without the extension simply doesn't reveal terminals — never
   make its absence an error, same rule as the status line's context file.
+- **A guard that encodes "X is impossible" is deleted in the commit that makes
+  X possible.** This has now gone wrong three times in one feature, always the
+  same way and never by anyone deleting a guard: the guard stayed correct while
+  its *precondition* quietly disappeared underneath it.
+  `dueHosts`'s in-flight claim was written against concurrency the code did not
+  yet have, and the change that made the fetch fire-and-forget introduced it.
+  The eviction loop was safe only while `remoteSources` calls were serialised by
+  the poll awaiting them, and the same change removed that.
+  `isRepeatPress` short-circuited every remote press to the folder rule because
+  a remote window could never report a terminal active — true until remote
+  reveal shipped, after which it made a project's *second* remote session open
+  the detail board instead of revealing its own terminal.
+  All three read as correct in isolation, which is why per-task review found
+  none of them; the first two were caught by a whole-branch pass and the third
+  by remembering the pattern. When a comment says something cannot happen, it is
+  a dependency on the rest of the system, not a local fact.
 - **Terminal focus makes the duplicate-folder ambiguity worse, deliberately.**
   Two windows open on the same folder (live on this machine already —
   `11854.lock` and `53173.lock` both claim `kob/kob-backend`) route differently

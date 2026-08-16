@@ -163,8 +163,11 @@ local key does except the context gauge: the daemon fetches `sessions`, `ide`,
 machine — a deliberate scope cut, not a setup step you can complete today. The
 status line block below is necessary but not sufficient for a remote gauge: it
 produces that file locally; a remote one would still need a fetch call here to
-collect it. Pressing a remote key does nothing for now — it
-reads, it doesn't act. A remote window also needs its own one-time step: it
+collect it. Pressing a remote key works like pressing a local one: the first
+press raises that VS Code window and reveals the session's own terminal in it,
+the second opens the detail board. The raise goes through the `code` CLI rather
+than `open`, because a remote window's documents are `vscode-remote://` URIs.
+A remote window also needs its own one-time step: it
 must be reloaded once after upgrading before it publishes which host it's on,
 same as the terminal-focus extension version above.
 
@@ -184,6 +187,7 @@ npm run title-check     # title / cleared / blocked-on-denial / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check    # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
+npm run vscode-state-check   # which window's storage answers for a folder
 npm run remote-check    # remote source: host validation, tar/tail framing, matches a local source's output
 npm run board-shot      # re-render the screenshots above
 ```

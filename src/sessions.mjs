@@ -1,6 +1,7 @@
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ancestorChain } from "./terminal-focus.mjs";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 const TAIL_BYTES = 65536;
@@ -561,6 +562,17 @@ async function sessionsFrom(source) {
       ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),
       host: source.host,
       root: source.root,
+      // Only a remote session carries its chain, and only because it cannot be
+      // walked later: `requestFocus` runs inside a synchronous key handler, and
+      // this host's pids mean something else entirely on the local machine. A
+      // local session deliberately gets none — its table is read live at press
+      // time, which is both correct and current.
+      //
+      // `undefined` rather than an empty array when the host gave no ppid
+      // table: "no ancestry available" and "an ancestry with nothing in it" are
+      // the same outcome for the reveal, but only the first reads as a fact
+      // about the host rather than about the session.
+      ...(source.ppids?.size ? { ancestors: ancestorChain(s.pid, source.ppids) } : {}),
     });
   }
 
