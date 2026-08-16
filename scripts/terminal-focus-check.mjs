@@ -4,6 +4,7 @@
 // matches against.
 // Run: node scripts/terminal-focus-check.mjs
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,5 +90,25 @@ await requestFocus(
 assert.equal((await read()).sessionId, "sess-b");
 
 await rm(dir, { recursive: true, force: true });
+
+// The extension's version tracks the daemon's, and this is what enforces it.
+//
+// It isn't bookkeeping: the version is the only way to tell a VS Code window
+// running the *current* extension from one still running whatever it loaded at
+// startup. `code --list-extensions --show-versions` and Show Running Extensions
+// both report it, and the stats board already shows the daemon's — so the two
+// numbers agreeing is the whole "do I need to reload this window?" check, done
+// by eye and without opening the repo. Let them drift and that comparison
+// quietly starts lying, which is worse than not having it.
+//
+// Read rather than imported with `with { type: "json" }`, same reason index.mjs
+// gives: that syntax is parsed before anything runs, so a Node without it would
+// fail this check outright rather than degrading.
+const versionOf = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), "utf8")).version;
+assert.equal(
+  versionOf("../extension/package.json"),
+  versionOf("../package.json"),
+  "extension/package.json version must match the daemon's — bump both together"
+);
 
 console.log("OK: terminal focus");

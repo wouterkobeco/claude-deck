@@ -218,6 +218,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   forward with the right pane active. `extensionKind: ["ui"]` is required, not
   cosmetic: in a remote window the extension host runs remotely, where the
   request file is another machine's and the terminal pids are remote pids.
+  **Its version tracks the daemon's and `terminal-focus-check` enforces that** —
+  a release bumps `package.json` and `extension/package.json` together. The
+  number is not bookkeeping: it is the only way to tell a window running the
+  current extension from one still running whatever it loaded at startup, which
+  no amount of reinstalling changes until the window reloads. VS Code reports it
+  (`code --list-extensions --show-versions`, the Extensions view, and
+  `Developer: Show Running Extensions`) and the stats board already shows the
+  daemon's, so the two agreeing is the entire "does this window need a reload?"
+  check, done by eye. Let them drift and that comparison quietly starts lying.
 
 ### Invariants worth knowing before changing things
 
