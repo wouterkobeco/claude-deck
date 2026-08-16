@@ -785,9 +785,8 @@ async function refreshDetail(deck, buttons, view) {
   return sessions;
 }
 
-// Flashes every requires_action key between its normal red and a brighter
-// red, and every waiting key between its normal gold and a brighter gold —
-// the two states actually blocked on you, so the ones worth catching your
+// Flashes every requires_action key between its normal red and gold — the
+// one state that's actually blocked on you, so the one worth catching your
 // eye. The attention key joins the same beat, and only when
 // its cached count is nonzero — a CLEAR key stays dark and still. Runs on
 // its own faster tick alongside the main poll rather than inside it:
@@ -807,7 +806,6 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
             .filter(
               (btn) =>
                 btn.renderParams?.state === "requires_action" ||
-                btn.renderParams?.state === "waiting" ||
                 btn.renderParams?.state === "compacting" ||
                 (btn.renderParams?.nestedStates?.length ?? 0) > 0 ||
                 btn.renderParams?.context >= CONTEXT_CRITICAL
@@ -1099,8 +1097,8 @@ async function run() {
             // then take the reload-the-rest branch forever, on a machine
             // that's already fully covered.
             withExt >= total
-              ? `terminal focus: ${coverage} windows have the extension`
-              : `terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`
+              ? `vscode terminal focus: ${coverage} windows have the extension`
+              : `vscode terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`
           );
         }
       }

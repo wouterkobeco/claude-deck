@@ -27,8 +27,8 @@ export const STATE_COLORS = {
 export const MARKER_COLORS = {
   busy: "#69f0ae",
   waiting: "#ffc107",
-  // Pale rather than the #ff5252 the pulse uses: red is the darkest hue at any
-  // given saturation, and at #ff5252 this square measured 1.6:1 on the busy key
+  // Pale rather than a saturated red: red is the darkest hue at any given
+  // saturation, and at #ff5252 this square measured 1.6:1 on the busy key
   // — the marker for "a subagent here is blocked on you" was the least visible
   // one on the board. #ffa4a4 is as light as red goes before it stops reading
   // as red at 3×6px (it's 43 ΔE from the white idle marker; much lighter and
@@ -212,17 +212,13 @@ function fitCaps(project, width, fontSize) {
 // the brightest one, so a board that never pulses looks the same as it always
 // did.
 export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell }) {
-  // requires_action and waiting are the two states worth flashing — both are
-  // blocked on you right now (a denial with no reply, or an open permission
-  // prompt), so both should chase your eye across the room. Each flashes its
-  // own hue rather than sharing red, so the board still tells "denied" from
-  // "asking" at a glance while it's flashing.
-  const color =
-    pulse && state === "requires_action"
-      ? "#ff5252"
-      : pulse && state === "waiting"
-        ? "#ffc107" // same amber as MARKER_COLORS.waiting
-        : STATE_COLORS[state] ?? STATE_COLORS.idle;
+  // requires_action is the one state worth flashing — it's the only one
+  // that's actually blocked on you, so it's the only one that should chase
+  // your eye across the room. Flashes to gold rather than a brighter red so
+  // it doesn't just read as "the same red, harder" — it reuses waiting's own
+  // colour, which stays put and unflashed, so a glance still tells "denied
+  // and ignored" from "just asking" even mid-flash.
+  const color = pulse && state === "requires_action" ? "#ffc107" : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white. The bar
   // carries the project name alone: an age shared it for one release and
