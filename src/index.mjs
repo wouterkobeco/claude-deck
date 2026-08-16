@@ -474,6 +474,15 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // No extension in this session's window — today's rule, unchanged.
   if (matching.length === 0) return sameProject;
 
+  // A remote window can never reveal a terminal (that is the deferred spec B),
+  // so the extension's answer is a permanent "no" rather than "not yet" — the
+  // same case `askedLongAgo` handles for a local session no window will ever
+  // report. Without this, `requestedAt` is never populated for a remote
+  // session (focusWindow returns before it is set), so the grace period never
+  // expires and the `.some()` below is false forever: the detail board would be
+  // unreachable for every remote key, silently.
+  if (press.host) return sameProject;
+
   // This session was asked for a while ago and no window has ever reported
   // it active: proof it can't be revealed through the extension (see the
   // docstring), so answer with the folder rule instead of a `.some()` that

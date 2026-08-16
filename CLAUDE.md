@@ -373,6 +373,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   the attention board, whether the session that has nowhere to say so is
   local or remote. There is no conceptual difference between the two, so any
   ordering that favoured one would be arbitrary.
+  **Three time comparisons now cross a machine boundary.** A remote session's
+  `ts` (the registry's `statusUpdatedAt`, read off the fetched tree) feeds a
+  key's displayed age and `attentionQueue`'s longest-stuck ordering; tar's
+  preserved mtimes feed `SUBAGENT_IDLE_MAX_S`. All three compare a remote
+  clock's timestamp against `Date.now()` on this machine. NTP makes this a
+  non-event in the common case, but a Raspberry Pi has no RTC, so the real
+  window is a boot before it's synced: a clock behind local retires that
+  host's subagents instantly and sorts it to the head of the attention queue;
+  a clock ahead makes ages go negative. Nothing here corrects for it.
 - **Redraw is diffed** on the `btn.drawn` signature string in `refresh()` and in
   every other `refresh*`. Any new visual input must be added to that string or
   it will not appear until something else changes — a real bug twice already
@@ -420,7 +429,14 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   per-user path under `/var/folders` that landed exactly on that limit, so
   every fetch failed silently as an ordinary "host unreachable", with nothing
   to point at the socket path as the cause. `/tmp` is a short, stable symlink
-  on macOS, and this daemon is macOS-only already. Each fetch swaps that tree
+  on macOS, and this daemon is macOS-only already. The trade this makes and
+  gives up is worth recording, not just implying: `os.tmpdir()` on macOS is
+  `0700`, private to the user who created it, while `/tmp` itself is
+  world-writable, so a scratch directory created ahead of time under `/tmp` is
+  a symlink-through target for `tar -x` — a name any local user could
+  pre-create before the daemon ever runs. That stands only under this
+  project's single-user macOS model; a shared machine would need the private
+  directory back. Each fetch swaps that tree
   into place by rename rather than letting `tar -xf` merge it — see
   `remote-fs.mjs` above — for the same reason the daemon never merges anything
   else it's handed: a merged tree keeps what the remote host deleted.

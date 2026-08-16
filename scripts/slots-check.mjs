@@ -496,4 +496,20 @@ eq(
   "a window on another host is ignored, so the local folder rule still answers"
 );
 
+// A remote key can never be revealed (spec B is deferred), so its detail board
+// must still be reachable on a second press even though no window will ever
+// report it `activeSessionId`. Before the fix, `focusWindow` returns before
+// `requestedAt.set(...)` runs for a remote session, so `askedLongAgo` can never
+// arm and the `.some()` reveal test below it is false forever — the board would
+// be permanently, silently unreachable for every remote key. The published
+// window here matches host and folder and is focused, but its
+// `activeSessionId` is null exactly because a remote window never sets it.
+const remotePress2 = { index: 5, session_id: "r1", folder: "/home/pi/x", host: "192.168.2.6" };
+const remoteWindowMatching = { pid: 2, folders: ["/home/pi/x"], focused: true, activeSessionId: null, host: "192.168.2.6" };
+eq(
+  isRepeatPress(remotePress2, remotePress2, [remoteWindowMatching]),
+  true,
+  "a remote session's second press opens detail even though no window can ever report it active"
+);
+
 console.log("OK: project grouping");

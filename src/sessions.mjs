@@ -454,7 +454,7 @@ export function taskWindow(tasks, size) {
  * A stale file is fine: context can't change while a session sits idle, and an
  * active session rewrites this on every render.
  */
-async function readContext(sessionId, root) {
+async function readContext(sessionId, root = CLAUDE_DIR) {
   try {
     const { context } = JSON.parse(await readFile(join(root, "ctx", `${sessionId}.json`), "utf8"));
     return typeof context === "number" ? context : null;
@@ -464,8 +464,35 @@ async function readContext(sessionId, root) {
 }
 
 /**
- * Live local sessions: interactive, process still running, and working in a
- * folder some open VS Code window has in its workspace.
+ * The local machine as a source: today's behaviour, named.
+ *
+ * A source is the whole host-dependent surface of this module — where the tree
+ * is, whether a pid is alive, and how a transcript tail is read. Every path here
+ * derives from one root, so those three are all a remote host needs to supply;
+ * everything between them is this file, unchanged, which is the point. See
+ * docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
+ */
+export function localSource(root = CLAUDE_DIR) {
+  return { host: null, root, isAlive, tail: tailLines };
+}
+
+/**
+ * Maps `sessionsFrom` over every source and flattens the result — the whole of
+ * what a remote host adds at this level. A source's `isAlive`/`tail` are
+ * someone else's code (ssh-backed, for a remote host), which can throw where a
+ * local read would merely fail try/catch, so each call is isolated with its
+ * own `.catch(() => [])`: one bad host drops only its own keys, the way a
+ * closed window's would, rather than taking the whole board's Promise.all
+ * down with it.
+ */
+export async function getLiveSessions(sources = [localSource()]) {
+  return (await Promise.all(sources.map((s) => sessionsFrom(s).catch(() => [])))).flat();
+}
+
+/**
+ * Live sessions for one source: interactive, still running by that source's
+ * own `isAlive`, and working in a folder some open VS Code window has in its
+ * workspace.
  *
  * State comes from the registry's own `status` field rather than being
  * inferred from hooks — it distinguishes "waiting" and "requires_action"
@@ -483,27 +510,6 @@ async function readContext(sessionId, root) {
  * subagent, which has no registry entry at all and is read off disk by
  * `readRunningSubagents`.
  */
-/**
- * The local machine as a source: today's behaviour, named.
- *
- * A source is the whole host-dependent surface of this module — where the tree
- * is, whether a pid is alive, and how a transcript tail is read. Every path here
- * derives from one root, so those three are all a remote host needs to supply;
- * everything between them is this file, unchanged, which is the point. See
- * docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
- */
-export function localSource(root = CLAUDE_DIR) {
-  return { host: null, root, isAlive, tail: tailLines };
-}
-
-export async function getLiveSessions(sources = [localSource()]) {
-  // A source is someone else's code (ssh-backed isAlive/tail for a remote
-  // host): it can throw where a local read would merely fail try/catch. One
-  // bad host must drop only its own keys, the way a closed window's would —
-  // not take the whole board's Promise.all down with it.
-  return (await Promise.all(sources.map((s) => sessionsFrom(s).catch(() => [])))).flat();
-}
-
 async function sessionsFrom(source) {
   const [registry, locks] = await Promise.all([
     readJsonFiles(join(source.root, "sessions")),

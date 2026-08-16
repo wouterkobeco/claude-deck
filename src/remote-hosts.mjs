@@ -85,12 +85,20 @@ export async function remoteSources(windows, now, memo, fetch) {
       // staging directory.
       memo.set(host, { ...previous, inFlight: true });
       const source = await fetch(host);
+      // Stamped on completion, not with the tick's `now` — `dueHosts`' own
+      // comment already says lastAt is a finish time, and cadence/backoff both
+      // depend on that being true. A `now` stamp instead would leave a fetch
+      // slower than REMOTE_POLL_MS due again on the very next tick (no idle
+      // gap, the constant load REMOTE_POLL_MS exists to prevent), and would let
+      // an unreachable host burn its own 5-15s attempt time out of its backoff
+      // window — a 30s backoff paying out in 15-25s, a 5s one in almost none.
+      const settledAt = Date.now();
       if (source) {
         if (previous.failures) console.error(`remote ${host}: reachable again`);
-        memo.set(host, { lastAt: now, failures: 0, source, inFlight: false });
+        memo.set(host, { lastAt: settledAt, failures: 0, source, inFlight: false });
       } else {
         if (!previous.failures) console.error(`remote ${host}: unreachable, keys dropped`);
-        memo.set(host, { lastAt: now, failures: previous.failures + 1, source: null, inFlight: false });
+        memo.set(host, { lastAt: settledAt, failures: previous.failures + 1, source: null, inFlight: false });
       }
     })
   );

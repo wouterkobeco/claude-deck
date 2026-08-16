@@ -91,7 +91,8 @@ export function sshArgs(host, controlPath) {
 const TAIL_BYTES = 65536;
 
 /**
- * Call 2: the true byte size of each transcript, then its last 64KB.
+ * Call 2: each transcript's last 64KB, with no size sent ahead of it — see
+ * below for why not.
  *
  * Paths arrive on **stdin, one per line**, and are never interpolated into this
  * string. A cwd with a space or an apostrophe in it is an ordinary thing to
@@ -188,7 +189,10 @@ function run(argv, { input, timeoutMs = 15000 } = {}) {
     const chunks = [];
     const kill = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.stdout.on("data", (c) => chunks.push(c));
-    child.on("error", () => resolve(null));
+    child.on("error", () => {
+      clearTimeout(kill);
+      resolve(null);
+    });
     child.on("close", (code) => {
       clearTimeout(kill);
       resolve(code === 0 ? Buffer.concat(chunks) : null);
@@ -275,6 +279,12 @@ export async function fetchSource(host, scratchRoot) {
         remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
       }));
 
+    // ponytail: every due tail is refetched in full each cycle, whether or not
+    // it changed since the last fetch — fine at REMOTE_POLL_MS against a
+    // handful of sessions. Upgrade path if a WAN link or a busier Pi
+    // complains: send the previously seen `{path: mtime}` alongside the
+    // request so an unchanged tail comes back empty and is served from what
+    // was already parsed, instead of re-sent.
     let tails = new Map();
     if (wanted.length) {
       const body = await run(["ssh", ...sshArgs(host, controlPath), TAILS_CMD], {
