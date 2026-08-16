@@ -73,7 +73,19 @@ async function tick() {
   // that daemon could only ever describe local sessions, so an old request
   // still works in a local window and is correctly refused by a remote one.
   const wf = vscode.workspace.workspaceFolders ?? [];
-  if ((request.host ?? null) !== sshHost(wf)) return;
+  const host = sshHost(wf);
+  // `sshHost` answers `null` for four different situations, and only one of
+  // them is "this window is local": a dev container, a WSL window, an
+  // `ssh-remote` window with no folder open, and a host this build declines to
+  // name all collapse to the same value. A dev-container window's extension
+  // host runs locally (`extensionKind: ["ui"]`) and reads this very file, but
+  // its terminals resolve to *container* pids — so treating its `null` as
+  // "local" hands it every local request to match against a pid space that has
+  // nothing to do with this machine. `remoteName` is what tells the four apart:
+  // set means remote of some kind, and a remote window this build cannot name
+  // must claim nothing rather than claim to be local.
+  if (vscode.env.remoteName && host === null) return;
+  if ((request.host ?? null) !== host) return;
 
   busy = true;
   try {

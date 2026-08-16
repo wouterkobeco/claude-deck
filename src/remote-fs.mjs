@@ -50,7 +50,12 @@ const SEPARATOR = "\n---\n";
  */
 export const TREE_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  "{ ps -A -o pid=,ppid= 2>/dev/null || ls /proc 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1, $2 }'; " +
+  // `| grep .` is the difference between "ps failed" and "ps said nothing".
+  // Only the first falls through on exit status, and a `ps` that exits 0 with
+  // empty output would otherwise take the pid set down with it — an empty set
+  // is `isAlive` false for everything, so every session on that host silently
+  // disappears rather than merely losing its terminal reveal.
+  "{ ps -A -o pid=,ppid= 2>/dev/null | grep . || ls /proc 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1, $2 }'; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +

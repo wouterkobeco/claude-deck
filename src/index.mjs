@@ -264,8 +264,21 @@ async function focusWindow(session, requestedAt) {
   // windows, where `open -a` works and `code -r` would replace a window's
   // contents. Neither applies here.
   if (host) {
-    const uri = file ?? `vscode-remote://ssh-remote%2B${host}${folder}`;
-    execFile("code", [file ? "--file-uri" : "--folder-uri", uri], (err, _stdout, stderr) => {
+    // No `--folder-uri` fallback, deliberately. It looks safe — a window
+    // published this host, so surely one exists to focus — but `storageDirFor`
+    // only ever matches a window's `folder`, and a *multi-root* window records
+    // a `workspace` instead. Every press on a session inside one would find no
+    // file, fall through, and have `code` match the folder against windows
+    // opened *on* that folder rather than windows containing it: a brand new
+    // window and a second SSH connection, on every press, not as a race.
+    // Skipping the raise costs one half of the press; the reveal above still
+    // fires, and CLAUDE.md is explicit that multi-root windows are the case
+    // this feature helps most.
+    if (!file) {
+      console.error(`focus failed for ${host}:${folder}: no open file found to raise its window`);
+      return;
+    }
+    execFile("code", ["--file-uri", file], (err, _stdout, stderr) => {
       if (err) console.error(`focus failed for ${host}:${folder}:`, stderr || err.message);
     });
     return;
