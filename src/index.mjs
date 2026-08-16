@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
 import { fetchSource } from "./remote-fs.mjs";
-import { remoteSources } from "./remote-hosts.mjs";
+import { cachedSources, remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
@@ -72,14 +72,21 @@ const SCRATCH_ROOT = `/tmp/streamdeck-remote-${process.pid}`;
 
 // Every session-reading poll goes through this rather than calling
 // getLiveSessions() bare: a remote key only exists because its source made it
-// into this list. remoteSources() does its own due-host gating (6s cadence,
-// backoff, in-flight guard), so this never blocks the 2s loop on SSH — it just
-// hands back whatever the memo already holds for a host that isn't due yet.
-async function allSources() {
-  const remotes = await remoteSources(readWindowStates(), Date.now(), remoteMemo, (host) =>
-    fetchSource(host, SCRATCH_ROOT)
-  );
-  return [localSource(), ...remotes];
+// into this list. SSH is on no critical path: a fetch is two ssh calls, each
+// bounded by a 15s hard kill, and awaiting it here would pause every local
+// key's redraw for as long as some remote host is unreachable — a Raspberry
+// Pi going quiet must not freeze the board it shares with real projects. So
+// the fetch is started, not awaited, and this returns whatever the last one
+// produced. Cost: the first poll after a remote window appears shows no
+// remote key until that fetch lands. Freshness, not frames.
+function allSources() {
+  const windows = readWindowStates();
+  // remoteSources() cannot reject on its own (every host's fetch is caught
+  // individually), but this call is unwatched — nothing here is in a position
+  // to catch a rejection, so an uncaught one would take the whole daemon down
+  // rather than just a poll tick. Belt, not suspenders.
+  void remoteSources(windows, Date.now(), remoteMemo, (host) => fetchSource(host, SCRATCH_ROOT)).catch(() => {});
+  return [localSource(), ...cachedSources(windows, remoteMemo)];
 }
 
 // Colour is picked from what no other live folder is using, not from

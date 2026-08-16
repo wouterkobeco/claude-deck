@@ -39,6 +39,18 @@ export function dueHosts(windows, now, memo) {
 }
 
 /**
+ * The sources currently cached for this tick's live hosts — no fetch, no
+ * await, just what the last successful fetch (if any) left in `memo`. This is
+ * what the poll loop actually reads every 2s: `remoteSources` computes the
+ * same list after doing the fetching, so there is exactly one definition of
+ * "the current sources".
+ */
+export function cachedSources(windows, memo) {
+  const live = new Set(windows.map((w) => w.host).filter(Boolean));
+  return [...live].map((h) => memo.get(h)?.source).filter(Boolean);
+}
+
+/**
  * Fetch what is due, keep what is not, and drop a host whose window has closed.
  *
  * A failing host's keys vanish the way a closed window's do, and the transition
@@ -46,6 +58,12 @@ export function dueHosts(windows, now, memo) {
  * log nobody reads.
  */
 export async function remoteSources(windows, now, memo, fetch) {
+  // Same switch dueHosts already honours for new fetches; without this a
+  // source fetched before the flag was set would keep being returned here,
+  // which is unreachable today (nothing mutates a running process's env) but
+  // would otherwise make the switch a lie at this level.
+  if (process.env.STREAMDECK_NO_REMOTE === "1") return [];
+
   const live = new Set(windows.map((w) => w.host).filter(Boolean));
   for (const host of [...memo.keys()]) if (!live.has(host)) memo.delete(host);
 
@@ -68,5 +86,5 @@ export async function remoteSources(windows, now, memo, fetch) {
     })
   );
 
-  return [...live].map((h) => memo.get(h)?.source).filter(Boolean);
+  return cachedSources(windows, memo);
 }

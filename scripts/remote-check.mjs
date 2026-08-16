@@ -213,7 +213,7 @@ assert.deepEqual(await readdir(join(finalDir, "ide")), ["open.lock"], "a lock th
 assert.deepEqual(await readdir(swapRoot), ["host"], "the staging directory is cleaned up");
 
 // --- cadence, backoff and the kill switch ---------------------------------
-import { dueHosts } from "../src/remote-hosts.mjs";
+import { cachedSources, dueHosts } from "../src/remote-hosts.mjs";
 
 const w = (host) => ({ pid: 1, folders: ["/x"], focused: false, activeSessionId: null, host });
 const memo = new Map();
@@ -248,5 +248,24 @@ assert.deepEqual(dueHosts([w("h3")], 999999, memo), ["h3"], "and is due again on
 process.env.STREAMDECK_NO_REMOTE = "1";
 assert.deepEqual(dueHosts([w("h1")], 999999, memo), [], "the kill switch stops every fetch");
 delete process.env.STREAMDECK_NO_REMOTE;
+
+// --- cachedSources: what the poll reads, no fetch involved -----------------
+const cacheMemo = new Map();
+cacheMemo.set("ok", { lastAt: 0, failures: 0, source: { host: "ok" } });
+cacheMemo.set("down", { lastAt: 0, failures: 2, source: null });
+assert.deepEqual(
+  cachedSources([w("ok"), w("down")], cacheMemo),
+  [{ host: "ok" }],
+  "a failed host's null source is dropped, a cached one is returned"
+);
+
+// A host whose window has closed still has a memo entry (nothing evicted it
+// yet — that's remoteSources' job, run on the next call), but cachedSources
+// only looks at this tick's live hosts, so a stale entry is never returned.
+assert.deepEqual(
+  cachedSources([w("ok")], cacheMemo),
+  [{ host: "ok" }],
+  "a memo entry for a host with no live window this tick is not returned"
+);
 
 console.log("remote-check: OK");
