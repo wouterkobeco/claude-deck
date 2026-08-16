@@ -265,9 +265,15 @@ const SEPARATOR = "\n---\n";
  *
  * `/proc` rather than `ps`, so nothing has to know which `ps` the host ships or
  * how it formats columns; `ps -A -o pid=` is the fallback for a remote without
- * `/proc`. Transcripts are excluded — they run to megabytes and only their
- * tails are ever read (call 2). `projects/` is still fetched, for the subagent
- * `.meta.json` files and the directory structure `readRunningSubagents` walks.
+ * `/proc`.
+ *
+ * **The exclude is `projects/*​/*.jsonl`, not `*.jsonl`.** A session transcript
+ * is `projects/<slug>/<id>.jsonl` and runs to megabytes — only its tail is ever
+ * read, in call 2. A *subagent* transcript is four levels down
+ * (`projects/<slug>/<id>/subagents/agent-*.jsonl`), is small, and is what
+ * `readRunningSubagents` reads to decide whether an agent is still running. A
+ * blanket `*.jsonl` exclude drops those too, and the only symptom is that no
+ * remote session ever shows a subagent marker or tile — nothing errors.
  *
  * A missing `~/.claude` exits 0 with an empty stream rather than failing: a host
  * you have opened a window on but never run Claude Code on is an ordinary state,
@@ -277,7 +283,7 @@ export const TREE_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
   "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | grep -E '^[0-9]+$'; " +
   "echo ---; " +
-  "tar --exclude='*.jsonl' -cf - sessions ide tasks projects 2>/dev/null";
+  "tar --exclude='projects/*/*.jsonl' -cf - sessions ide tasks projects 2>/dev/null";
 
 /**
  * Split call 1's stream into the pid set and the tar bytes.
@@ -414,12 +420,18 @@ const TAIL_BYTES = 65536;
  * have, and would otherwise split the loop or unbalance a quote; the malicious
  * reading of the same hole is secondary to the accidental one.
  *
+ * **The paths are relative to `~/.claude`, which is why the `cd` is here.** A
+ * path read from stdin is data, and `~` is not expanded inside `"$f"` — sending
+ * `~/.claude/projects/…` would make every `wc` and `tail` miss, and every remote
+ * session would silently lose its title. `cd` once, send relative paths.
+ *
  * `wc -c` before `tail` is the frame *and* the answer to `whole`: the size is
  * the file's, the payload is at most the tail window, and the two together say
  * whether the window reached byte 0. Reconstructing that here from a byte offset
  * is what this design exists to avoid.
  */
 export const TAILS_CMD =
+  "cd ~/.claude 2>/dev/null || exit 0; " +
   'while IFS= read -r f; do wc -c < "$f" 2>/dev/null || echo 0; tail -c 65536 "$f" 2>/dev/null; done';
 
 /**
@@ -911,10 +923,17 @@ export async function fetchSource(host, scratchRoot) {
   // itself — with the same functions it uses locally — rather than asking the
   // remote to know which files matter.
   const registry = await readJsonFiles(join(finalDir, "sessions"));
+  // The remote path is relative to ~/.claude, because TAILS_CMD `cd`s there
+  // first: a path read from stdin is data, and `~` is not expanded inside "$f".
+  // The local path is the same file inside the fetched tree, and is what the
+  // injected `tail` will be asked for — `sessionsFrom` resolves it with this
+  // same function against the source's root.
   const wanted = registry
     .filter((s) => s.sessionId && s.cwd && pids.has(s.pid))
-    .map((s) => ({ local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
-                   remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, "~/.claude") }));
+    .map((s) => ({
+      local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
+      remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
+    }));
 
   let tails = new Map();
   if (wanted.length) {
