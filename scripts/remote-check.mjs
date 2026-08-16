@@ -350,4 +350,39 @@ assert.deepEqual(
 );
 assert.deepEqual(ctxTargets([], "/scratch/host"), [], "no live sessions asks for nothing");
 
+// A session id is the first piece of REMOTE data this project ever turned into
+// a path it writes to. It comes out of the other machine's registry, so a host
+// that is compromised — or simply hostile, since opening a Remote-SSH window is
+// not a statement of trust in the box's filesystem — controls it completely.
+//
+// Both directions are real and both are closed by refusing the id outright:
+//   local  — `join(root, "ctx", id + ".json")` collapses `../` and escapes the
+//            scratch tree, and the content written there is the remote's too:
+//            arbitrary file write on this machine.
+//   remote — the same string is sent over stdin as `ctx/<id>.json`, so `../`
+//            makes the host read a file outside ~/.claude and stream it back.
+const hostile = [
+  { sessionId: "../../../../../../tmp/pwned", cwd: "/home/pi/x", pid: 1 },
+  { sessionId: "..", cwd: "/home/pi/x", pid: 2 },
+  { sessionId: "a/b", cwd: "/home/pi/x", pid: 3 },
+  { sessionId: "/etc/passwd", cwd: "/home/pi/x", pid: 4 },
+  { sessionId: ".hidden", cwd: "/home/pi/x", pid: 5 },
+  { sessionId: "", cwd: "/home/pi/x", pid: 6 },
+];
+assert.deepEqual(ctxTargets(hostile, "/scratch/host"), [], "every traversing session id is refused, not sanitised");
+
+// Refused rather than escaped or rewritten: a session id that is not a plain
+// token is not a path problem to solve, it is a registry entry with no
+// legitimate reading. Dropping it costs that session its gauge and nothing else.
+const withGood = ctxTargets([...hostile, { sessionId: "3afa50c6-168d", cwd: "/home/pi/x", pid: 7 }], "/scratch/host");
+assert.deepEqual(
+  withGood.map((t) => t.local),
+  ["/scratch/host/ctx/3afa50c6-168d.json"],
+  "a good id alongside hostile ones still works"
+);
+for (const t of ctxTargets(hostile.concat({ sessionId: "ok-1", cwd: "/x", pid: 8 }), "/scratch/host")) {
+  assert.ok(t.local.startsWith("/scratch/host/ctx/"), `local path stays in the tree: ${t.local}`);
+  assert.ok(!t.remote.includes(".."), `remote path has no traversal: ${t.remote}`);
+}
+
 console.log("remote-check: OK");

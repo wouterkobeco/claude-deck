@@ -102,6 +102,37 @@ export function splitTreeStream(buffer) {
  * as `-oProxyCommand=…` would run a command on *this* machine.
  */
 /**
+ * Whether a session id may be used to build a path.
+ *
+ * **A remote session id is not this machine's data.** It is read out of the
+ * other host's registry, so a host that is compromised — or simply hostile,
+ * since opening a Remote-SSH window is not a statement of trust in that box's
+ * filesystem — chooses it. Two things go wrong if it is taken at face value,
+ * and a background security review found both:
+ *
+ * - `join(root, "ctx", id + ".json")` collapses `../`, so an id of
+ *   `../../../../tmp/x` escapes the scratch tree entirely — and the bytes
+ *   written there come from the same host. Arbitrary file write on this
+ *   machine.
+ * - the same string is sent over stdin as `ctx/<id>.json`, so `../` makes the
+ *   host read a file outside `~/.claude` and stream it back.
+ *
+ * Refused rather than sanitised. A leading dot, a slash, or a `..` in a session
+ * id has no legitimate reading — real ones are UUIDs — so there is nothing to
+ * repair, and rewriting an attacker's string into a "safe" one is how the next
+ * bug gets built. Dropping the entry costs that session its context gauge and
+ * nothing else.
+ *
+ * Everything else derived from remote data was already safe: `projectDirFor`
+ * flattens a cwd through `[^a-zA-Z0-9] -> -`, and tar refuses absolute and `..`
+ * members on extraction. This was the first place remote data reached a path
+ * that gets *written*.
+ */
+function isPathSafeId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes("..");
+}
+
+/**
  * Where each live session's context file is, on the host and in the tree.
  *
  * `ctx/<id>.json` is written by the remote's status line and is the only place a
@@ -121,7 +152,7 @@ export function splitTreeStream(buffer) {
  * change while nothing is happening.
  */
 export function ctxTargets(liveSessions, root) {
-  return liveSessions.map((s) => ({
+  return liveSessions.filter((s) => isPathSafeId(s.sessionId)).map((s) => ({
     remote: join("", "ctx", `${s.sessionId}.json`),
     local: join(root, "ctx", `${s.sessionId}.json`),
   }));
@@ -342,7 +373,17 @@ export async function fetchSource(host, scratchRoot) {
     // "$f". The local path is the same file inside the fetched tree, and is
     // what the injected `tail` will be asked for — `sessionsFrom` resolves it
     // with this same function against the source's root.
-    const liveSessions = registry.filter((s) => s.sessionId && s.cwd && pids.has(s.pid));
+    // `isPathSafeId` here as well as inside `ctxTargets`, because the transcript
+    // path is built from the same remote-chosen id. That one is not written to
+    // disk, but it is still two things: a path sent to the host (traversal reads
+    // a file outside `~/.claude` and streams it back) and a key whose `tail`
+    // falls back to reading *this* machine at that path — which would put the
+    // contents of a local file on a Stream Deck key as though it were a
+    // transcript. Filtering once here covers both lists; `ctxTargets` keeps its
+    // own guard because it is exported and checked on its own.
+    const liveSessions = registry.filter(
+      (s) => s.sessionId && s.cwd && pids.has(s.pid) && isPathSafeId(s.sessionId)
+    );
     const wanted = liveSessions.map((s) => ({
       local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
       remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
