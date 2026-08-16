@@ -214,11 +214,13 @@ function fitCaps(project, width, fontSize) {
 export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
-  // your eye across the room. Flashes to gold rather than a brighter red so
-  // it doesn't just read as "the same red, harder" — it reuses waiting's own
-  // colour, which stays put and unflashed, so a glance still tells "denied
-  // and ignored" from "just asking" even mid-flash.
-  const color = pulse && state === "requires_action" ? "#ffc107" : STATE_COLORS[state] ?? STATE_COLORS.idle;
+  // your eye across the room. It never actually sits on its own red
+  // (STATE_COLORS.requires_action, kept only for colors-check's contrast
+  // sweep): the on-phase is gold, the off-phase is the same idle grey any
+  // other quiet key shows, so what chases your eye is motion between a
+  // colour and no colour, not two competing hues.
+  const color =
+    state === "requires_action" ? (pulse ? "#ffc107" : STATE_COLORS.idle) : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white. The bar
   // carries the project name alone: an age shared it for one release and
