@@ -319,8 +319,20 @@ board cannot show everything, and "busy" is not a claim on your attention.
 
 SSH is on no critical path.
 
-- One fetch per host per interval, cached, in-flight deduped.
-- `ConnectTimeout=5` plus a hard kill, so a hung link cannot stall the 2s loop.
+- One fetch per host per interval, cached, in-flight deduped. **The deduping is
+  load-bearing, not hygiene**: `lastAt` is stamped when a fetch finishes, so
+  without an explicit in-flight claim a slow fetch stays "due" for its whole
+  duration and the next tick starts a second one against the same staging
+  directory and ControlPath.
+- **The poll reads the cache; it never waits for a fetch.** This sentence
+  originally read "`ConnectTimeout=5` plus a hard kill, so a hung link cannot
+  stall the 2s loop", and that was false as first built. A fetch is two
+  *sequential* ssh calls, each bounded by a 15s kill, so awaiting one inline
+  added up to ~30s to a tick — pausing every key's redraw, local ones included,
+  because another machine was unreachable. A bounded stall is still a stall.
+  The fetch is therefore started and not awaited, and the poll draws whatever
+  the last one produced. The cost is one poll of staleness when a remote window
+  first appears: freshness, never frames.
 - Consecutive failures back off 5s → 10s → 30s and one success resets, the shape
   `usage.mjs` already uses for 429s.
 - A failing host's keys vanish, the way a closed window's do. Logged once per
