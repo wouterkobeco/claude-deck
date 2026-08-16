@@ -40,4 +40,30 @@ const dir3 = await mkdtemp(join(tmpdir(), "streamdeck-remote-check-"));
 await writeFile(join(dir3, `${process.pid}.json`), JSON.stringify({ folders: ["/x"], focused: true }));
 assert.equal(readWindowStates(dir3)[0].host, null, "a window with no host reads null, not undefined");
 
+// --- call 1 framing -------------------------------------------------------
+import { sshArgs, splitTreeStream } from "../src/remote-fs.mjs";
+
+const treeStream = Buffer.concat([
+  Buffer.from("2187779\n1\n412\n---\n"),
+  Buffer.from("TAR-BYTES-\x00\x01\x02"),
+]);
+const split = splitTreeStream(treeStream);
+assert.deepEqual([...split.pids].sort((a, b) => a - b), [1, 412, 2187779], "pids parse");
+assert.equal(split.tar.toString("binary"), "TAR-BYTES-\x00\x01\x02", "tar bytes survive the split byte-exact");
+
+// A separator inside the tar payload must not re-split: only the first wins.
+const twice = splitTreeStream(Buffer.from("7\n---\nA\n---\nB"));
+assert.equal(twice.tar.toString(), "A\n---\nB", "only the first separator splits the stream");
+
+// A host that answered nothing is empty, never a throw.
+assert.deepEqual([...splitTreeStream(Buffer.alloc(0)).pids], [], "an empty stream has no pids");
+assert.equal(splitTreeStream(Buffer.alloc(0)).tar.length, 0, "an empty stream has no tar");
+
+// --- ssh argv -------------------------------------------------------------
+const argv = sshArgs("192.168.2.6", "/tmp/cm/%r@%h:%p");
+assert.equal(argv.at(-1), "192.168.2.6", "the host is the last argument");
+assert.equal(argv.at(-2), "--", "the host is passed after --, so a dash cannot become an option");
+assert.ok(argv.includes("BatchMode=yes"), "never prompts for a password");
+assert.ok(argv.includes("ConnectTimeout=5"), "a dead host fails fast");
+
 console.log("remote-check: OK");
