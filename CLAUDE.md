@@ -138,7 +138,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   session key (see the repeat-press rule below) opens `refreshDetail`, which
   takes over **all 15 keys** — usage and attention included, unlike every other
   board, which draws only the 13 session keys. `detailLayout` lays out a
-  two-key title, STATE/CONTEXT/MODEL stat tiles (CONTEXT passes `pie` to
+  the session's own key again — same label, same caps bar, `keyFields` verbatim,
+  so the key you pressed is the key you land on; it was split across two keys
+  first, which said the same thing twice and cost a task slot —
+  STATE/CONTEXT/MODEL stat tiles (CONTEXT passes `pie` to
   `renderStat`, which draws a ring in `usageColor` instead of the value text —
   the number keeps the hole but drops its `%`, which is what the ring says and
   what stops "100" fitting), then that session's task list

@@ -222,13 +222,13 @@ const DECK = 15;
 const plain = detailLayout({ session: dSession, tasks: [dTask("read the code"), dTask("lock it", "in_progress")], nested: [], age: "40m", slotCount: DECK });
 eq(plain.length, DECK, "layout fills every key on the deck");
 eq(plain[DETAIL_BACK_INDEX], { kind: "back" }, "the back key sits on the bottom-left button");
-eq(plain.slice(0, 2).map((t) => t.kind), ["label", "label"], "title spans two tiles");
-eq(plain[2], { kind: "stat", label: "STATE", value: "busy 40m" }, "state tile carries the age");
-eq(plain[3], { kind: "stat", label: "CONTEXT", value: "41%", pie: 41 }, "context tile");
-eq(plain[4], { kind: "stat", label: "MODEL", value: "opus-5 high" }, "model tile drops the vendor prefix");
-eq(plain[5], { kind: "task", number: 1, subject: "read the code", status: "pending" }, "tasks start after the header");
-eq(plain[6].status, "in_progress", "task status is carried through");
-eq(plain[7], null, "unused slots are null");
+eq(plain[0], { kind: "label", label: "serializing client-block mutations", project: "kob-trace" }, "the title is one key, the session's own");
+eq(plain[1], { kind: "stat", label: "STATE", value: "busy 40m" }, "state tile carries the age");
+eq(plain[2], { kind: "stat", label: "CONTEXT", value: "41%", pie: 41 }, "context tile");
+eq(plain[3], { kind: "stat", label: "MODEL", value: "opus-5 high" }, "model tile drops the vendor prefix");
+eq(plain[4], { kind: "task", number: 1, subject: "read the code", status: "pending" }, "tasks start after the header");
+eq(plain[5].status, "in_progress", "task status is carried through");
+eq(plain[6], null, "unused slots are null");
 
 // Subagents pin to the tail — this board and a 3×6px margin marker are the
 // only places they appear at all, where a task list past the window is merely
@@ -268,7 +268,7 @@ eq(mid[DETAIL_BACK_INDEX], { kind: "back" }, "and the back key is still reachabl
 const midTaskTiles = mid.filter((t) => t?.kind === "task");
 eq(
   midTaskTiles.map((t) => t.number),
-  [8, 9, 10, 11, 12, 13, 14],
+  [7, 8, 9, 10, 11, 12, 13, 14],
   "task numbering stays absolute (tasks.indexOf + 1), not reset to 1 at the window's start"
 );
 eq(
@@ -295,11 +295,11 @@ const cleared = detailLayout({
   age: "",
   slotCount: DECK,
 });
-eq(cleared.slice(0, 2), [{ kind: "label", label: "" }, { kind: "label", label: "" }], "cleared session shows no title");
+eq(cleared[0], { kind: "label", label: "", project: "kob-trace" }, "cleared session shows no title");
 
 // A session with no context reported must not print "null%".
 const noCtx = detailLayout({ session: { ...dSession, context: null }, tasks: [], nested: [], age: "", slotCount: DECK });
-eq(noCtx[3], { kind: "stat", label: "CONTEXT", value: "—", pie: null }, "unknown context shows a dash, not a ring");
+eq(noCtx[2], { kind: "stat", label: "CONTEXT", value: "—", pie: null }, "unknown context shows a dash, not a ring");
 
 // Holding the board's shape for a visit: content follows each tile, position
 // doesn't move. The case that matters is a subagent appearing while the board
