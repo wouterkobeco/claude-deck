@@ -2,7 +2,7 @@
   "name": "claude-streamdeck-terminal-focus",
   "displayName": "Claude Stream Deck terminal focus",
   "description": "Reveals the terminal of the Claude Code session whose Stream Deck key was pressed.",
-  "version": "1.1.21",
+  "version": "1.1.22",
   "publisher": "wouterkobeco",
   "private": true,
   "license": "ISC",
