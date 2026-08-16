@@ -15,6 +15,7 @@ npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effo
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
+npm run vscode-state-check   # which window's storage answers for a folder
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
@@ -283,6 +284,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `sqlite3` CLI, to find a file the target window already has open. Reads an
   undocumented internal format, so *every* failure path returns `null` and the
   caller falls back to a static anchor file. Never make this throw.
+  **A remote window is found under a different URI and answers with a different
+  thing.** Its `workspace.json` records
+  `vscode-remote://ssh-remote%2B<host><path>` rather than `file://<path>` — note
+  the percent-encoded `+` — and its editors carry the encoded URI in
+  `external`, which is returned verbatim rather than rebuilt, because the raise
+  goes through `code --file-uri` and re-encoding an authority by hand is a bug
+  waiting to happen. The authority is checked rather than assumed: one folder's
+  storage can outlive it being reopened against a different host, and raising
+  the wrong host's window is the confusion `folderKeyFor` prevents a layer up.
+  **`storageDirFor` only ever matches a window's `folder`**, and a multi-root
+  window records a `workspace` instead — so it finds nothing for those, which is
+  why the remote branch of `focusWindow` skips the raise rather than guessing
+  with `--folder-uri`.
 - `src/terminal-focus.mjs` — asks the VS Code window that owns a session's
   terminal to reveal it. The join is process ancestry: `Terminal.processId` is
   the shell's pid and Claude is a descendant of it, so the daemon writes the
