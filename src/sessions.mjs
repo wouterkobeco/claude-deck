@@ -330,7 +330,10 @@ export async function readRunningSubagents(dir, tail = tailLines) {
     }
     if ((Date.now() - mtimeMs) / 1000 > SUBAGENT_IDLE_MAX_S) continue;
 
-    const { lines } = await tail(path);
+    // A source-supplied tail (ssh-backed) can reject mid-poll; every other
+    // read here is try/catch-skipped and this one has to be too, or one bad
+    // read takes the whole board down through sessionsFrom's Promise.all.
+    const { lines } = await tail(path).catch(() => ({ lines: [] }));
     let stopReason = null;
     for (let i = lines.length - 1; i >= 0 && stopReason === null; i--) {
       // Parse before trusting: "stop_reason" appears inside tool results and
@@ -494,7 +497,11 @@ export function localSource(root = CLAUDE_DIR) {
 }
 
 export async function getLiveSessions(sources = [localSource()]) {
-  return (await Promise.all(sources.map(sessionsFrom))).flat();
+  // A source is someone else's code (ssh-backed isAlive/tail for a remote
+  // host): it can throw where a local read would merely fail try/catch. One
+  // bad host must drop only its own keys, the way a closed window's would —
+  // not take the whole board's Promise.all down with it.
+  return (await Promise.all(sources.map((s) => sessionsFrom(s).catch(() => [])))).flat();
 }
 
 async function sessionsFrom(source) {

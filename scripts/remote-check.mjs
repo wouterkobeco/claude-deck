@@ -175,4 +175,24 @@ assert.deepEqual(deadRemote, [], "a pid absent from the host's list drops the se
 const both = await getLiveSessions([localSource(fx), remoteSource]);
 assert.equal(both.length, 2, "sources concatenate");
 
+// The canned tail above returns what the fixture file happens to contain, so
+// the deepEqual cannot tell an injected tail from a local read. Give this one
+// content that exists nowhere on disk: if the source's tail is ever bypassed,
+// this is the assertion that fails. TREE_CMD does not fetch transcripts at
+// all, so a bypass means every remote session silently loses its title.
+const injected = await getLiveSessions([
+  {
+    ...remoteSource,
+    tail: async () => ({ lines: [JSON.stringify({ type: "assistant", aiTitle: "from the tail" }), ""], whole: true }),
+  },
+]);
+assert.equal(injected[0].aiTitle, "from the tail", "the source's tail reads the transcript, never the local file");
+assert.equal(remoteOut[0].root, fx, "the source's root travels on the session");
+
+// A source's own code (isAlive, tail) can throw where a local read would
+// merely fail try/catch — one bad host must not blank the others' keys.
+const mixed = await getLiveSessions([localSource(fx), { ...remoteSource, isAlive: () => { throw new Error("dead host"); } }]);
+assert.equal(mixed.length, 1, "a throwing source contributes nothing, but the healthy source is unaffected");
+assert.equal(mixed[0].host, null, "the surviving session is the local one");
+
 console.log("remote-check: OK");
