@@ -247,8 +247,13 @@ the scratch tree.
 
 Two round trips, ~300ms warm, none of it on the poll's critical path.
 
-`ctx/` is not fetched — that is spec C. Process ancestry is not fetched — that is
-spec B.
+Both deferrals in this section have since shipped, and neither landed where this
+sketch put it. Process ancestry (spec B) joined call 1's pid listing as a second
+column. Context files (spec C) joined call 2's path list rather than the tar —
+`ctx/` holds one file per session the host has ever run, and tar spends a
+512-byte header on each: measured, 118 files carrying 1,775 bytes of content
+tarred to 360KB, against a whole tree of 20KB. Asking for exactly the live
+sessions' files costs a few hundred bytes and no extra round trip.
 
 **Deferred:** send the previously seen `{path: mtime}` so unchanged tails come
 back empty and are served from cache. Worth it if a WAN link or a busier Pi
@@ -405,11 +410,22 @@ commit that removed its precondition — the third time that shape appeared in t
 feature, after the in-flight and eviction guards. **A guard encoding "X is
 impossible" belongs in the commit that makes X possible.**
 
-**C — the context gauge on remote.** `npm run remote:install -- <host>` merges
-the status line block README documents into the remote's
-`~/.claude/settings.json` and drops the script. Manual and explicit — never in
-`postinstall`, which would make `npm install` write to another machine. Until
-run, the file is absent and the gauge does not draw, exactly as on a local
-machine without a status line. This is the one place the daemon's "reads
-everything, writes one file" rule bends, and it bends in a separate opt-in
-command, not in the poll loop.
+**C — the context gauge on remote. Shipped.** `npm run remote:install -- <host>`
+installs the status line and points the remote's `settings.json` at it. Manual
+and explicit — never in `postinstall`, which would make `npm install` write to
+another machine. Until run, the file is absent and the gauge does not draw,
+exactly as on a local machine without a status line. This is the one place the
+daemon's "reads everything, writes one file" rule bends, and it bends in a
+separate opt-in command, not in the poll loop.
+
+Two things it did differently from this sketch:
+
+**It copies your own status line rather than merging a block.** The block alone
+would leave the remote's status line saying nothing else, and a host that
+already has one is refused rather than edited — a status line is read on every
+turn, and silently replacing one to feed a Stream Deck gauge is not a fair
+trade. The local script is plain bash + jq + git, which is what makes copying it
+safe; a machine with none gets a minimal version instead.
+
+**The gauge's file is fetched through call 2, not the tar** — see the note in §2
+for the measurement that forced it.

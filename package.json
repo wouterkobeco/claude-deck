@@ -23,7 +23,8 @@
     "postinstall": "npm run ext:install",
     "board-shot": "node scripts/board-shot.mjs",
     "vscode-state-check": "node scripts/vscode-state-check.mjs",
-    "extension-check": "node scripts/extension-check.mjs"
+    "extension-check": "node scripts/extension-check.mjs",
+    "remote:install": "node scripts/remote-install.mjs"
   },
   "keywords": [
     "claude-code",

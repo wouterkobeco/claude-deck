@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tailLines, transcriptPathFor } from "./sessions.mjs";
 
@@ -101,6 +101,50 @@ export function splitTreeStream(buffer) {
  * dash; this is the second half of that guard, because a host that reached ssh
  * as `-oProxyCommand=…` would run a command on *this* machine.
  */
+/**
+ * Where each live session's context file is, on the host and in the tree.
+ *
+ * `ctx/<id>.json` is written by the remote's status line and is the only place a
+ * session's context percentage exists — Claude Code hands that number to the
+ * status line and nowhere else.
+ *
+ * **It is deliberately not in the tar.** `ctx/` accumulates one file per session
+ * the host has ever run, and tar spends a 512-byte header on each: measured
+ * locally, 118 files holding 1,775 bytes of content tarred to 360KB, against a
+ * whole tree of 20KB. Asking call 2 for exactly the live sessions' files costs a
+ * few hundred bytes and no extra round trip, since that call already takes a
+ * path list.
+ *
+ * Filtering the tar by mtime instead was the other option and is worse: a
+ * session can sit idle for days with a perfectly valid context file, and
+ * `readContext`'s own contract says a stale file is fine because context cannot
+ * change while nothing is happening.
+ */
+export function ctxTargets(liveSessions, root) {
+  return liveSessions.map((s) => ({
+    remote: join("", "ctx", `${s.sessionId}.json`),
+    local: join(root, "ctx", `${s.sessionId}.json`),
+  }));
+}
+
+/**
+ * Land the fetched context files in the tree, where `readContext` already
+ * looks. Best-effort per file: a context gauge is the least important thing on
+ * a key, and a write that fails must not cost the session the rest of its
+ * fetch.
+ */
+async function writeCtxFiles(targets, byRemote) {
+  if (!targets.length) return;
+  await mkdir(join(targets[0].local, ".."), { recursive: true }).catch(() => {});
+  for (const t of targets) {
+    const body = byRemote.get(t.remote);
+    // A missing file comes back unknown — that host has no status line for this
+    // session yet, which is an ordinary state and simply leaves the gauge off.
+    if (!body?.lines.length) continue;
+    await writeFile(t.local, body.lines.join("\n")).catch(() => {});
+  }
+}
+
 export function sshArgs(host, controlPath) {
   return [
     "-o", "BatchMode=yes",
@@ -298,12 +342,12 @@ export async function fetchSource(host, scratchRoot) {
     // "$f". The local path is the same file inside the fetched tree, and is
     // what the injected `tail` will be asked for — `sessionsFrom` resolves it
     // with this same function against the source's root.
-    const wanted = registry
-      .filter((s) => s.sessionId && s.cwd && pids.has(s.pid))
-      .map((s) => ({
-        local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
-        remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
-      }));
+    const liveSessions = registry.filter((s) => s.sessionId && s.cwd && pids.has(s.pid));
+    const wanted = liveSessions.map((s) => ({
+      local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
+      remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
+    }));
+    const ctx = ctxTargets(liveSessions, finalDir);
 
     // ponytail: every due tail is refetched in full each cycle, whether or not
     // it changed since the last fetch — fine at REMOTE_POLL_MS against a
@@ -311,14 +355,24 @@ export async function fetchSource(host, scratchRoot) {
     // complains: send the previously seen `{path: mtime}` alongside the
     // request so an unchanged tail comes back empty and is served from what
     // was already parsed, instead of re-sent.
+    // Transcripts and context files travel in the same call: it already takes a
+    // path list, so adding to it costs no round trip. They are used differently
+    // at the far end — a transcript is served to the injected `tail`, a context
+    // file is written into the tree — but the wire is the same.
     let tails = new Map();
-    if (wanted.length) {
+    const all = [...wanted, ...ctx];
+    if (all.length) {
       const body = await run(["ssh", ...sshArgs(host, controlPath), TAILS_CMD], {
-        input: wanted.map((w) => w.remote).join("\n") + "\n",
+        input: all.map((w) => w.remote).join("\n") + "\n",
       });
       if (body) {
-        const byRemote = parseTails(body, wanted.map((w) => w.remote));
+        const byRemote = parseTails(body, all.map((w) => w.remote));
         for (const w of wanted) tails.set(w.local, byRemote.get(w.remote));
+        // Written to disk rather than kept in the map, so `readContext` stays
+        // exactly the local reader it already is — it takes a root and a
+        // session id and knows nothing about sources. A context file is a
+        // single short JSON line, so a "tail" of it is the whole thing.
+        await writeCtxFiles(ctx, byRemote);
       }
     }
 

@@ -323,4 +323,31 @@ assert.deepEqual(
   "a memo entry for a host with no live window this tick is not returned"
 );
 
+// --- the context gauge's file rides in call 2 ---------------------------
+// `ctx/<id>.json` is what the status line writes and the only place a session's
+// context percentage exists. It is NOT in the tar: `ctx/` holds one file per
+// session that host has ever run, and tar spends 512 bytes of header on each —
+// measured locally, 118 files carrying 1,775 bytes of content tarred to 360KB,
+// against a whole tree of 20KB. Fetching only the live sessions' files through
+// the tail stream costs a few hundred bytes instead, and call 2 already takes a
+// path list.
+import { ctxTargets } from "../src/remote-fs.mjs";
+
+const live = [
+  { sessionId: "aaa", cwd: "/home/pi/x", pid: 1 },
+  { sessionId: "bbb", cwd: "/home/pi/y", pid: 2 },
+];
+const targets = ctxTargets(live, "/scratch/host");
+assert.deepEqual(
+  targets.map((t) => t.remote),
+  ["ctx/aaa.json", "ctx/bbb.json"],
+  "remote ctx paths are relative, because TAILS_CMD cd's to ~/.claude first"
+);
+assert.deepEqual(
+  targets.map((t) => t.local),
+  ["/scratch/host/ctx/aaa.json", "/scratch/host/ctx/bbb.json"],
+  "and land inside the fetched tree, where readContext already looks"
+);
+assert.deepEqual(ctxTargets([], "/scratch/host"), [], "no live sessions asks for nothing");
+
 console.log("remote-check: OK");
