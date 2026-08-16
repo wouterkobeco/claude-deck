@@ -212,4 +212,41 @@ await swapTree(staging, finalDir);
 assert.deepEqual(await readdir(join(finalDir, "ide")), ["open.lock"], "a lock the remote deleted does not survive the swap");
 assert.deepEqual(await readdir(swapRoot), ["host"], "the staging directory is cleaned up");
 
+// --- cadence, backoff and the kill switch ---------------------------------
+import { dueHosts } from "../src/remote-hosts.mjs";
+
+const w = (host) => ({ pid: 1, folders: ["/x"], focused: false, activeSessionId: null, host });
+const memo = new Map();
+
+assert.deepEqual(dueHosts([w("h1"), w(null)], 0, memo), ["h1"], "only windows with a host are fetched");
+assert.deepEqual(dueHosts([w("h1"), w("h1")], 0, memo), ["h1"], "two windows on one host are one fetch");
+
+// A remote host polls slower than the 2s local loop: "not on the critical path"
+// is a statement about the daemon, not about the Raspberry Pi it is asking.
+memo.set("h1", { lastAt: 0, failures: 0 });
+assert.deepEqual(dueHosts([w("h1")], 2000, memo), [], "not due 2s after a success");
+assert.deepEqual(dueHosts([w("h1")], 6000, memo), ["h1"], "due 6s after a success");
+
+// Consecutive failures back off 5s, 10s, 30s; one success resets.
+memo.set("h2", { lastAt: 0, failures: 1 });
+assert.deepEqual(dueHosts([w("h2")], 4000, memo), [], "not due inside the first backoff");
+assert.deepEqual(dueHosts([w("h2")], 6000, memo), ["h2"], "due after 5s");
+memo.set("h2", { lastAt: 0, failures: 3 });
+assert.deepEqual(dueHosts([w("h2")], 20000, memo), [], "a third failure waits 30s");
+assert.deepEqual(dueHosts([w("h2")], 31000, memo), ["h2"], "and is due after it");
+memo.set("h2", { lastAt: 0, failures: 9 });
+assert.deepEqual(dueHosts([w("h2")], 31000, memo), ["h2"], "the backoff is capped at 30s");
+
+// A fetch already running is never dispatched again, however overdue it looks.
+// lastAt is stamped on completion, so without this a slow fetch stays "due"
+// for its whole duration and a second one races it into the same staging dir.
+memo.set("h3", { lastAt: 0, failures: 0, inFlight: true });
+assert.deepEqual(dueHosts([w("h3")], 999999, memo), [], "a host with a fetch in flight is not due");
+memo.set("h3", { lastAt: 0, failures: 0, inFlight: false });
+assert.deepEqual(dueHosts([w("h3")], 999999, memo), ["h3"], "and is due again once that fetch lands");
+
+process.env.STREAMDECK_NO_REMOTE = "1";
+assert.deepEqual(dueHosts([w("h1")], 999999, memo), [], "the kill switch stops every fetch");
+delete process.env.STREAMDECK_NO_REMOTE;
+
 console.log("remote-check: OK");

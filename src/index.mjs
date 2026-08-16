@@ -4,7 +4,9 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
-import { getLiveSessions, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
+import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
+import { fetchSource } from "./remote-fs.mjs";
+import { remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
@@ -54,6 +56,31 @@ const folderOrder = new Map();
 const sessionOrder = new Map();
 const nestedOrder = new Map();
 let arrivals = 0;
+
+// One entry per remote host: its last fetch, its consecutive failures, and the
+// source that fetch produced. Held here for the daemon's lifetime, like
+// folderOrder — a host that goes away is evicted by remoteSources().
+const remoteMemo = new Map();
+// Not os.tmpdir(): on macOS that's a long per-user path under /var/folders,
+// and fetchSource's ControlPath socket (that path, plus "cm-<host>", plus
+// ssh's own random suffix while the bind is in flight) blows the ~104-byte
+// Unix domain socket limit — measured live: ssh fails with `unix_listener:
+// path "...too long for Unix domain socket"` on every fetch, every time,
+// silently reported by fetchSource as an ordinary "host unreachable". /tmp is
+// a short, stable symlink on macOS and this daemon is macOS-only already.
+const SCRATCH_ROOT = `/tmp/streamdeck-remote-${process.pid}`;
+
+// Every session-reading poll goes through this rather than calling
+// getLiveSessions() bare: a remote key only exists because its source made it
+// into this list. remoteSources() does its own due-host gating (6s cadence,
+// backoff, in-flight guard), so this never blocks the 2s loop on SSH — it just
+// hands back whatever the memo already holds for a host that isn't due yet.
+async function allSources() {
+  const remotes = await remoteSources(readWindowStates(), Date.now(), remoteMemo, (host) =>
+    fetchSource(host, SCRATCH_ROOT)
+  );
+  return [localSource(), ...remotes];
+}
 
 // Colour is picked from what no other live folder is using, not from
 // ACCENTS[position % 8]. Position grows for the daemon's lifetime and is
@@ -184,7 +211,12 @@ async function anchorFile(folder) {
 // a no-op without the extension installed, which is why it's fired and
 // forgotten rather than checked.
 async function focusWindow(session, requestedAt) {
-  const { folder, ide } = session;
+  const { folder, ide, host } = session;
+  // A remote session's folder is another machine's path. Raising its window is
+  // spec B — see docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
+  // Until then a remote key reads and does not act, which is quieter than
+  // searching this filesystem for a directory that is not on it.
+  if (host) return;
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`
@@ -616,7 +648,7 @@ async function refreshStats(deck, buttons, stats) {
 // poll. Unlike the detail view this deliberately re-sorts while it's up — a
 // session that gets unblocked should leave the queue you're looking at.
 async function refreshAttention(deck, buttons, attentionButton) {
-  const sessions = await getLiveSessions();
+  const sessions = await getLiveSessions(await allSources());
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const count = await drawAttention(deck, attentionButton, sessions, false);
 
@@ -656,7 +688,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
 }
 
 async function refresh(deck, buttons, slots, nestedBySlot) {
-  const sessions = await getLiveSessions();
+  const sessions = await getLiveSessions(await allSources());
   assignSlots(sessions, slots, nestedBySlot);
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
 
@@ -731,7 +763,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
 // rather than in getLiveSessions so the 2s poll costs exactly what it did
 // before this view existed.
 async function refreshDetail(deck, buttons, view) {
-  const sessions = await getLiveSessions();
+  const sessions = await getLiveSessions(await allSources());
   const session = sessions.find((s) => s.session_id === view.session_id);
   if (!session) {
     // It ended while you were looking at it. Stale-but-plausible tiles (a
@@ -762,7 +794,7 @@ async function refreshDetail(deck, buttons, view) {
   // per project you can be looking at. They're short-lived, so one may well
   // vanish between two polls.
   const nested = nestedFor(session, sessions.filter((s) => s.nested), true);
-  const tasks = await readTaskList(session.session_id);
+  const tasks = await readTaskList(session.session_id, session.root);
   const { age } = keyFields(session);
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;
@@ -1081,7 +1113,7 @@ async function run() {
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         await refreshStats(deck, buttons, statTiles);
-        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
+        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(await allSources()), false);
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);
         // The queue re-sorts while it's up so an unblocked session leaves it;
@@ -1132,7 +1164,7 @@ async function run() {
           if (w.activeSessionId) everActive.add(w.activeSessionId);
         }
         const withExt = windowStates.length;
-        const total = countVsCodeWindows();
+        const total = countVsCodeWindows(undefined, windowStates);
         const coverage = `${withExt}/${total}`;
         if (coverage !== lastCoverage) {
           lastCoverage = coverage;

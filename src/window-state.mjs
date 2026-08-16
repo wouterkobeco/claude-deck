@@ -106,8 +106,17 @@ const IDE_DIR = join(homedir(), ".claude", "ide");
  * and make a fully-reloaded machine still look incomplete. A lock with no
  * `ideName` counts as VS Code — that's the same normalisation `focusWindow`
  * already applies, and it's the common case.
+ *
+ * A remote window's IDE lock lives on the remote host, not in `dir` — so it is
+ * missing from the count above while its published state (`states`, what
+ * `readWindowStates` already read this poll) is present in the numerator.
+ * Counting it here keeps both sides describing the same population. `pid` is
+ * the same key `readWindowStates` already uses per window (the extension host
+ * always runs locally, even against a remote SSH folder — see `extensionKind`
+ * in extension/), so the `Set` is one entry per open window, matching what the
+ * numerator counts a remote window as.
  */
-export function countVsCodeWindows(dir = IDE_DIR) {
+export function countVsCodeWindows(dir = IDE_DIR, states = []) {
   let names;
   try {
     names = readdirSync(dir);
@@ -124,5 +133,5 @@ export function countVsCodeWindows(dir = IDE_DIR) {
       // mid-write or corrupt — not countable
     }
   }
-  return count;
+  return count + new Set(states.filter((s) => s.host).map((s) => s.pid)).size;
 }
