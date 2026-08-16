@@ -107,7 +107,7 @@ await winFile(`${process.pid}.json`, {
 // A window that crashed without unlinking. 999999 is above macOS's default
 // pid_max, so it cannot be a running process and cannot be recycled onto one.
 await winFile("999999.json", { folders: ["/gone"], focused: true, activeSessionId: "sess-x" });
-// Caught mid-write, and a name that isn't a pid at all.
+// A filename that isn't a pid at all: filtered by the `.endsWith(".json")` check.
 await winFile("truncated.json.tmp", "{\"folders\":[");
 await winFile(`${process.pid + 0.5}.json`, { folders: ["/nope"] });
 await winFile("notes.txt", "not json");
@@ -128,6 +128,11 @@ assert.equal(live[0].activeSessionId, "sess-a");
 await winFile(`${process.pid}.json`, { focused: true, activeSessionId: "sess-a" });
 assert.deepEqual(readWindowStates(wdir), [], "a state without folders is unusable, not a window");
 
+// A live-pid file with syntactically broken JSON, caught mid-write. The
+// JSON.parse try-catch must swallow this and return an empty array, not crash.
+await winFile(`${process.pid}.json`, "{\"folders\":[");
+assert.deepEqual(readWindowStates(wdir), [], "broken JSON is skipped, not a fatal error");
+
 // No directory at all — the extension has never run anywhere.
 assert.deepEqual(readWindowStates(join(wdir, "missing")), []);
 
@@ -142,6 +147,11 @@ await lock("3.lock", { ideName: "PhpStorm", workspaceFolders: ["/c"] });
 await writeFile(join(idedir, "notes.txt"), "ignored");
 assert.equal(countVsCodeWindows(idedir), 2, "JetBrains windows can't run this extension and don't count");
 assert.equal(countVsCodeWindows(join(idedir, "missing")), 0);
+
+// A malformed .lock file with syntactically broken JSON. The JSON.parse
+// try-catch must swallow this and not affect the count of valid locks.
+await writeFile(join(idedir, "4.lock"), "{\"ideName\":");
+assert.equal(countVsCodeWindows(idedir), 2, "corrupt .lock files are skipped, not a fatal error");
 
 await rm(idedir, { recursive: true, force: true });
 await rm(wdir, { recursive: true, force: true });
