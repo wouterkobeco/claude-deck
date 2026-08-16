@@ -754,7 +754,7 @@ Add a module bullet after the `src/vscode-state.mjs` one:
 Under "Invariants worth knowing before changing things", replace the **Read-only, near-zero-install** bullet's first sentence with:
 
 ```markdown
-- **Read-only, near-two-install.** No hooks, no `settings.json` writes, no
+- **Read-only, two install steps.** No hooks, no `settings.json` writes, no
   config file. The daemon reads from `~/.claude/`, VS Code's storage and the
   usage endpoint, and writes exactly one file: `~/.claude/streamdeck-focus.json`,
   the terminal-focus request. An earlier hook-based version was deleted; don't
