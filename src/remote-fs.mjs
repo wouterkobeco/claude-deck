@@ -83,3 +83,63 @@ export function sshArgs(host, controlPath) {
     host,
   ];
 }
+
+// Kept in step with sessions.mjs's TAIL_BYTES. Both describe the same window.
+const TAIL_BYTES = 65536;
+
+/**
+ * Call 2: the true byte size of each transcript, then its last 64KB.
+ *
+ * Paths arrive on **stdin, one per line**, and are never interpolated into this
+ * string. A cwd with a space or an apostrophe in it is an ordinary thing to
+ * have, and would otherwise split the loop or unbalance a quote; the malicious
+ * reading of the same hole is secondary to the accidental one.
+ *
+ * **The paths are relative to `~/.claude`, which is why the `cd` is here.** A
+ * path read from stdin is data, and `~` is not expanded inside `"$f"` — sending
+ * `~/.claude/projects/…` would make every `wc` and `tail` miss, and every remote
+ * session would silently lose its title. `cd` once, send relative paths.
+ *
+ * `wc -c` before `tail` is the frame *and* the answer to `whole`: the size is
+ * the file's, the payload is at most the tail window, and the two together say
+ * whether the window reached byte 0. Reconstructing that here from a byte offset
+ * is what this design exists to avoid.
+ */
+export const TAILS_CMD =
+  "cd ~/.claude 2>/dev/null || exit 0; " +
+  'while IFS= read -r f; do wc -c < "$f" 2>/dev/null || echo 0; tail -c 65536 "$f" 2>/dev/null; done';
+
+/**
+ * Read call 2's stream back into one `{ lines, whole }` per requested path, in
+ * the order they were requested.
+ *
+ * Shaped to match `tailLines` exactly, including its failure value: a read that
+ * failed reports `{ lines: [], whole: false }` — unknown, not empty. A stream
+ * that stopped early leaves every remaining path unknown for the same reason.
+ */
+export function parseTails(buffer, paths) {
+  const out = new Map();
+  let at = 0;
+  for (const path of paths) {
+    const nl = buffer.indexOf("\n", at);
+    if (nl < 0) {
+      out.set(path, { lines: [], whole: false });
+      continue;
+    }
+    const size = Number(buffer.subarray(at, nl).toString("utf8").trim());
+    at = nl + 1;
+    if (!Number.isInteger(size) || size <= 0) {
+      out.set(path, { lines: [], whole: false });
+      continue;
+    }
+    const expected = Math.min(size, TAIL_BYTES);
+    const body = buffer.subarray(at, at + expected);
+    if (body.length < expected) {
+      out.set(path, { lines: [], whole: false });
+      continue;
+    }
+    at += expected;
+    out.set(path, { lines: body.toString("utf8").split("\n"), whole: size <= TAIL_BYTES });
+  }
+  return out;
+}
