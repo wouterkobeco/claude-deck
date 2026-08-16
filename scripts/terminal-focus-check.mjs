@@ -199,8 +199,17 @@ assert.equal(
   );
   await mkdir(join(fake, ".vscode/extensions"), { recursive: true });
   assert.match(run(fake), /not installed/, "vscode present, extension missing: offers to install");
-  await mkdir(join(fake, ".vscode/extensions/claude-streamdeck-terminal-focus"), { recursive: true });
-  assert.equal(run(fake), "", "already installed: says nothing");
+
+  // An installed copy from another checkout — the worktree case, where one
+  // extensions slot is shared by every branch. Silent would be wrong: which
+  // version is in there is the fact worth seeing.
+  const copy = join(fake, ".vscode/extensions/claude-streamdeck-terminal-focus");
+  await mkdir(copy, { recursive: true });
+  await writeFile(join(copy, "package.json"), JSON.stringify({ version: "0.0.1" }));
+  assert.match(run(fake), /installed is v0\.0\.1/, "version drift is named, not just fixed");
+
+  await writeFile(join(copy, "package.json"), JSON.stringify({ version: versionOf("../extension/package.json") }));
+  assert.equal(run(fake), "", "installed and current: says nothing");
   await rm(fake, { recursive: true, force: true });
 }
 

@@ -317,8 +317,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `~/.vscode/extensions` — so a fresh clone or a `npm install` after a pull has
   the current extension without anyone remembering to ask for it. `prestart`
   (`scripts/ext-prompt.mjs`) catches what postinstall misses — an install that
-  predates the extension, a copy deleted since — by offering to install it,
-  defaulting to yes, at the one moment someone is definitely watching. It
+  predates the extension, a copy deleted since, or a copy another worktree
+  installed — by comparing `extension/package.json`'s version against the
+  installed copy's and offering to fix it, defaulting to yes, at the one moment
+  someone is definitely watching. Drift is *named* (`installed is v1.1.19, this
+  checkout is v1.1.22`) rather than silently corrected: with one extensions
+  slot shared by every worktree, which version is in there is the fact worth
+  seeing. This catches a stale copy on disk, never a stale *running* window —
+  that still needs the reload below, and the extension publishes no version for
+  the daemon to check. It
   never fails the daemon it precedes: no VS Code on the machine, no TTY to ask
   in, or EOF at the prompt all print a line and exit 0. What that
   cannot do is reload the editor: windows already open when it lands keep
