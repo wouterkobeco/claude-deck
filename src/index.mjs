@@ -10,7 +10,7 @@ import { cachedSources, remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, splitLabel, CONTEXT_CRITICAL } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -537,13 +537,13 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
 }
 
 export function detailLayout({ session, tasks, nested, age, slotCount }) {
-  // Same title as the session's own key, clearedEmpty rule included — after a
-  // /clear the two header keys go blank rather than showing the session name
-  // as though it were an answer.
-  const [titleA, titleB] = splitLabel(keyFields(session).label, 2);
+  // Literally the session's own key — same label, same caps bar, clearedEmpty
+  // rule included, so the key you pressed is the key you land on. It used to
+  // be split across two keys; one says the same thing and leaves a slot for a
+  // task.
+  const { label, project } = keyFields(session);
   const header = [
-    { kind: "label", label: titleA },
-    { kind: "label", label: titleB },
+    { kind: "label", label, project },
     { kind: "stat", label: "STATE", value: age ? `${session.state} ${age}` : session.state },
     // A ring when the number is known — `pie` is what renderStat draws, `value`
     // is the dash it falls back to when the status line never wrote a context
@@ -800,7 +800,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
   return sessions;
 }
 
-// The detail board: one session across every session key — a two-key title,
+// The detail board: one session across every session key — its own key redrawn,
 // three stat tiles, then its task list, with the worktree sessions that share
 // its folder held at the tail. This is where those sessions became reachable
 // as tiles instead of 3×6px squares, which is why the old nested-only overlay
@@ -890,7 +890,7 @@ async function refreshDetail(deck, buttons, view) {
               progress: tile.session.progress,
               context: tile.session.context,
             }
-          : { state: session.state, label: tile.label, accent, project: "" };
+          : { state: session.state, label: tile.label, accent, project: tile.project };
       const drawn = `detail ${tile.kind} ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
 

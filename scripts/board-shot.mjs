@@ -12,7 +12,6 @@ import {
   renderTask,
   renderBack,
   renderCompacting,
-  splitLabel,
 } from "../src/render.mjs";
 
 const W = 72;
@@ -81,10 +80,8 @@ await board("sessions", [
 ]);
 
 // --- detail board: one session across all 15 keys --------------------------
-const [titleA, titleB] = splitLabel("retry webhooks", 2);
 await board("detail", [
-  key({ state: "busy", label: titleA, accent: A.api, project: "" }),
-  key({ state: "busy", label: titleB, accent: A.api, project: "" }),
+  key({ state: "busy", label: "retry webhooks", accent: A.api, project: "payments-api" }),
   stat("STATE", "busy 12m"),
   stat("CONTEXT", "41%"),
   stat("MODEL", "opus-5 high"),
@@ -93,6 +90,7 @@ await board("detail", [
   task(3, "exponential backoff with jitter", "in_progress"),
   task(4, "dead-letter after 5 attempts", "pending"),
   task(5, "backfill the failed deliveries", "pending"),
+  task(6, "alert on the dead-letter queue", "pending"),
   (geom) => renderBack(geom),
   key({ state: "busy", label: "audit signatures", accent: A.api, project: "hardening-wt" }),
   key({ state: "requires_action", label: "migration test", accent: A.api, project: "queue-wt" }),

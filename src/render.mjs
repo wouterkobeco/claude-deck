@@ -54,20 +54,6 @@ export function formatAge(seconds) {
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/**
- * Splits a label into `parts` roughly equal chunks on word boundaries, so a
- * title can run across neighbouring keys. Always returns exactly `parts`
- * strings — short labels leave the later keys blank rather than undefined.
- */
-export function splitLabel(label, parts) {
-  const words = (label ?? "").split(/\s+/).filter(Boolean);
-  const out = new Array(parts).fill("");
-  if (words.length === 0) return out;
-  const per = Math.ceil(words.length / parts);
-  for (let i = 0; i < parts; i++) out[i] = words.slice(i * per, (i + 1) * per).join(" ");
-  return out;
-}
-
 function escapeXml(s) {
   return s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 }

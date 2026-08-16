@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, splitLabel, wrapLabel, ellipsize, measureText } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, wrapLabel, ellipsize, measureText } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -282,15 +282,6 @@ for (const [name, count, longest, pulse] of [
     .png()
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
-
-// A detail board's title runs across two keys, so the split must always
-// return exactly as many pieces as there are keys to fill — a short or empty
-// title leaves the later key blank rather than drawing "undefined".
-eq(splitLabel("serializing client-block mutations", 2).join("|"), "serializing client-block|mutations", "splits on words");
-eq(splitLabel("one", 2).join("|"), "one|", "short label leaves the second key blank");
-eq(splitLabel("", 2).length, 2, "empty label still fills every part");
-eq(splitLabel(null, 2).join("|"), "|", "missing label is not a crash");
-eq(splitLabel("a b c d e", 2).join("|"), "a b c|d e", "odd word counts favour the first key");
 
 // One task tile per status — the three must be tellable apart at arm's length.
 for (const status of ["completed", "in_progress", "pending"]) {
