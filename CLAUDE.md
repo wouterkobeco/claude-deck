@@ -211,6 +211,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   holds the newest press and the extension needs no ordering logic of its own.
   Best-effort throughout, like `vscode-state.mjs` — every failure degrades to
   today's behaviour, the window raised and the terminal untouched.
+- `src/window-state.mjs` — the reverse of `terminal-focus.mjs`: the daemon asks
+  for a terminal there and learns what actually happened here. Reads
+  `~/.claude/streamdeck-windows/<extension host pid>.json`, one per open VS Code
+  window, carrying that window's folders, whether it's focused, and which
+  session's terminal is in front. **Synchronous on purpose** — its only caller
+  is `deck.on("down")`, a synchronous handler, so an async read would resolve
+  after the press was already decided. **The filename is the liveness handle**:
+  named for the extension host's own pid, a window that has gone away is
+  detected exactly with `isAlive` rather than guessed from a timestamp, which
+  is what lets the extension write only on change instead of heartbeating a
+  file every 400ms in every open window forever.
 - `extension/` — the other half, ~45 lines of plain CommonJS with no build step
   and no dependencies, installed by copying it into `~/.vscode/extensions`.
   Polls the request file every 400ms and calls `terminal.show()`, which
@@ -274,8 +285,13 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - **Read-only, two install steps.** No hooks, no `settings.json` writes, no
   config file. The daemon reads from `~/.claude/`, VS Code's storage and the
   usage endpoint, and writes exactly one file: `~/.claude/streamdeck-focus.json`,
-  the terminal-focus request. An earlier hook-based version was deleted; don't
-  reintroduce one.
+  the terminal-focus request.
+  There is a second file in this feature and the daemon does **not** write it:
+  `~/.claude/streamdeck-windows/<pid>.json` is published by the extension and
+  only read here. Keep it that way — a daemon that deletes files it did not
+  write is a worse trade than the occasional orphan a crashed window leaves,
+  which the liveness check ignores anyway.
+  An earlier hook-based version was deleted; don't reintroduce one.
 - **One install step, in the status line.** Context usage is the exception to
   the above: Claude Code hands a session's context percentage to the status
   line and nowhere else, so `~/.claude/statusline-command.sh` writes it to
@@ -333,13 +349,29 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   immediately preceding press in this same project" check (`lastPress` against
   `isRepeatPress`), not a timeout, so any key outside the project breaks the
   chain. First press focuses the window, second opens the pressed session's
-  detail board. **The match is on the folder, not the key**: a project's
-  sessions sit in one contiguous block, so moving along that block is the same
-  gesture as pressing one key twice — either way you're already looking at that
-  project. Matching the key instead made a two-session project need a press on
-  one specific key of the pair, which is exactly the muscle-memory detail the
-  board is meant to remove. `isRepeatPress` is exported and covered by
-  `slots-check` because none of this is visible without a deck.
+  detail board. **The match is on the session, and on whether the press
+  changed anything.** It used to be on the folder, justified by every key in a
+  project's block doing the identical thing — moving along the block was the
+  same gesture as pressing one key twice. **Terminal focus falsified that**:
+  key A and key B now reveal two different terminals, so B is a new first
+  press, not a repeat of A. The symptom was that a project's second session
+  was unreachable — its key opened the detail board instead of its terminal,
+  which is the one thing the extension exists to do.
+  "Changed anything" is not knowable out here, so `readWindowStates` reads it
+  from what the extension publishes: the window's focus and which session's
+  terminal is in front. Inferring it instead ("you pressed this session last,
+  so its terminal must still be showing") is one line and wrong in the two
+  cases you would actually notice — after alt-tabbing away, and after clicking
+  another terminal by hand.
+  **A window that publishes nothing keeps the old folder rule**, so
+  degradation is per window rather than per machine. Do not replace that with
+  a check for whether the extension is *installed*: on 2026-08-16 it was
+  installed and zero open windows were running it, because none had been
+  reloaded since — the install check would have answered yes and been
+  useless. A live state file proves the thing that matters, which is that
+  *this* window is running it.
+  `isRepeatPress` is exported and covered by `slots-check` because none of
+  this is visible without a deck.
   Any press then leaves an overlay board, including the key that opened it —
   in the attention queue that press still focuses the window on the way out,
   which is the point of pressing one there; on the detail board its tiles have

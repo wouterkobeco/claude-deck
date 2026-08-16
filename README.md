@@ -183,6 +183,11 @@ npm run board-shot      # re-render the screenshots above
   while revealing the terminal in the other: the extension routes by process
   id and gets it right, but the window raise opens a file and macOS picks the
   window. Nothing outside the editor can aim that raise at a specific window.
+  Without it, a second press on any key of a project opens the detail board;
+  with it, pressing a *different* session's key switches to that terminal and
+  only a repeat press on the same session opens detail. Windows reloaded and
+  not-yet-reloaded therefore behave differently until every window has been
+  reloaded once.
 
 Design notes: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 (partly superseded — its hook-based status reporting is gone).
