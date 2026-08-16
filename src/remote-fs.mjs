@@ -37,7 +37,7 @@ const SEPARATOR = "\n---\n";
  */
 export const TREE_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | grep -E '^[0-9]+$'; " +
+  "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1 }'; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
@@ -97,17 +97,32 @@ const TAIL_BYTES = 65536;
  *
  * **The paths are relative to `~/.claude`, which is why the `cd` is here.** A
  * path read from stdin is data, and `~` is not expanded inside `"$f"` — sending
- * `~/.claude/projects/…` would make every `wc` and `tail` miss, and every remote
- * session would silently lose its title. `cd` once, send relative paths.
+ * `~/.claude/projects/…` would make every `tail` miss, and every remote session
+ * would silently lose its title. `cd` once, send relative paths.
  *
- * `wc -c` before `tail` is the frame *and* the answer to `whole`: the size is
- * the file's, the payload is at most the tail window, and the two together say
- * whether the window reached byte 0. Reconstructing that here from a byte offset
- * is what this design exists to avoid.
+ * **Fields are NUL-delimited, and there is deliberately no length prefix.** An
+ * earlier version sent `wc -c` before each tail and had the reader consume
+ * exactly `min(size, TAIL_BYTES)` bytes. That is two reads of a live file: a
+ * transcript under 64KB that grows between the `wc` and the `tail` makes `tail`
+ * emit more bytes than the count promised, and every following file in the
+ * batch is then read from the wrong offset — returning spliced garbage with
+ * `whole: true` on it. The failure needs an actively-appending transcript,
+ * which is the exact case this feature exists to show.
+ *
+ * A delimiter cannot desync, because the end of a field is marked rather than
+ * computed. NUL is safe here: a transcript is JSONL, and JSON forbids an
+ * unescaped control character — verified against the live host, zero NUL bytes
+ * in 64KB of real transcript. ssh's stdout is 8-bit clean without a tty.
+ *
+ * **`whole` now comes from the bytes actually received**, not from a separate
+ * size: fewer than `TAIL_BYTES` back means `tail` had nothing more to give, so
+ * the window reached byte 0. Exactly `TAIL_BYTES` is reported not-whole, which
+ * is conservative in the safe direction — a false `whole: false` only withholds
+ * `startedEmpty`, while a false `whole: true` makes a busy session read `CLEAR`.
  */
 export const TAILS_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  'while IFS= read -r f; do wc -c < "$f" 2>/dev/null || echo 0; tail -c 65536 "$f" 2>/dev/null; done';
+  `while IFS= read -r f; do tail -c ${TAIL_BYTES} "$f" 2>/dev/null; printf '\\0'; done`;
 
 /**
  * Read call 2's stream back into one `{ lines, whole }` per requested path, in
@@ -121,25 +136,25 @@ export function parseTails(buffer, paths) {
   const out = new Map();
   let at = 0;
   for (const path of paths) {
-    const nl = buffer.indexOf("\n", at);
-    if (nl < 0) {
+    const end = buffer.indexOf(0, at);
+    // No terminator left: the stream stopped early. Unknown, not empty — the
+    // same value tailLines returns for a read that failed.
+    if (end < 0) {
       out.set(path, { lines: [], whole: false });
       continue;
     }
-    const size = Number(buffer.subarray(at, nl).toString("utf8").trim());
-    at = nl + 1;
-    if (!Number.isInteger(size) || size <= 0) {
-      out.set(path, { lines: [], whole: false });
-      continue;
-    }
-    const expected = Math.min(size, TAIL_BYTES);
-    const body = buffer.subarray(at, at + expected);
-    if (body.length < expected) {
-      out.set(path, { lines: [], whole: false });
-      continue;
-    }
-    at += expected;
-    out.set(path, { lines: body.toString("utf8").split("\n"), whole: size <= TAIL_BYTES });
+    const body = buffer.subarray(at, end);
+    at = end + 1;
+    // An empty field is a missing or empty file. Reported unknown rather than
+    // "whole and empty": the only thing `whole` unlocks is startedEmpty, and
+    // withholding it costs a CLEAR that would otherwise be right, where
+    // granting it wrongly puts CLEAR on a session that is working.
+    out.set(
+      path,
+      body.length === 0
+        ? { lines: [], whole: false }
+        : { lines: body.toString("utf8").split("\n"), whole: body.length < TAIL_BYTES }
+    );
   }
   return out;
 }

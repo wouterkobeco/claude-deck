@@ -69,39 +69,47 @@ assert.ok(argv.includes("ConnectTimeout=5"), "a dead host fails fast");
 // --- call 2 framing -------------------------------------------------------
 import { parseTails } from "../src/remote-fs.mjs";
 
-// A short file: the declared size is the whole file, so `whole` is true and
-// absence in the lines is absence in the file.
-const short = Buffer.from("4\na\nb\n");
-const shortOut = parseTails(short, ["/p/a.jsonl"]);
-assert.deepEqual(shortOut.get("/p/a.jsonl"), { lines: ["a", "b", ""], whole: true }, "a short file is whole");
+const NUL = Buffer.from([0]);
 
-// A long file: 65536 bytes sent, a larger size declared. `whole` must be false
-// even though the payload is exactly the tail window — this is the case that
-// makes startedEmpty lie if it is got wrong.
+// A short file: fewer than TAIL_BYTES came back, so tail had nothing more to
+// give and absence in the lines is absence in the file.
+const short = Buffer.concat([Buffer.from("a\nb\n"), NUL]);
+assert.deepEqual(parseTails(short, ["/p/a.jsonl"]), new Map([["/p/a.jsonl", { lines: ["a", "b", ""], whole: true }]]), "a short file is whole");
+
+// A full tail window: whole must be false — this is the case that makes
+// startedEmpty lie, and a wrong `true` here puts CLEAR on a busy session.
 const body = "x".repeat(65536);
-const long = Buffer.concat([Buffer.from("233880\n"), Buffer.from(body)]);
-assert.equal(parseTails(long, ["/p/b.jsonl"]).get("/p/b.jsonl").whole, false, "a truncated tail is not whole");
+const long = Buffer.concat([Buffer.from(body), NUL]);
+assert.equal(parseTails(long, ["/p/b.jsonl"]).get("/p/b.jsonl").whole, false, "a full tail window is not whole");
 
-// Exactly at the boundary: 65536 bytes is still the whole file.
-const exact = Buffer.concat([Buffer.from("65536\n"), Buffer.from(body)]);
-assert.equal(parseTails(exact, ["/p/c.jsonl"]).get("/p/c.jsonl").whole, true, "65536 bytes exactly is whole");
+// Exactly TAIL_BYTES is reported not-whole. A file of exactly that size is
+// indistinguishable from a larger one truncated to it, and this is the safe
+// direction: it withholds startedEmpty rather than asserting it.
+assert.equal(parseTails(Buffer.concat([Buffer.from("x".repeat(65535)), NUL]), ["/p/c.jsonl"]).get("/p/c.jsonl").whole, true, "one byte under the window is whole");
 
-// Several files in one stream, read in the order they were asked for.
-const many = Buffer.concat([Buffer.from("2\nA\n"), Buffer.from("2\nB\n")]);
+// Several files in one stream, in the order they were asked for.
+const many = Buffer.concat([Buffer.from("A\n"), NUL, Buffer.from("B\n"), NUL]);
 const manyOut = parseTails(many, ["/p/x.jsonl", "/p/y.jsonl"]);
-assert.deepEqual(manyOut.get("/p/x.jsonl").lines, ["A", ""], "the first file's bytes stop at its declared size");
-assert.deepEqual(manyOut.get("/p/y.jsonl").lines, ["B", ""], "the second file starts where the first ended");
+assert.deepEqual(manyOut.get("/p/x.jsonl").lines, ["A", ""], "the first field ends at its terminator");
+assert.deepEqual(manyOut.get("/p/y.jsonl").lines, ["B", ""], "the second field starts after it");
 
-// wc -c pads on some systems.
-assert.equal(parseTails(Buffer.from("      2\nA\n"), ["/p/z.jsonl"]).get("/p/z.jsonl").whole, true, "a padded count parses");
+// The framing must not desync when a file yields more bytes than anything
+// predicted — the live-append race a length prefix could not survive.
+const grew = Buffer.concat([Buffer.from("A\nA\nA\n"), NUL, Buffer.from("B\n"), NUL]);
+const grewOut = parseTails(grew, ["/p/x.jsonl", "/p/y.jsonl"]);
+assert.deepEqual(grewOut.get("/p/x.jsonl").lines, ["A", "A", "A", ""], "a field longer than expected stays its own field");
+assert.deepEqual(grewOut.get("/p/y.jsonl").lines, ["B", ""], "and the next file is still read from the right offset");
 
-// A missing file reports 0 and consumes nothing.
-const missing = parseTails(Buffer.from("0\n2\nB\n"), ["/p/gone.jsonl", "/p/y.jsonl"]);
+// A missing file is an empty field: unknown, and it consumes exactly its terminator.
+const missing = parseTails(Buffer.concat([NUL, Buffer.from("B\n"), NUL]), ["/p/gone.jsonl", "/p/y.jsonl"]);
 assert.deepEqual(missing.get("/p/gone.jsonl"), { lines: [], whole: false }, "a missing file is unknown, not empty");
 assert.deepEqual(missing.get("/p/y.jsonl").lines, ["B", ""], "and the next file still parses");
 
-// A truncated stream yields unknown for what never arrived.
-const cut = parseTails(Buffer.from("5\nab"), ["/p/cut.jsonl"]);
-assert.deepEqual(cut.get("/p/cut.jsonl"), { lines: [], whole: false }, "a stream that stopped mid-file is unknown");
+// A stream that stopped before its terminator yields unknown.
+assert.deepEqual(parseTails(Buffer.from("ab"), ["/p/cut.jsonl"]), new Map([["/p/cut.jsonl", { lines: [], whole: false }]]), "an unterminated field is unknown");
+
+// More paths than fields: the surplus is unknown rather than undefined.
+const fewer = parseTails(Buffer.concat([Buffer.from("A\n"), NUL]), ["/p/x.jsonl", "/p/missing.jsonl"]);
+assert.deepEqual(fewer.get("/p/missing.jsonl"), { lines: [], whole: false }, "a path with no field at all is unknown");
 
 console.log("remote-check: OK");
