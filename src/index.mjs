@@ -4,9 +4,10 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
-import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
+import { getLiveSessions, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
+import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, splitLabel, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
@@ -322,19 +323,53 @@ function keyFields(session) {
 export const DETAIL_BACK_INDEX = 10;
 
 /**
- * Does this press mean "tell me more" about the session it lands on? True when
- * the press before it was on the same project — matched on the folder, not the
- * key, so a project's block behaves as one thing: its keys sit together, and
- * going from one of its sessions to another is the same gesture as pressing
- * one key twice. Either way you're already looking at that project, and the
- * second press asks about it.
+ * Does this press mean "tell me more" about the session it lands on?
  *
- * "Before" means immediately before, not within some timeout, so any key
- * outside the project breaks the chain. A press on an empty key can't start
- * one (no session to tell you about) and, having no folder, can't continue one.
+ * The rule is: a press escalates to the detail board only when it **changed
+ * nothing**. If it had to switch you to a different terminal, that was a first
+ * press, however many presses came before it.
+ *
+ * This used to match on the *folder* rather than the session, and that was
+ * right at the time: a press could only raise a window, so every key in a
+ * project's contiguous block did the identical thing and moving along the block
+ * was the same gesture as pressing one key twice. Terminal focus falsified the
+ * premise — pressing key A and key B now reveal two different terminals — and
+ * the symptom was that a project's second session could not be reached at all,
+ * because its key opened the detail board instead of its terminal.
+ *
+ * "Changed nothing" isn't knowable from out here: it needs the window's focus
+ * state and which terminal is in front, both of which live inside the editor.
+ * `windows` is what the extension publishes for exactly this. Inferring it
+ * instead ("you pressed this session last, so its terminal must still be
+ * showing") is one line and wrong in the two cases you'd notice — after
+ * alt-tabbing away, and after clicking another terminal by hand.
+ *
+ * **Degradation is per window, not per machine.** A window that publishes no
+ * state is not running the extension, whatever is installed on disk — on
+ * 2026-08-16 the extension was installed and zero open windows were running it,
+ * because none had been reloaded, so an install check would have said yes and
+ * been useless. Such a window keeps the old folder rule, so reloading one
+ * window changes that window and no other.
  */
-export function isRepeatPress(previous, press) {
-  return press.session_id !== null && press.folder !== null && previous?.folder === press.folder;
+export function isRepeatPress(previous, press, windows = []) {
+  // An empty key can't start a chain (no session to tell you about) and,
+  // having no folder, can't continue one.
+  if (press.session_id === null || press.folder === null) return false;
+
+  const matching = windows.filter((w) => matchFolder(press.folder, w.folders));
+  // No extension in this session's window — today's rule, unchanged.
+  if (matching.length === 0) return previous?.folder === press.folder;
+
+  // Every candidate is asked, rather than one being elected with .find().
+  // Two windows can have the same folder open — CLAUDE.md records exactly that
+  // live on this machine — and electing one would answer from whichever
+  // readdir returned first. Only the window that actually revealed the session
+  // can report it active, so `.some` is self-disambiguating: it needs no way to
+  // tell the windows apart, which is a problem this project has not solved.
+  return (
+    previous?.session_id === press.session_id &&
+    matching.some((w) => w.focused && w.activeSessionId === press.session_id)
+  );
 }
 
 export function detailLayout({ session, tasks, nested, age, slotCount }) {
@@ -827,6 +862,12 @@ async function run() {
   // what it did — this is what makes a second press within one project mean
   // "again", and any key outside it break that chain.
   let lastPress = null;
+  // Last logged "N of M windows have the extension", so the line is printed
+  // when it changes rather than every 2s. Logged on change and not only at
+  // startup because the number changes as you reload windows, and that is
+  // exactly the moment the feedback is worth having — a startup-only message
+  // would need a daemon restart to tell you the reload worked.
+  let lastCoverage = null;
   // Every view change goes through here so the attention key can't stick on
   // a bright pulse frame: pulse() writes without touching btn.drawn, so if the
   // view flips away from "sessions" mid-pulse the attention key can freeze on
@@ -902,7 +943,10 @@ async function run() {
       return;
     }
 
-    const isRepeat = isRepeatPress(lastPress, press);
+    // Read per press, not cached on the poll: which terminal is in front can
+    // change between two presses, and a 2s-stale answer is exactly the wrong
+    // one when the question is "did anything just change".
+    const isRepeat = isRepeatPress(lastPress, press, readWindowStates());
     // Both presses focus the window: between the two you may well have
     // alt-tabbed somewhere else, and a press that opens the detail board but
     // leaves you looking at Safari has done half its job.
@@ -980,6 +1024,17 @@ async function run() {
       } else {
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+        const withExt = readWindowStates().length;
+        const total = countVsCodeWindows();
+        const coverage = `${withExt}/${total}`;
+        if (coverage !== lastCoverage) {
+          lastCoverage = coverage;
+          console.log(
+            withExt === total
+              ? `terminal focus: ${coverage} windows have the extension`
+              : `terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`
+          );
+        }
       }
       if (view.kind !== "detail") await drawUsage(deck, usageButton);
     } catch (err) {

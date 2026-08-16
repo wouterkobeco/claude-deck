@@ -340,11 +340,54 @@ const p1 = { index: 0, session_id: "a", folder: "/repo" };
 const p2 = { index: 1, session_id: "b", folder: "/repo" };
 const other = { index: 2, session_id: "c", folder: "/elsewhere" };
 const empty = { index: 3, session_id: null, folder: null };
-eq(isRepeatPress(null, p1), false, "the first press of all focuses, never opens detail");
-eq(isRepeatPress(p1, p1), true, "the same key twice still opens detail");
-eq(isRepeatPress(p1, p2), true, "a sibling session of the same project counts as the second press");
-eq(isRepeatPress(other, p1), false, "a key from another project breaks the chain");
-eq(isRepeatPress(p1, empty), false, "an empty key has nothing to tell you about");
-eq(isRepeatPress(empty, p1), false, "and pressing one breaks the chain rather than continuing it");
+// Windows the extension is running in. `folders` is what ties a published
+// window to a session; `activeSessionId` is the session whose terminal is
+// actually in front, which is the fact the whole rule turns on.
+const win = (folders, focused, activeSessionId) => ({ pid: 1, folders, focused, activeSessionId });
+const onA = [win(["/repo"], true, "a")];
+
+// No window state at all: nothing is running the extension, so the rule falls
+// back to what it always did. This is the path every un-reloaded window takes,
+// and it must stay exactly as it was.
+eq(isRepeatPress(null, p1, []), false, "the first press of all focuses, never opens detail");
+eq(isRepeatPress(p1, p1, []), true, "without the extension, the same key twice still opens detail");
+eq(isRepeatPress(p1, p2, []), true, "without the extension, a sibling still counts as the second press");
+eq(isRepeatPress(other, p1, []), false, "a key from another project breaks the chain");
+eq(isRepeatPress(p1, empty, []), false, "an empty key has nothing to tell you about");
+eq(isRepeatPress(empty, p1, []), false, "and pressing one breaks the chain rather than continuing it");
+
+// With the extension running, the rule is "did this press change anything".
+// A sibling press DOES change something — it switches to a different
+// terminal — so it is a first press, not a second. This assertion is the exact
+// inverse of the one above it, and deliberately so: matching on the folder was
+// justified by every key in a project's block doing the identical thing, and
+// terminal focus made that false.
+eq(isRepeatPress(p1, p2, onA), false, "with the extension, a sibling switches terminals — a first press");
+eq(isRepeatPress(p1, p1, onA), true, "the same session again, already in front and focused, opens detail");
+
+// Both halves of "changed nothing" are required.
+eq(isRepeatPress(p1, p1, [win(["/repo"], false, "a")]), false, "alt-tabbed away: the press raises the window instead");
+eq(isRepeatPress(p1, p1, [win(["/repo"], true, "b")]), false, "another terminal was clicked by hand: switch back first");
+eq(isRepeatPress(p1, p1, [win(["/repo"], true, null)]), false, "nothing revealed yet, so nothing to escalate from");
+
+// A window that publishes state but doesn't hold this session's folder says
+// nothing about it — that session's window has no extension, so folder rule.
+eq(isRepeatPress(p1, p2, [win(["/elsewhere"], true, "a")]), true, "an unrelated window doesn't govern this project");
+
+// Multi-root: the published folders are matched with matchFolder, so a session
+// under an open folder resolves to that window rather than missing it.
+eq(isRepeatPress(p1, p1, [win(["/", "/repo"], true, "a")]), true, "matchFolder picks the most specific published folder");
+
+// TWO windows open on the same folder — live on this machine, per CLAUDE.md
+// (11854.lock and 53173.lock both claim kob/kob-backend). Only the window that
+// actually revealed the session can report it as active, so every candidate is
+// asked rather than one being elected. Electing one with .find() would answer
+// from whichever readdir happened to return first, and get it wrong half the
+// time — permanently, for every session in that folder.
+const twoWindows = [win(["/repo"], false, null), win(["/repo"], true, "a")];
+eq(isRepeatPress(p1, p1, twoWindows), true, "the window that revealed it answers, whichever order they're read in");
+eq(isRepeatPress(p1, p1, [...twoWindows].reverse()), true, "and read order must not change the answer");
+eq(isRepeatPress(p1, p1, [win(["/repo"], false, null), win(["/repo"], false, "a")]), false,
+   "still false when no matching window is both focused and showing it");
 
 console.log("OK: project grouping");
