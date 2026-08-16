@@ -276,9 +276,24 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Don't be tempted by the transcript's `usage` totals instead: the percentage
   needs the model's window size (1M on some, 200k on others), which the
   transcript doesn't record.
-- **The second install step is the extension, and it needs a window reload.**
-  `npm run ext:install` copies `extension/` into `~/.vscode/extensions`; windows
-  already open when it lands do not have it until `Developer: Reload Window`.
+- **The extension rides on `npm install`; the window reload is the step that
+  can't.** `postinstall` runs `ext:install`, which copies `extension/` into
+  `~/.vscode/extensions` — so a fresh clone or a `npm install` after a pull has
+  the current extension without anyone remembering to ask for it. What that
+  cannot do is reload the editor: windows already open when it lands keep
+  running the *old* code until `Developer: Reload Window`. That is why
+  `ext:install` ends in an `echo` saying so. An automatic upgrade nobody
+  notices is worse than a manual one they do — the copy is silent, the
+  mismatch is silent, and the only symptom is a fixed bug that appears not to
+  be fixed. The `mkdir -p` in that script is not decoration either: without it,
+  a machine that has never run VS Code fails `npm install` outright over a
+  missing directory.
+  **A worktree's `npm install` overwrites the installed extension with that
+  worktree's copy**, which is worth knowing in a repo where most work happens
+  in worktrees — an experimental branch silently becomes the extension every
+  window is running. There is only one `~/.vscode/extensions` slot and no
+  version in its name, so this is inherent rather than fixable here; if it
+  bites, run `npm install` from the main checkout to put it back.
   Terminals survive that reload (`terminal.integrated.enablePersistentSessions`
   defaults on, and ptyHost is a separate process holding the `claude` processes
   up), but prove it on a scratch window before doing it to one with real work in

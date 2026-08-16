@@ -114,20 +114,27 @@ fi
 
 Skip it and everything else still works; the gauge just never draws.
 
-### Reveal the right terminal (optional)
+### Reveal the right terminal
 
 Raising a window is only half the job when several sessions share it — the
 terminal showing may be another session's. A small VS Code extension in this
 repo fixes that: pressing a key reveals that session's terminal, bringing a
 joined split group forward with the right pane active.
 
-```
-npm run ext:install
-```
+`npm install` already installed it — `postinstall` copies `extension/` into
+`~/.vscode/extensions`. `npm run ext:install` does the same thing on its own if
+you want it without a full install.
 
-Then run `Developer: Reload Window` in each VS Code window that is already
-open; new windows pick it up on their own. Without it, everything else works
-exactly as before — the window is raised and the terminal is left alone.
+**One manual step remains, and it's the one people miss:** run
+`Developer: Reload Window` in each VS Code window that was already open. New
+windows pick the extension up on their own, but an open one keeps running
+whatever it loaded at startup — after an upgrade that means the *old* code,
+with no sign that anything is stale. Terminals survive the reload, though it's
+worth proving that on a scratch window before doing it to one with real work in
+it.
+
+Without the extension — or before that reload — everything else works exactly
+as before: the window is raised and the terminal is left alone.
 
 ## Where the data comes from
 
