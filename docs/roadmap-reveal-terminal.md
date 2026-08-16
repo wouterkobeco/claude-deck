@@ -2,6 +2,13 @@
 
 Status: **investigated, not built** (2026-08-11)
 
+The "design that does work" section below is superseded by
+`docs/superpowers/specs/2026-08-15-terminal-focus-extension-design.md`, which
+replaces the port-file + HTTP transport with a single self-routing request file.
+Everything else here — what was ruled out and why — still stands, and a second
+ruled-out investigation (ordering the deck by terminal position) has been added
+at the end.
+
 ## The gap
 
 Pressing a button raises the right VS Code window. It does not change which
@@ -124,3 +131,80 @@ identifies the window exactly instead of inferring it from folder containment.
 
 Worth noting the lock's own `pid` field cannot disambiguate: it is `1316` for
 every lock, the main Code process, shared across windows.
+
+## Also ruled out: ordering the deck by terminal position
+
+Status: **investigated, not built** (2026-08-15)
+
+The ask was for the deck's keys to run left-to-right in the order the terminals
+appear in VS Code's panel — a joined split group read across, or separate tabs in
+tab order. The data exists, in two places that share no join key.
+
+### `terminal.integrated.layoutInfo` — the order, but not the identity
+
+In each workspace's `state.vscdb` (the same database `src/vscode-state.mjs`
+already opens). For a window with a 50/50 joined split plus two other tabs:
+
+```json
+{"tabs": [
+  {"isActive": true, "activePersistentProcessId": 98,
+   "terminals": [{"relativeSize": 0.4997, "terminal": 98},
+                 {"relativeSize": 0.5003, "terminal": 125}]},
+  {"isActive": false, "activePersistentProcessId": 100, "terminals": []},
+  {"isActive": false, "activePersistentProcessId": 101,
+   "terminals": [{"relativeSize": 1, "terminal": 101}]}
+]}
+```
+
+`tabs[].terminals[]` is exactly the left-to-right pane order wanted. But
+`terminal: 98` is a **persistent process id** — ptyHost's internal counter — not
+an OS pid, and nothing in the session registry carries one.
+
+### The extension API — the identity, but not the order
+
+`Terminal` exposes `name`, `processId`, `creationOptions`, `exitStatus`, `state`,
+`shellIntegration` and its methods (`vscode.d.ts`, `export interface Terminal`).
+`processId` is the OS shell pid, which is what joins to a Claude session. There
+is no persistent id, no tab membership, and no pane index.
+
+`creationOptions.location` can in principle be a `TerminalSplitLocationOptions`
+carrying a `parentTerminal` (`vscode.d.ts:7789`), which is *some* group
+information — but it describes how an **extension** asked for a terminal to be
+created. Terminals the user made in the UI, and terminals restored from a
+persistent session, do not carry it, which is every terminal this feature cares
+about.
+
+### Nothing on disk bridges them
+
+Every `%terminal%` key was checked in both the workspace and the global
+`state.vscdb`, plus a hunt for a ptyHost state file. `chat.terminalSessions` is
+keyed by OS pid, which looked promising, but it is Copilot's and maps pid →
+chat session id, with no persistent id in it.
+
+### What's left, and why it wasn't taken
+
+`window.terminals` array order. The d.ts declares only `readonly Terminal[]`
+(`vscode.d.ts:11161`) — **no ordering is documented**; empirically it is
+append-on-create. That equals left-to-right when you split off the rightmost pane
+(the normal Cmd+\ flow), and is wrong after a split from a middle pane or a
+dragged pane, until the window reloads.
+
+Trading `CLAUDE.md`'s "Ordering is first-seen, never activity" — and the muscle
+memory it exists to protect — for an undocumented approximation that silently
+misorders was not worth it.
+
+Reopen if VS Code exposes terminal groups in the API (microsoft/vscode#125916
+and relatives), which would make the order exact and documented.
+
+### Side finding: window position is free, and useless here
+
+Ordering the *project blocks* by where their windows sit was considered too.
+VS Code persists per-window bounds with no permission required, in
+`~/Library/Application Support/Code/User/globalStorage/storage.json` under
+`windowsState`, keyed by folder URI. No extension and no Screen Recording
+permission needed — but on this machine all four open windows report the
+identical rect (`x:0 y:30 2560×1410`), because they are stacked rather than
+tiled. There is no left-to-right window arrangement to mirror.
+
+(The same file's `openedWindows` array is an ordered window list, which would
+work as a block-order source if that were ever wanted.)
