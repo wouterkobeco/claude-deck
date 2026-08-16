@@ -156,14 +156,22 @@ nothing to focus.
 
 A VS Code window opened through Remote-SSH runs `claude` on the remote host, so
 its registry, IDE lock and transcripts live in *that* machine's `~/.claude/`,
-fetched over `ssh` rather than read from disk. Its key shows everything a
-local key does except the context gauge: the daemon fetches `sessions`, `ide`,
-`tasks` and (non-transcript) `projects` from the remote, but not `ctx/`, so
-`~/.claude/ctx/<id>.json` is never fetched no matter what runs on the remote
-machine — a deliberate scope cut, not a setup step you can complete today. The
-status line block below is necessary but not sufficient for a remote gauge: it
-produces that file locally; a remote one would still need a fetch call here to
-collect it. Pressing a remote key works like pressing a local one: the first
+fetched over `ssh` rather than read from disk. Its key shows everything a local
+key does, context gauge included — but the gauge needs the status line block
+above on **that** machine, because the percentage exists nowhere else. Install
+it with:
+
+```
+npm run remote:install -- <host>
+```
+
+which copies your own status line there (or a minimal one, if you have none)
+and points the remote's `settings.json` at it. It refuses rather than
+overwrites: a host that already has a status line, or already sets `statusLine`,
+is left alone and told what to add by hand. This is the only thing here that
+writes to a machine other than yours, which is why it is a command you run
+rather than anything the daemon does — and why it is deliberately not part of
+`npm install`. Pressing a remote key works like pressing a local one: the first
 press raises that VS Code window and reveals the session's own terminal in it,
 the second opens the detail board. The raise goes through the `code` CLI rather
 than `open`, because a remote window's documents are `vscode-remote://` URIs.
