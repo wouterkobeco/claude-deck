@@ -102,9 +102,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   file, so a naive backward scan for `aiTitle` would keep surfacing the
   pre-clear summary. `readTranscriptSignals` stops at the most recent `/clear`
   instead; if nothing's been said since, it reports `clearedEmpty: true` and
-  `index.mjs` shows a blank body rather than falling back to the session name
-  or cwd — those would look like a real answer when the honest one is
-  "nothing yet".
+  `index.mjs` shows a body of `CLEAR` rather than falling back to the session
+  name or cwd — those would look like a real answer when the honest one is
+  "nothing yet". `renderKey` draws that word for any empty body, so the same
+  key can't be blank in one place and named in another.
+  **A session that was never typed into says the same thing**, reached the
+  other way: `startedEmpty`. Claude Code writes a transcript the instant a
+  session opens (a mode line, a snapshot, any SessionStart hook output — all
+  `type:"attachment"`), so the file's existence proves nothing; the first
+  `type:"user"` line is the human's first prompt. That absence only counts
+  when `tailLines` reports `whole` — its window reached byte 0 — because "no
+  user line in the last 64KB" is equally true of a long session mid tool-call
+  stretch. Every other signal in that scan stops at its first hit going
+  backwards, which a tail can only help; this is the one that has to know it
+  saw the whole file.
 - **"idle" can mean "asked you for permission and is waiting."** Claude
   Code's session `status` reports a turn that ends right after an auto-mode
   permission denial exactly the same as any other completed turn: `idle`.

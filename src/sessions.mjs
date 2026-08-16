@@ -98,10 +98,16 @@ function projectDirFor(cwd) {
 /**
  * The last `TAIL_BYTES` of a transcript, split into lines, newest last. These
  * files run to megabytes and everything read from them is near the end.
- * Returns [] rather than throwing: they're written by another process and a
- * poll can land mid-write, or the file can be gone by the time we open it.
+ * Returns no lines rather than throwing: they're written by another process and
+ * a poll can land mid-write, or the file can be gone by the time we open it.
  * The first line is likely a fragment — every caller parses per line and skips
  * what won't parse.
+ *
+ * `whole` says the window reached byte 0, so absence in `lines` is absence in
+ * the file. Every other signal here is found by scanning backwards and stops at
+ * the first hit, which the tail can only ever help; "nothing said in this
+ * session yet" is the one that needs to know it saw everything. A read that
+ * failed reports `false` — unknown, not empty.
  */
 async function tailLines(path) {
   let fh;
@@ -111,9 +117,9 @@ async function tailLines(path) {
     const start = Math.max(0, size - TAIL_BYTES);
     const buffer = Buffer.alloc(size - start);
     const { bytesRead } = await fh.read({ buffer, position: start });
-    return buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    return { lines: buffer.subarray(0, bytesRead).toString("utf8").split("\n"), whole: start === 0 };
   } catch {
-    return [];
+    return { lines: [], whole: false };
   } finally {
     await fh?.close();
   }
@@ -144,6 +150,14 @@ const USER_LINE_MARKER = '"type":"user"';
  * window can see, so a title from before it would describe a conversation
  * that's gone.
  *
+ * `startedEmpty` — the same "nothing to say yet", reached the other way: a
+ * session opened and not yet typed into. Claude Code writes a transcript the
+ * moment the session starts (a mode line, a snapshot, any SessionStart hook
+ * output, all `type:"attachment"`), so the file existing says nothing; the
+ * first `type:"user"` line is the human's first prompt. Requires `whole`,
+ * because "no user line in the tail" is otherwise just as true of a session
+ * whose last 64KB happen to be one long tool-calling stretch.
+ *
  * `blockedOnDenial` — true when the most recent `type:"user"` line (newest
  * first) is a tool-call denied by the auto-mode classifier, with nothing from
  * the human since. Claude Code's own session status goes "idle" once that
@@ -157,7 +171,7 @@ const USER_LINE_MARKER = '"type":"user"';
  */
 export async function readTranscriptSignals(transcriptPath) {
   try {
-    const lines = await tailLines(transcriptPath);
+    const { lines, whole } = await tailLines(transcriptPath);
 
     let aiTitle = null,
       clearedEmpty = false,
@@ -242,9 +256,24 @@ export async function readTranscriptSignals(transcriptPath) {
       }
     }
 
-    return { aiTitle, clearedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
+    // `denialResolved` is set exactly when the scan met a `type:"user"` line,
+    // so it doubles as "the human has said something". The aiTitle and
+    // clearedEmpty guards are belt-and-braces — neither can exist without a
+    // user line ahead of it — so this can only ever blank a key that has
+    // nothing else to draw.
+    const startedEmpty = whole && !denialResolved && !aiTitle && !clearedEmpty;
+
+    return { aiTitle, clearedEmpty, startedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
   } catch {
-    return { aiTitle: null, clearedEmpty: false, blockedOnDenial: false, model: null, effort: null, compactRequestedAt: null };
+    return {
+      aiTitle: null,
+      clearedEmpty: false,
+      startedEmpty: false,
+      blockedOnDenial: false,
+      model: null,
+      effort: null,
+      compactRequestedAt: null,
+    };
   }
 }
 
@@ -287,7 +316,7 @@ export async function readRunningSubagents(dir) {
     }
     if ((Date.now() - mtimeMs) / 1000 > SUBAGENT_IDLE_MAX_S) continue;
 
-    const lines = await tailLines(path);
+    const { lines } = await tailLines(path);
     let stopReason = null;
     for (let i = lines.length - 1; i >= 0 && stopReason === null; i--) {
       // Parse before trusting: "stop_reason" appears inside tool results and

@@ -36,6 +36,7 @@ const signals = (lines) => write(lines).then(() => readTranscriptSignals(path));
 assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   aiTitle: "Fix login bug",
   clearedEmpty: false,
+  startedEmpty: false,
   blockedOnDenial: false,
   model: null,
   effort: null,
@@ -45,6 +46,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine("Add rate limiting")]), {
   aiTitle: "Add rate limiting",
   clearedEmpty: false,
+  startedEmpty: false,
   blockedOnDenial: false,
   model: null,
   effort: null,
@@ -55,6 +57,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   aiTitle: null,
   clearedEmpty: true,
+  startedEmpty: false,
   blockedOnDenial: false,
   model: null,
   effort: null,
@@ -64,12 +67,31 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
 assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   aiTitle: null,
   clearedEmpty: false,
+  startedEmpty: false,
   blockedOnDenial: false,
   model: null,
   effort: null,
   compactRequestedAt: null,
 });
-console.log("OK: aiTitle / clearedEmpty");
+// A session that's open but has never been typed into. Claude Code writes
+// these three the moment it starts — a mode line, a file-history snapshot and
+// any SessionStart hook output, all of which are `type:"attachment"`, not
+// user lines — so the file existing proves nothing about whether anything has
+// happened in it. Same blank body as a /clear.
+const modeLine = JSON.stringify({ type: "mode", mode: "normal" });
+const snapshotLine = JSON.stringify({ type: "file-history-snapshot", snapshot: { trackedFileBackups: {} } });
+const hookLine = JSON.stringify({ type: "attachment", attachment: { hookEvent: "SessionStart", content: "hi" } });
+assert.equal((await signals([modeLine, snapshotLine, hookLine])).startedEmpty, true, "opened, nothing typed yet");
+// The human's first prompt ends it, even before any assistant reply or title.
+assert.equal((await signals([modeLine, hookLine, humanReplyLine])).startedEmpty, false, "one prompt is interaction");
+
+// The guard that keeps this from misfiring on a long session: a tail that
+// didn't reach byte 0 can't prove absence. 64KB of assistant lines with the
+// human's prompt pushed off the top would otherwise blank a working key.
+const filler = JSON.stringify({ type: "assistant", message: { role: "assistant", content: "x".repeat(200) } });
+assert.equal((await signals(Array(400).fill(filler))).startedEmpty, false, "a truncated tail proves nothing");
+
+console.log("OK: aiTitle / clearedEmpty / startedEmpty");
 
 // The case this exists for: a denial with nothing newer from the human.
 assert.equal((await signals([denialLine])).blockedOnDenial, true);
@@ -87,6 +109,7 @@ const userTurnLine = JSON.stringify({ type: "user", message: { content: [] } });
 assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLine, modelLine("claude-opus-5", "high")]), {
   aiTitle: null,
   clearedEmpty: false,
+  startedEmpty: false,
   blockedOnDenial: false,
   model: "claude-opus-5",
   effort: "high",
@@ -97,6 +120,7 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
 assert.deepEqual(await signals([userTurnLine]), {
   aiTitle: null,
   clearedEmpty: false,
+  startedEmpty: false,
   blockedOnDenial: false,
   model: null,
   effort: null,

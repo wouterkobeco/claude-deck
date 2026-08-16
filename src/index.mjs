@@ -309,10 +309,12 @@ function keyFields(session) {
     // aiTitle hasn't been generated this early in a session) or a future
     // Claude Code version changes format.
     //
-    // clearedEmpty skips that whole chain: /clear reuses the transcript file,
-    // so a title found there would be the pre-clear one, and name/cwd would
-    // look like a real answer when the honest one is "nothing yet".
-    label: session.clearedEmpty
+    // Two ways to have nothing to say, and both skip that whole chain.
+    // clearedEmpty: /clear reuses the transcript file, so a title found there
+    // would be the pre-clear one. startedEmpty: the session is open but has
+    // never been typed into. Either way name/cwd would look like a real
+    // answer when the honest one is "nothing yet" — renderKey draws CLEAR.
+    label: session.clearedEmpty || session.startedEmpty
       ? ""
       : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd,
     project: session.folder.split("/").filter(Boolean).pop() ?? "",
