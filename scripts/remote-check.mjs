@@ -213,7 +213,7 @@ assert.deepEqual(await readdir(join(finalDir, "ide")), ["open.lock"], "a lock th
 assert.deepEqual(await readdir(swapRoot), ["host"], "the staging directory is cleaned up");
 
 // --- cadence, backoff and the kill switch ---------------------------------
-import { cachedSources, dueHosts } from "../src/remote-hosts.mjs";
+import { cachedSources, dueHosts, remoteSources } from "../src/remote-hosts.mjs";
 
 const w = (host) => ({ pid: 1, folders: ["/x"], focused: false, activeSessionId: null, host });
 const memo = new Map();
@@ -248,6 +248,23 @@ assert.deepEqual(dueHosts([w("h3")], 999999, memo), ["h3"], "and is due again on
 process.env.STREAMDECK_NO_REMOTE = "1";
 assert.deepEqual(dueHosts([w("h1")], 999999, memo), [], "the kill switch stops every fetch");
 delete process.env.STREAMDECK_NO_REMOTE;
+
+// --- remoteSources: eviction must not strip an in-flight guard -------------
+const evictMemo = new Map();
+evictMemo.set("busy", { lastAt: 0, failures: 0, source: null, inFlight: true });
+evictMemo.set("gone", { lastAt: 0, failures: 0, source: { host: "gone" } });
+// Neither host has a live window this tick. Decoupling the poll from the
+// fetch (allSources() no longer awaits remoteSources()) means a new
+// remoteSources() call can land here while "busy"'s fetch — started by an
+// earlier, still-unsettled call — is genuinely still running: a window
+// reload mid-fetch is routine (every extension update needs one), and its
+// republish under a new pid makes the host briefly absent from `windows`.
+// An unconditional delete would strip the in-flight claim, letting the next
+// tick dispatch a second fetch into the same staging directory and
+// ControlPath as the first.
+await remoteSources([], 0, evictMemo, async () => null);
+assert.ok(evictMemo.has("busy"), "an in-flight entry survives eviction even once its window is gone");
+assert.ok(!evictMemo.has("gone"), "a settled entry for a host with no live window is still evicted");
 
 // --- cachedSources: what the poll reads, no fetch involved -----------------
 const cacheMemo = new Map();

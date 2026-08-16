@@ -65,7 +65,16 @@ export async function remoteSources(windows, now, memo, fetch) {
   if (process.env.STREAMDECK_NO_REMOTE === "1") return [];
 
   const live = new Set(windows.map((w) => w.host).filter(Boolean));
-  for (const host of [...memo.keys()]) if (!live.has(host)) memo.delete(host);
+  for (const host of [...memo.keys()]) {
+    // Never evict a host with a fetch still running: deleting its entry would
+    // take the in-flight claim with it, and a window that closes and reopens
+    // mid-fetch — a reload, which this project treats as routine — would then
+    // dispatch a second fetch into the same staging directory and ControlPath.
+    // Its own completion handler writes the entry back; the next tick evicts it
+    // then, if the host is still gone. `cachedSources` filters by this tick's
+    // live windows regardless, so a stale entry is never returned meanwhile.
+    if (!live.has(host) && !memo.get(host)?.inFlight) memo.delete(host);
+  }
 
   const due = dueHosts(windows, now, memo);
   await Promise.all(
