@@ -91,6 +91,29 @@ assert.equal((await signals([modeLine, hookLine, humanReplyLine])).startedEmpty,
 const filler = JSON.stringify({ type: "assistant", message: { role: "assistant", content: "x".repeat(200) } });
 assert.equal((await signals(Array(400).fill(filler))).startedEmpty, false, "a truncated tail proves nothing");
 
+// A transcript quoting its own markers. Tool results are stored verbatim, so a
+// session that greps this repo or prints another transcript writes
+// `<command-name>/clear</command-name>`, `toolDenialKind` and `"type":"user"`
+// into its own tail as *text* — and every one of those is a `type:"user"`
+// line, because a tool result rides on the user turn. This is not a
+// hypothetical: it blanked this project's own key and painted it as blocked,
+// which is how the raw-substring matching got found.
+const quotingLine = (text) =>
+  JSON.stringify({
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", content: text }] },
+  });
+const quoted = await signals([
+  titleLine("Fix login bug"),
+  quotingLine(`grep output: CLEAR_MARKER = "<command-name>/clear</command-name>"`),
+  quotingLine(`transcript dump: {"type":"user","toolDenialKind":"automode-blocked"}`),
+]);
+assert.equal(quoted.aiTitle, "Fix login bug", "a quoted /clear is not a /clear");
+assert.equal(quoted.clearedEmpty, false, "a quoted /clear is not a /clear");
+assert.equal(quoted.blockedOnDenial, false, "a quoted denial field is not a denial");
+// The same rule on the command that already had it, now sharing the code path.
+assert.equal((await signals([quotingLine("<command-name>/compact</command-name>")])).compactRequestedAt, null);
+
 console.log("OK: aiTitle / clearedEmpty / startedEmpty");
 
 // The case this exists for: a denial with nothing newer from the human.

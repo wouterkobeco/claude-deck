@@ -195,63 +195,82 @@ export async function readTranscriptSignals(transcriptPath) {
 
     for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved || !modelResolved); i--) {
       const line = lines[i];
+      // Every marker below is a substring *pre-filter* only — cheap enough to
+      // run down a megabyte of tail — and nothing is believed until this
+      // line's own JSON says so. A transcript carries tool results verbatim,
+      // so any of these strings can appear inside content that is not the
+      // thing it marks: a session that greps this very file, or prints
+      // another transcript, writes `<command-name>/clear</command-name>`,
+      // `toolDenialKind` and `"type":"user"` into its own tail as *text*.
+      // That's not hypothetical — it blanked this project's own key.
+      // Parsed once, lazily, and shared by all three branches.
+      let obj;
+      let parsed = false;
+      const parse = () => {
+        if (!parsed) {
+          parsed = true;
+          try {
+            obj = JSON.parse(line);
+          } catch {
+            obj = null; // truncated line at the start of the tail slice
+          }
+        }
+        return obj;
+      };
+      // A line's own top-level type, never a substring: `"type":"user"` inside
+      // a tool result would otherwise end the newest-user-line scan on a line
+      // that isn't one.
+      const typeIs = (t) => parse()?.type === t;
+      // Slash commands are written as an ordinary user line whose content
+      // *starts* with the command tag (both formats Claude Code writes).
+      // Content that merely contains one is a quote of it.
+      const isCommand = (name) => {
+        const content = parse()?.message?.content;
+        return (
+          content === name ||
+          (typeof content === "string" && content.startsWith(`<command-name>${name}</command-name>`))
+        );
+      };
 
       if (!titleResolved) {
         if (line.includes("aiTitle")) {
-          try {
-            const obj = JSON.parse(line);
-            if (typeof obj.aiTitle === "string" && obj.aiTitle) {
-              aiTitle = obj.aiTitle;
-              titleResolved = true;
-            }
-          } catch {
-            // truncated line at the start of the tail slice — keep scanning
+          const o = parse();
+          if (typeof o?.aiTitle === "string" && o.aiTitle) {
+            aiTitle = o.aiTitle;
+            titleResolved = true;
           }
         }
-        if (!titleResolved && line.includes(CLEAR_MARKER)) {
+        if (!titleResolved && line.includes(CLEAR_MARKER) && typeIs("user") && isCommand("/clear")) {
           clearedEmpty = true;
           titleResolved = true;
         }
       }
 
-      if (!denialResolved && line.includes(USER_LINE_MARKER)) {
-        blockedOnDenial = line.includes("toolDenialKind");
-        // The same newest-user-line decides compacting. Content must be the
-        // command itself (both formats Claude Code writes), matched on the
-        // parsed value, not the raw line — tool results and ordinary messages
-        // can *contain* the string "/compact" without being the command.
-        try {
-          const obj = JSON.parse(line);
-          const content = obj.message?.content;
-          const isCompactCmd =
-            content === "/compact" ||
-            (typeof content === "string" && content.startsWith("<command-name>/compact</command-name>"));
-          if (isCompactCmd) {
-            const t = Date.parse(obj.timestamp);
-            if (Number.isFinite(t)) compactRequestedAt = t;
-          }
-        } catch {
-          // truncated line at the start of the tail slice — not a command
+      if (!denialResolved && line.includes(USER_LINE_MARKER) && typeIs("user")) {
+        // A top-level field of this line, not a string somewhere in it.
+        blockedOnDenial = parse().toolDenialKind !== undefined;
+        // The same newest-user-line decides compacting: /compact writes its
+        // command line immediately and then goes quiet, so the line is the
+        // start marker.
+        if (isCommand("/compact")) {
+          const t = Date.parse(parse().timestamp);
+          if (Number.isFinite(t)) compactRequestedAt = t;
         }
         denialResolved = true;
       }
 
       // Model and effort ride on assistant lines; the newest one is what the
       // session is running right now. Same scan, no extra read.
-      if (!modelResolved && line.includes('"type":"assistant"')) {
-        try {
-          const obj = JSON.parse(line);
-          // Claude Code writes its own interrupt and API-error entries as
-          // assistant lines claiming `model: "<synthetic>"`. Those are the
-          // moments you're most likely to be looking at the deck, and the tile
-          // would read "<synthetic>" — keep scanning back for a real turn.
-          if (obj.message?.model && obj.message.model !== "<synthetic>") {
-            model = obj.message.model;
-            effort = obj.effort ?? null;
-            modelResolved = true;
-          }
-        } catch {
-          // truncated line at the start of the tail slice — keep scanning
+      if (!modelResolved && line.includes('"type":"assistant"') && typeIs("assistant")) {
+        const o = parse();
+        // Claude Code writes its own interrupt and API-error entries as
+        // assistant lines claiming `model: "<synthetic>"`. Those are the
+        // moments you're most likely to be looking at the deck, and the tile
+        // would read "<synthetic>" — keep scanning back for a real turn.
+        if (o.message?.model && o.message.model !== "<synthetic>") {
+          model = o.message.model;
+          effort = o.effort ?? null;
+          modelResolved = true;
         }
       }
     }

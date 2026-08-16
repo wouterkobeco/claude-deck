@@ -97,6 +97,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   for the same reason `detailLayout` is — it also has to stop a worktree
   session drawing on two keys at once, which `detailLayout` re-pinning its tail
   every poll otherwise causes and which nothing but a deck would show you.
+- **Nothing in a transcript line may be matched as a raw substring.** A
+  transcript stores tool results verbatim, so a session that greps this repo or
+  prints another transcript writes `<command-name>/clear</command-name>`,
+  `toolDenialKind` and `"type":"user"` into its own tail *as text* — on
+  `type:"user"` lines, because a tool result rides on the user turn. Every
+  marker in `readTranscriptSignals` is therefore a cheap pre-filter only, and
+  nothing is believed until that line's own parsed JSON says so: `type` from
+  the top level, a command from `message.content` *starting* with its tag,
+  `toolDenialKind` as a field. The `/compact` detection was written this way
+  from the start; `/clear` and `blockedOnDenial` were not, and this project's
+  own key spent a session reading CLEAR because of it.
 - **`/clear` reuses the transcript file.** It's written as an ordinary line
   (`<command-name>/clear</command-name>`) into the same `.jsonl`, not a new
   file, so a naive backward scan for `aiTitle` would keep surfacing the
