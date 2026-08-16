@@ -178,16 +178,17 @@ npm run board-shot      # re-render the screenshots above
 - Auto-triggered compactions aren't detected; only `/compact` is.
 - **Terminal focus needs the extension installed** — see "Reveal the right
   terminal" under Setup, above. Without it, a press still raises the right
-  window; the terminal inside is left alone, exactly as before this feature.
+  window but leaves the terminal inside alone, exactly as before this
+  feature, and a second press on any key of a project opens the detail board.
+  With it, a press also reveals the session's own terminal, so pressing a
+  *different* session's key switches to that terminal instead of opening
+  detail — only a repeat press on the same session does that now. Windows
+  reloaded and not-yet-reloaded therefore behave differently until every
+  window has been reloaded once.
   With **two windows open on the same folder**, a press can raise one window
   while revealing the terminal in the other: the extension routes by process
   id and gets it right, but the window raise opens a file and macOS picks the
   window. Nothing outside the editor can aim that raise at a specific window.
-  Without it, a second press on any key of a project opens the detail board;
-  with it, pressing a *different* session's key switches to that terminal and
-  only a repeat press on the same session opens detail. Windows reloaded and
-  not-yet-reloaded therefore behave differently until every window has been
-  reloaded once.
 
 Design notes: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 (partly superseded — its hook-based status reporting is gone).

@@ -390,4 +390,39 @@ eq(isRepeatPress(p1, p1, [...twoWindows].reverse()), true, "and read order must 
 eq(isRepeatPress(p1, p1, [win(["/repo"], false, null), win(["/repo"], false, "a")]), false,
    "still false when no matching window is both focused and showing it");
 
+// Capability inference. A window matching the folder proves only that *some*
+// session there is revealable, never this one: `claude` in iTerm on a project
+// also open in VS Code gets a board key (sessions.mjs joins on folder, not
+// terminal) and its window still publishes, but no terminal in it will ever
+// match this session's pid chain — same for tmux or any reparented process.
+// Trusting the window's mere presence would make `matching.some(...)` false
+// forever, which is a regression from before this branch: those sessions'
+// second press used to open detail. Without capability info a window that
+// never reveals this session must, past a grace period, fall back to the
+// folder rule instead of staying permanently stuck.
+const pz = { index: 4, session_id: "z", folder: "/repo" };
+const onlyAEverRevealed = [win(["/repo"], true, "a")]; // matches the folder, never reports "z"
+const T0 = 1_000_000;
+
+eq(
+  isRepeatPress(pz, pz, onlyAEverRevealed, { requestedAt: new Map([["z", T0]]), everActive: new Set(), now: T0 + 5000 }),
+  true,
+  "asked long ago, never once reported active: falls back to the folder rule instead of staying stuck forever"
+);
+eq(
+  isRepeatPress(pz, pz, onlyAEverRevealed, { requestedAt: new Map([["z", T0]]), everActive: new Set(), now: T0 + 200 }),
+  false,
+  "same session inside the grace period: too soon to call it unrevealable, no fallback yet"
+);
+eq(
+  isRepeatPress(pz, pz, [win(["/repo"], true, "z")], { requestedAt: new Map([["z", T0]]), everActive: new Set(["z"]), now: T0 + 5000 }),
+  true,
+  "seen active at least once: the verified rule governs from then on, however long ago it was asked"
+);
+eq(
+  isRepeatPress(pz, pz, onlyAEverRevealed, { requestedAt: new Map([["z", T0]]), everActive: new Set(["z"]), now: T0 + 5000 }),
+  false,
+  "seen active before but not right now (alt-tabbed away): the verified rule still says no rather than the fallback overriding it"
+);
+
 console.log("OK: project grouping");

@@ -46,8 +46,15 @@ export function readWindowStates(dir = WINDOWS_DIR) {
     try {
       const state = JSON.parse(readFileSync(join(dir, name), "utf8"));
       // Without `folders` there is no way to say which window this is, which
-      // is the one thing the caller needs it for.
-      if (!Array.isArray(state.folders)) continue;
+      // is the one thing the caller needs it for. Every element must also be
+      // a string: the only writer is the extension's own
+      // `workspaceFolders.map((f) => f.uri.fsPath)`, so a non-string entry has
+      // no known producer — but this file lands inside `deck.on("down")` via
+      // `isRepeatPress` -> `matchFolder` -> `isUnder` -> `folder.endsWith`,
+      // a synchronous handler nothing may throw inside, and cheap insurance
+      // against a `TypeError` there beats a dark deck while a producer gets
+      // found.
+      if (!Array.isArray(state.folders) || !state.folders.every((f) => typeof f === "string")) continue;
       states.push({
         pid,
         folders: state.folders,

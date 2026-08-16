@@ -222,14 +222,22 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   detected exactly with `isAlive` rather than guessed from a timestamp, which
   is what lets the extension write only on change instead of heartbeating a
   file every 400ms in every open window forever.
-- `extension/` — the other half, ~45 lines of plain CommonJS with no build step
-  and no dependencies, installed by copying it into `~/.vscode/extensions`.
-  Polls the request file every 400ms and calls `terminal.show()`, which
-  activates the terminal's tab group — that is what brings a joined split
-  forward with the right pane active. `extensionKind: ["ui"]` is required, not
-  cosmetic: in a remote window the extension host runs remotely, where the
-  request file is another machine's and the terminal pids are remote pids.
-  **Its version tracks the daemon's and `terminal-focus-check` enforces that** —
+- `extension/` — the other half, plain CommonJS with no build step and no
+  dependencies, installed by copying it into `~/.vscode/extensions` (a line
+  count isn't pinned here for the same reason it isn't for `src/`: it goes
+  stale the moment either side grows). Polls the request file every 400ms and
+  calls `terminal.show()`, which activates the terminal's tab group — that is
+  what brings a joined split forward with the right pane active.
+  `extensionKind: ["ui"]` is required, not cosmetic: in a remote window the
+  extension host runs remotely, where the request file is another machine's
+  and the terminal pids are remote pids. It also does the two things
+  `window-state.mjs` reads: publishes this window's folders/focus/active-terminal
+  to `~/.claude/streamdeck-windows/<pid>.json` on every tick (and immediately
+  after a reveal, so a fast second press doesn't read a stale one), and sweeps
+  dead windows' orphaned files at `activate()` (`reapDeadWindows`) — a crashed
+  window never runs `deactivate()`, and once its pid is recycled the daemon's
+  liveness check would otherwise trust a frozen state file weeks after that
+  window died. **Its version tracks the daemon's and `terminal-focus-check` enforces that** —
   a release bumps `package.json` and `extension/package.json` together. The
   number is not bookkeeping: it is the only way to tell a window running the
   current extension from one still running whatever it loaded at startup, which
@@ -289,8 +297,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   There is a second file in this feature and the daemon does **not** write it:
   `~/.claude/streamdeck-windows/<pid>.json` is published by the extension and
   only read here. Keep it that way — a daemon that deletes files it did not
-  write is a worse trade than the occasional orphan a crashed window leaves,
-  which the liveness check ignores anyway.
+  write is a worse trade than leaving that sweep to the extension, which
+  already does it (`reapDeadWindows()`, on every `activate()`): a crashed
+  window's file would otherwise sit until its pid is recycled onto an
+  unrelated process, at which point the liveness check starts trusting a
+  frozen `focused`/`activeSessionId` from a window that died weeks ago.
   An earlier hook-based version was deleted; don't reintroduce one.
 - **One install step, in the status line.** Context usage is the exception to
   the above: Claude Code hands a session's context percentage to the status

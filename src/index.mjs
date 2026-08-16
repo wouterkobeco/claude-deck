@@ -163,7 +163,7 @@ async function anchorFile(folder) {
 // docs/superpowers/specs/2026-08-15-terminal-focus-extension-design.md. It is
 // a no-op without the extension installed, which is why it's fired and
 // forgotten rather than checked.
-async function focusWindow(session) {
+async function focusWindow(session, requestedAt) {
   const { folder, ide } = session;
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
@@ -186,7 +186,15 @@ async function focusWindow(session) {
   // cold-cache project — stamping the *earlier* press with the *higher*
   // number, so it wins the guard and the deck reveals the wrong terminal.
   // Keep this above the await.
-  if (app === "Visual Studio Code") requestFocus(session);
+  //
+  // Stamped in the same breath as the request, not after it: `isRepeatPress`
+  // uses this to tell "hasn't been revealed yet" from "can never be revealed"
+  // (see its docstring), and that's only a fair test starting from when the
+  // ask actually went out.
+  if (app === "Visual Studio Code") {
+    requestedAt?.set(session.session_id, Date.now());
+    requestFocus(session);
+  }
   const file = (app === "Visual Studio Code" ? await openFileIn(folder) : null) ?? (await anchorFile(folder));
   if (!file) {
     console.error(`focus failed for ${folder}: no file found to open`);
@@ -350,15 +358,51 @@ export const DETAIL_BACK_INDEX = 10;
  * because none had been reloaded, so an install check would have said yes and
  * been useless. Such a window keeps the old folder rule, so reloading one
  * window changes that window and no other.
+ *
+ * **Degradation is also per session, for the same reason.** A window
+ * publishing state proves only that *some* session in its folder is
+ * revealable — not this one. `claude` running in iTerm on a project that's
+ * also open in VS Code still gets a board key (`sessions.mjs` joins on
+ * folder, not on terminal) and its window will publish, but no terminal in it
+ * will ever match; a `tmux` session or any reparented process breaks the pid
+ * ancestry the extension walks the same way. Trusting the window's presence
+ * for that session would make `matching.some(...)` false forever — and since
+ * `previous?.session_id === press.session_id` alone can never open detail,
+ * that session's board would be permanently unreachable, silently. Silence
+ * only becomes proof after giving the extension a fair chance to answer: a
+ * session asked for more than `REVEAL_GRACE_MS` ago and never once reported
+ * active isn't "hasn't happened yet", so past that point the folder rule
+ * takes back over for it, same as a window with no extension at all.
  */
-export function isRepeatPress(previous, press, windows = []) {
+// The extension ticks every 400ms; twice that is enough for a real reveal to
+// have landed if one was ever going to, and short enough not to stall a
+// session that could never be revealed in the first place.
+const REVEAL_GRACE_MS = 1000;
+
+export function isRepeatPress(previous, press, windows = [], capability = {}) {
+  const { everActive = new Set(), requestedAt = new Map(), now = Date.now() } = capability;
   // An empty key can't start a chain (no session to tell you about) and,
   // having no folder, can't continue one.
   if (press.session_id === null || press.folder === null) return false;
 
-  const matching = windows.filter((w) => matchFolder(press.folder, w.folders));
+  // Exact match only — matchFolder also returns truthy for an *ancestor*
+  // match (`nested: true`), which is a different, unrelated window whose
+  // open folder merely contains this one. `press.folder` is by construction
+  // one of a window's own published workspace-folder strings, so the right
+  // window is always an exact match when it has published at all; falling
+  // through to an ancestor match instead suppresses the folder rule for a
+  // session whose own window was never reloaded, on the say-so of a sibling
+  // window that was.
+  const matching = windows.filter((w) => matchFolder(press.folder, w.folders)?.nested === false);
   // No extension in this session's window — today's rule, unchanged.
   if (matching.length === 0) return previous?.folder === press.folder;
+
+  // This session was asked for a while ago and no window has ever reported
+  // it active: proof it can't be revealed through the extension (see the
+  // docstring), so answer with the folder rule instead of a `.some()` that
+  // can only ever be false for it.
+  const askedLongAgo = requestedAt.has(press.session_id) && now - requestedAt.get(press.session_id) >= REVEAL_GRACE_MS;
+  if (askedLongAgo && !everActive.has(press.session_id)) return previous?.folder === press.folder;
 
   // Every candidate is asked, rather than one being elected with .find().
   // Two windows can have the same folder open — CLAUDE.md records exactly that
@@ -864,6 +908,15 @@ async function run() {
   // what it did — this is what makes a second press within one project mean
   // "again", and any key outside it break that chain.
   let lastPress = null;
+  // Sessions some window has ever reported as its `activeSessionId`, and when
+  // `focusWindow` last fired a reveal request for a session — together, what
+  // `isRepeatPress` needs to tell "not revealed yet" from "can never be
+  // revealed" (see its docstring). Both reset per daemon run, same as
+  // `lastPress`: a session's revealability isn't known in advance, and
+  // yesterday's answer for a pid that's since been reused would be worse than
+  // no answer at all.
+  const everActive = new Set();
+  const requestedAt = new Map();
   // Last logged "N of M windows have the extension", so the line is printed
   // when it changes rather than every 2s. Logged on change and not only at
   // startup because the number changes as you reload windows, and that is
@@ -919,7 +972,7 @@ async function run() {
       setView({ kind: "sessions" });
       // A session key still focuses its window on the way out — that's the
       // whole point of pressing one there.
-      if (btn?.assigned) focusWindow(btn.assigned);
+      if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
       lastPress = press;
       return;
     }
@@ -948,11 +1001,11 @@ async function run() {
     // Read per press, not cached on the poll: which terminal is in front can
     // change between two presses, and a 2s-stale answer is exactly the wrong
     // one when the question is "did anything just change".
-    const isRepeat = isRepeatPress(lastPress, press, readWindowStates());
+    const isRepeat = isRepeatPress(lastPress, press, readWindowStates(), { everActive, requestedAt });
     // Both presses focus the window: between the two you may well have
     // alt-tabbed somewhere else, and a press that opens the detail board but
     // leaves you looking at Safari has done half its job.
-    if (btn?.assigned) focusWindow(btn.assigned);
+    if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
     // setView cleared the chain, so the press that opened detail can't also
     // seed the next one — see the detail branch above for the other half.
     if (isRepeat) setView({ kind: "detail", session_id: sessionId });
@@ -1026,13 +1079,26 @@ async function run() {
       } else {
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
-        const withExt = readWindowStates().length;
+        // One read serves both: the coverage log below, and `everActive` —
+        // `isRepeatPress` needs a session ever reported active by *some* poll,
+        // not just this one, so it's accumulated rather than replaced.
+        const windowStates = readWindowStates();
+        for (const w of windowStates) {
+          if (w.activeSessionId) everActive.add(w.activeSessionId);
+        }
+        const withExt = windowStates.length;
         const total = countVsCodeWindows();
         const coverage = `${withExt}/${total}`;
         if (coverage !== lastCoverage) {
           lastCoverage = coverage;
           console.log(
-            withExt === total
+            // >=, not ===: `total` only counts windows running the Claude Code
+            // extension (the IDE locks), `withExt` counts windows running
+            // *this* extension. A window with Claude Code disabled but this
+            // extension still active makes withExt > total, and `===` would
+            // then take the reload-the-rest branch forever, on a machine
+            // that's already fully covered.
+            withExt >= total
               ? `terminal focus: ${coverage} windows have the extension`
               : `terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`
           );

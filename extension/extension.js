@@ -179,10 +179,12 @@ function activate() {
 
 function deactivate() {
   clearInterval(timer);
-  // A window that closes cleanly takes its state file with it. One that
-  // crashes leaves an ~80-byte orphan, which the daemon's liveness check
-  // ignores forever — cheaper than a reaper, and the daemon must not delete
-  // files it did not write.
+  // The clean-exit half of cleanup: a window that closes normally takes its
+  // own state file with it here. A window that crashes never reaches this
+  // function at all — that's what `reapDeadWindows()` in `activate()` is for,
+  // sweeping what a crash leaves behind on the next window that opens or
+  // reloads. The daemon still must not delete files it did not write, which is
+  // why that sweep is the extension's job rather than the daemon's.
   try {
     unlinkSync(STATE_FILE);
   } catch {
