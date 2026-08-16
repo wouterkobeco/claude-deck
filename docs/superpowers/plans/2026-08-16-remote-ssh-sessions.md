@@ -511,7 +511,10 @@ The heart of it. After this task a remote source produces the same sessions as a
 - Produces, from `src/sessions.mjs`:
   - `localSource(root?) -> { host: null, root: string, isAlive: (pid: number) => boolean, tail: (path: string) => Promise<{lines: string[], whole: boolean}> }`
   - `getLiveSessions(sources?: Source[])` — defaults to `[localSource()]`, unchanged for every existing caller.
-  - Every returned session gains `host: string | null`.
+  - Every returned session gains `host: string | null` **and `root: string`**.
+  - `readTaskList(sessionId, root?)` gains an optional trailing root.
+
+`root` on the session is not decoration. `readTaskList` is exported and called from `refreshDetail` in `index.mjs`, outside `getLiveSessions` entirely — the detail board reads a session's task list per poll, by design. Without the source's root travelling on the session, that call resolves a remote session's tasks against the *local* `~/.claude/tasks/`, which either finds nothing or finds a local session's tasks under a colliding id. Stamping it in `sessionsFrom` costs one field and makes every out-of-band reader correct by construction.
   - `transcriptPathFor({cwd, sessionId}, root?)` and `readRunningSubagents(dir, tail?)` gain optional trailing parameters; existing calls are unaffected.
   - `tailLines` becomes **exported**. `remote-fs.mjs`'s injected `tail` falls back to it for subagent transcripts, which ride in the tar and are read off the fetched tree like any local file.
 
@@ -667,7 +670,7 @@ Inside `sessionsFrom`, apply the three substitutions and stamp the host:
 - `readJsonFiles(SESSIONS_DIR)` → `readJsonFiles(join(source.root, "sessions"))`
 - `readJsonFiles(IDE_DIR, [".lock"])` → `readJsonFiles(join(source.root, "ide"), [".lock"])`
 - `if (!isAlive(s.pid)) continue;` → `if (!source.isAlive(s.pid)) continue;`
-- in the `matched.push({...})` object, add `host: source.host,`
+- in the `matched.push({...})` object, add `host: source.host,` and `root: source.root,`
 - `projectDirFor(s.cwd)` → `projectDirFor(s.cwd, source.root)`
 - `readRunningSubagents(dir)` → `readRunningSubagents(dir, source.tail)`
 - `readTranscriptSignals(transcriptPathFor({...}))` → `readTranscriptSignals(transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root), source.tail)`
@@ -733,6 +736,22 @@ eq(
 // And a local session is not merged with a remote one at the same path.
 eq(folderKeyFor({ folder: "/x", host: null }), "/x", "a local key is the bare folder, as before");
 eq(folderKeyFor({ folder: "/x", host: "h" }), "h:/x", "a remote key is qualified by its host");
+
+// isRepeatPress must not let a window on one host answer for a session on
+// another. Both fall back to the folder rule when no window publishes, and that
+// rule compares paths — which two hosts can share.
+const localPress = { index: 0, session_id: "a", folder: "/home/pi/x", host: null };
+const remotePress = { index: 1, session_id: "b", folder: "/home/pi/x", host: "192.168.2.6" };
+eq(isRepeatPress(remotePress, localPress, []), false, "a remote press does not make a local press at the same path a repeat");
+eq(isRepeatPress(localPress, localPress, []), true, "the same local session at the same path still repeats");
+
+// A published window on the wrong host must not satisfy the reveal test.
+const remoteWindow = { pid: 1, folders: ["/home/pi/x"], focused: true, activeSessionId: "a", host: "192.168.2.6" };
+eq(
+  isRepeatPress({ ...localPress }, localPress, [remoteWindow]),
+  true,
+  "a window on another host is ignored, so the local folder rule still answers"
+);
 ```
 
 Add `folderKeyFor` to the import at `scripts/slots-check.mjs:5`.
@@ -790,15 +809,34 @@ and in the block test:
 
 At the three `accentFor(session.folder)` call sites (lines ~605, ~646, ~738), pass the key: `accentFor(folderKeyFor(session))`.
 
-- [ ] **Step 4: Host-qualify the window match in `isRepeatPress`**
+- [ ] **Step 4: Host-qualify `isRepeatPress` — three sites, not one**
 
-A remote window's folder must not match a local session's cwd. In `isRepeatPress`, where a published window's folders are matched against the pressed session, require the host to agree first:
+A remote window's folder must not match a local session's cwd, and a remote session's folder must not satisfy a local one's repeat test. The press object is built at `src/index.mjs:966` as `{ index, session_id, folder }` — there is no nested session object. Add `host` to it:
 
 ```js
-  const windowsOnHost = windows.filter((w) => (w.host ?? null) === (press.session?.host ?? null));
+    const host = btn?.assigned?.host ?? null;
+    const press = { index: control.index, session_id: sessionId, folder, host };
 ```
 
-and match against `windowsOnHost` in place of `windows`.
+Then in `isRepeatPress` (`src/index.mjs:388`), three places compare folders and all three must compare hosts too:
+
+1. The window match at line 402 — a published window only counts if it is on the same host as the press:
+
+```js
+  const matching = windows.filter(
+    (w) => (w.host ?? null) === press.host && matchFolder(press.folder, w.folders)?.nested === false
+  );
+```
+
+2. The no-extension fallback at line 404, and 3. the grace-expired fallback at line 411 — both read `previous?.folder === press.folder`, which is true for two different hosts holding the same path. Both become:
+
+```js
+  const sameProject = previous?.folder === press.folder && (previous?.host ?? null) === press.host;
+```
+
+and use `sameProject` in place of the folder comparison.
+
+Note the shape of the guard: `w.host` and `previous.host` may be `undefined` on objects built before this change, so they are normalised with `?? null`; `press.host` is always set explicitly above and needs no coalescing.
 
 - [ ] **Step 5: Run the checks**
 
@@ -1172,6 +1210,14 @@ async function allSources() {
 Replace every `await getLiveSessions()` in the poll loop (lines ~587, ~627, ~702, ~1051, ~1069) with `await getLiveSessions(await allSources())`.
 
 Add `import { tmpdir } from "node:os";` and `join` to the existing `node:path` import if not already present.
+
+- [ ] **Step 5b: Point the detail board's task read at the session's own root**
+
+`refreshDetail` calls `readTaskList(session.session_id)` outside `getLiveSessions`, so it needs the root the session came from (added in Task 4):
+
+```js
+      const tasks = await readTaskList(session.session_id, session.root);
+```
 
 - [ ] **Step 6: Short-circuit `focusWindow` for a remote session**
 
