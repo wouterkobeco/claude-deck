@@ -6,6 +6,26 @@ import { isAlive } from "./sessions.mjs";
 const WINDOWS_DIR = join(homedir(), ".claude", "streamdeck-windows");
 
 /**
+ * A host string safe to hand to `ssh` as an argument.
+ *
+ * Every other field this file returns is consumed as data — `folders` is
+ * checked for being strings only because a non-string would throw inside
+ * `folder.endsWith`, in a synchronous press handler. `host` is different in
+ * kind: it is *executed*. A value beginning with `-` is taken by `ssh` as an
+ * option, so `-oProxyCommand=…` would run a command on this machine, and
+ * `execFile` does not help because the parsing is ssh's own. The daemon also
+ * passes it after `--`; this is the other half of that pair.
+ *
+ * Deliberately narrower than the set of legal hostnames. A host this rejects
+ * is a host you can add to `~/.ssh/config` under a plain alias.
+ */
+const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function validHost(value) {
+  return typeof value === "string" && HOST_RE.test(value) ? value : null;
+}
+
+/**
  * What each open VS Code window can see, published by the extension: the
  * folders it has open, whether it's the focused window, and which session's
  * terminal is currently in front.
@@ -60,6 +80,7 @@ export function readWindowStates(dir = WINDOWS_DIR) {
         folders: state.folders,
         focused: state.focused === true,
         activeSessionId: state.activeSessionId ?? null,
+        host: validHost(state.host),
       });
     } catch {
       // mid-write or corrupt — skip this window, not the whole read
@@ -84,8 +105,17 @@ const IDE_DIR = join(homedir(), ".claude", "ide");
  * and make a fully-reloaded machine still look incomplete. A lock with no
  * `ideName` counts as VS Code — that's the same normalisation `focusWindow`
  * already applies, and it's the common case.
+ *
+ * A remote window's IDE lock lives on the remote host, not in `dir` — so it is
+ * missing from the count above while its published state (`states`, what
+ * `readWindowStates` already read this poll) is present in the numerator.
+ * Counting it here keeps both sides describing the same population. `pid` is
+ * the same key `readWindowStates` already uses per window (the extension host
+ * always runs locally, even against a remote SSH folder — see `extensionKind`
+ * in extension/), so the `Set` is one entry per open window, matching what the
+ * numerator counts a remote window as.
  */
-export function countVsCodeWindows(dir = IDE_DIR) {
+export function countVsCodeWindows(dir = IDE_DIR, states = []) {
   let names;
   try {
     names = readdirSync(dir);
@@ -102,5 +132,5 @@ export function countVsCodeWindows(dir = IDE_DIR) {
       // mid-write or corrupt — not countable
     }
   }
-  return count;
+  return count + new Set(states.filter((s) => s.host).map((s) => s.pid)).size;
 }

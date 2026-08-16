@@ -4,7 +4,9 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
-import { getLiveSessions, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
+import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
+import { fetchSource } from "./remote-fs.mjs";
+import { cachedSources, remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
@@ -55,6 +57,38 @@ const sessionOrder = new Map();
 const nestedOrder = new Map();
 let arrivals = 0;
 
+// One entry per remote host: its last fetch, its consecutive failures, and the
+// source that fetch produced. Held here for the daemon's lifetime, like
+// folderOrder — a host that goes away is evicted by remoteSources().
+const remoteMemo = new Map();
+// Not os.tmpdir(): on macOS that's a long per-user path under /var/folders,
+// and fetchSource's ControlPath socket (that path, plus "cm-<host>", plus
+// ssh's own random suffix while the bind is in flight) blows the ~104-byte
+// Unix domain socket limit — measured live: ssh fails with `unix_listener:
+// path "...too long for Unix domain socket"` on every fetch, every time,
+// silently reported by fetchSource as an ordinary "host unreachable". /tmp is
+// a short, stable symlink on macOS and this daemon is macOS-only already.
+const SCRATCH_ROOT = `/tmp/streamdeck-remote-${process.pid}`;
+
+// Every session-reading poll goes through this rather than calling
+// getLiveSessions() bare: a remote key only exists because its source made it
+// into this list. SSH is on no critical path: a fetch is two ssh calls, each
+// bounded by a 15s hard kill, and awaiting it here would pause every local
+// key's redraw for as long as some remote host is unreachable — a Raspberry
+// Pi going quiet must not freeze the board it shares with real projects. So
+// the fetch is started, not awaited, and this returns whatever the last one
+// produced. Cost: the first poll after a remote window appears shows no
+// remote key until that fetch lands. Freshness, not frames.
+function allSources() {
+  const windows = readWindowStates();
+  // remoteSources() cannot reject on its own (every host's fetch is caught
+  // individually), but this call is unwatched — nothing here is in a position
+  // to catch a rejection, so an uncaught one would take the whole daemon down
+  // rather than just a poll tick. Belt, not suspenders.
+  void remoteSources(windows, Date.now(), remoteMemo, (host) => fetchSource(host, SCRATCH_ROOT)).catch(() => {});
+  return [localSource(), ...cachedSources(windows, remoteMemo)];
+}
+
 // Colour is picked from what no other live folder is using, not from
 // ACCENTS[position % 8]. Position grows for the daemon's lifetime and is
 // deliberately never pruned, so the modulo guaranteed a collision: once nine
@@ -70,6 +104,22 @@ const folderAccent = new Map();
 function claimAccent(folder, liveFolders) {
   const taken = new Set([...liveFolders].filter((f) => f !== folder).map((f) => folderAccent.get(f)));
   return ACCENTS.find((c) => !taken.has(c)) ?? ACCENTS[folderAccent.size % ACCENTS.length];
+}
+
+/**
+ * A folder's identity across the whole board.
+ *
+ * Two hosts can hold the same path — `/home/pi/x` on two Raspberry Pis is the
+ * live case here — and everything that groups a project keys on the folder:
+ * block ordering, accent colour, and the "is this the first key of a block"
+ * test. Unqualified, those two projects merge into one block wearing one
+ * colour, which nothing on the deck explains.
+ *
+ * A local session's key is the bare folder, so nothing about a machine with no
+ * remote hosts changes, including the accent it has been wearing.
+ */
+export function folderKeyFor(session) {
+  return session.host ? `${session.host}:${session.folder}` : session.folder;
 }
 
 export function accentFor(folder) {
@@ -168,7 +218,12 @@ async function anchorFile(folder) {
 // a no-op without the extension installed, which is why it's fired and
 // forgotten rather than checked.
 async function focusWindow(session, requestedAt) {
-  const { folder, ide } = session;
+  const { folder, ide, host } = session;
+  // A remote session's folder is another machine's path. Raising its window is
+  // spec B — see docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
+  // Until then a remote key reads and does not act, which is quieter than
+  // searching this filesystem for a directory that is not on it.
+  if (host) return;
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`
@@ -227,10 +282,11 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   const real = sessions.filter((s) => !s.nested);
   const nested = sessions.filter((s) => s.nested);
 
-  const liveFolders = new Set(real.map((s) => s.folder));
+  const liveFolders = new Set(real.map(folderKeyFor));
   for (const s of real) {
-    if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);
-    if (!folderAccent.has(s.folder)) folderAccent.set(s.folder, claimAccent(s.folder, liveFolders));
+    const key = folderKeyFor(s);
+    if (!folderOrder.has(key)) folderOrder.set(key, folderOrder.size);
+    if (!folderAccent.has(key)) folderAccent.set(key, claimAccent(key, liveFolders));
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
   for (const s of nested) {
@@ -248,7 +304,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
 
   const ordered = [...real].sort(
     (a, b) =>
-      folderOrder.get(a.folder) - folderOrder.get(b.folder) ||
+      folderOrder.get(folderKeyFor(a)) - folderOrder.get(folderKeyFor(b)) ||
       sessionOrder.get(a.session_id) - sessionOrder.get(b.session_id)
   );
 
@@ -264,7 +320,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     // show in exactly one place per project. Nested sessions are sorted by
     // their own first-seen order (nestedOrder), not whatever order this
     // particular poll happened to report them in.
-    const isPrimary = i === 0 || visible[i - 1].folder !== s.folder;
+    const isPrimary = i === 0 || folderKeyFor(visible[i - 1]) !== folderKeyFor(s);
     const own = nestedFor(s, nested, isPrimary);
     if (isPrimary || own.length) {
       nestedBySlot[i] = own.sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
@@ -285,7 +341,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
  */
 export function nestedFor(session, nested, primary) {
   return nested.filter((n) =>
-    n.parent ? n.parent === session.session_id : primary && n.folder === session.folder
+    n.parent ? n.parent === session.session_id : primary && folderKeyFor(n) === folderKeyFor(session)
   );
 }
 
@@ -391,6 +447,15 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // having no folder, can't continue one.
   if (press.session_id === null || press.folder === null) return false;
 
+  // Two hosts can publish the same folder — the same host-merge problem
+  // `folderKeyFor` solves for the board applies here too, so a window is only
+  // a candidate when it's on the press's own host. `w.host` can be undefined
+  // on a window object built before this change, so it's normalised with
+  // `?? null`; `press.host` is always set explicitly where the real press is
+  // built (`deck.on("down")`), but `sameProject` below coalesces it too — a
+  // future call site that forgets `host` must not silently turn a real repeat
+  // into a false one, and the cost of the extra `?? null` is nothing.
+  //
   // Exact match only — matchFolder also returns truthy for an *ancestor*
   // match (`nested: true`), which is a different, unrelated window whose
   // open folder merely contains this one. `press.folder` is by construction
@@ -399,16 +464,31 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // through to an ancestor match instead suppresses the folder rule for a
   // session whose own window was never reloaded, on the say-so of a sibling
   // window that was.
-  const matching = windows.filter((w) => matchFolder(press.folder, w.folders)?.nested === false);
+  const matching = windows.filter(
+    (w) => (w.host ?? null) === press.host && matchFolder(press.folder, w.folders)?.nested === false
+  );
+  // Same path, same host — the fallback the folder rule reduces to whenever
+  // there's no window to ask. Two hosts sharing a path must not pass this
+  // just because the paths match.
+  const sameProject = previous?.folder === press.folder && (previous?.host ?? null) === (press.host ?? null);
   // No extension in this session's window — today's rule, unchanged.
-  if (matching.length === 0) return previous?.folder === press.folder;
+  if (matching.length === 0) return sameProject;
+
+  // A remote window can never reveal a terminal (that is the deferred spec B),
+  // so the extension's answer is a permanent "no" rather than "not yet" — the
+  // same case `askedLongAgo` handles for a local session no window will ever
+  // report. Without this, `requestedAt` is never populated for a remote
+  // session (focusWindow returns before it is set), so the grace period never
+  // expires and the `.some()` below is false forever: the detail board would be
+  // unreachable for every remote key, silently.
+  if (press.host) return sameProject;
 
   // This session was asked for a while ago and no window has ever reported
   // it active: proof it can't be revealed through the extension (see the
   // docstring), so answer with the folder rule instead of a `.some()` that
   // can only ever be false for it.
   const askedLongAgo = requestedAt.has(press.session_id) && now - requestedAt.get(press.session_id) >= REVEAL_GRACE_MS;
-  if (askedLongAgo && !everActive.has(press.session_id)) return previous?.folder === press.folder;
+  if (askedLongAgo && !everActive.has(press.session_id)) return sameProject;
 
   // Every candidate is asked, rather than one being elected with .find().
   // Two windows can have the same folder open — CLAUDE.md records exactly that
@@ -584,7 +664,7 @@ async function refreshStats(deck, buttons, stats) {
 // poll. Unlike the detail view this deliberately re-sorts while it's up — a
 // session that gets unblocked should leave the queue you're looking at.
 async function refreshAttention(deck, buttons, attentionButton) {
-  const sessions = await getLiveSessions();
+  const sessions = await getLiveSessions(await allSources());
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const count = await drawAttention(deck, attentionButton, sessions, false);
 
@@ -602,7 +682,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
         return;
       }
       const { label, project } = keyFields(session);
-      const accent = accentFor(session.folder);
+      const accent = accentFor(folderKeyFor(session));
 
       // One object drives both the render call and the drawn signature (the
       // shape refreshDetail set and refresh() now also follows) so a field
@@ -624,7 +704,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
 }
 
 async function refresh(deck, buttons, slots, nestedBySlot) {
-  const sessions = await getLiveSessions();
+  const sessions = await getLiveSessions(await allSources());
   assignSlots(sessions, slots, nestedBySlot);
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
 
@@ -643,7 +723,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
         return;
       }
       const { label, project } = keyFields(session);
-      const accent = accentFor(session.folder);
+      const accent = accentFor(folderKeyFor(session));
       const nestedStates = btn.nestedSessions.map((n) => n.state);
       // The key stands for its whole project block, so its colour takes the
       // most urgent state in it: a session working only through a worktree
@@ -699,7 +779,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
 // rather than in getLiveSessions so the 2s poll costs exactly what it did
 // before this view existed.
 async function refreshDetail(deck, buttons, view) {
-  const sessions = await getLiveSessions();
+  const sessions = await getLiveSessions(await allSources());
   const session = sessions.find((s) => s.session_id === view.session_id);
   if (!session) {
     // It ended while you were looking at it. Stale-but-plausible tiles (a
@@ -730,12 +810,12 @@ async function refreshDetail(deck, buttons, view) {
   // per project you can be looking at. They're short-lived, so one may well
   // vanish between two polls.
   const nested = nestedFor(session, sessions.filter((s) => s.nested), true);
-  const tasks = await readTaskList(session.session_id);
+  const tasks = await readTaskList(session.session_id, session.root);
   const { age } = keyFields(session);
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;
   const tiles = holdTiles(view.tiles, fresh, tasks, sessions);
-  const accent = accentFor(session.folder);
+  const accent = accentFor(folderKeyFor(session));
 
   await Promise.all(
     buttons.map(async (btn, i) => {
@@ -963,7 +1043,8 @@ async function run() {
     const btn = isUsage || isAttention ? null : buttons[control.index];
     const sessionId = btn?.assigned?.session_id ?? null;
     const folder = btn?.assigned?.folder ?? null;
-    const press = { index: control.index, session_id: sessionId, folder };
+    const host = btn?.assigned?.host ?? null;
+    const press = { index: control.index, session_id: sessionId, folder, host };
 
     // The detail board owns the whole deck, so it leaves only by its own back
     // key. Every other key there is a tile describing something — pressing a
@@ -1048,7 +1129,7 @@ async function run() {
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         await refreshStats(deck, buttons, statTiles);
-        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(), false);
+        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(await allSources()), false);
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);
         // The queue re-sorts while it's up so an unblocked session leaves it;
@@ -1099,7 +1180,7 @@ async function run() {
           if (w.activeSessionId) everActive.add(w.activeSessionId);
         }
         const withExt = windowStates.length;
-        const total = countVsCodeWindows();
+        const total = countVsCodeWindows(undefined, windowStates);
         const coverage = `${withExt}/${total}`;
         if (coverage !== lastCoverage) {
           lastCoverage = coverage;

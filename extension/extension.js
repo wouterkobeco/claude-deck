@@ -101,6 +101,28 @@ async function tick() {
   }
 }
 
+// The host half of a Remote-SSH window's identity, for the daemon's own ssh.
+//
+// A window carries a single remote authority — local and remote folders cannot
+// be mixed in one window — so folder 0 is representative rather than arbitrary.
+// The agreement is asserted anyway: it costs nothing and catches the day that
+// stops being true.
+//
+// Only the plain `ssh-remote+<host>` form is understood. Dev containers and WSL
+// encode their authority as hex JSON (`dev-container+7b22686f7374…`), which is
+// a remote kind this feature does not support and must never reach `ssh`.
+const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function sshHost(folders) {
+  if (vscode.env.remoteName !== "ssh-remote" || !folders.length) return null;
+  const authorities = new Set(folders.map((f) => f.uri.authority));
+  if (authorities.size !== 1) return null;
+  const [authority] = authorities;
+  if (!authority.startsWith("ssh-remote+")) return null;
+  const host = authority.slice("ssh-remote+".length);
+  return HOST_RE.test(host) ? host : null;
+}
+
 // Publish what this window can see. Synchronous and cheap; the daemon reads it
 // from a synchronous key-press handler, so there is nothing to await on either
 // end.
@@ -112,10 +134,12 @@ function publishState() {
   try {
     const activeSessionId =
       revealed && vscode.window.activeTerminal === revealed.terminal ? revealed.sessionId : null;
+    const folders = vscode.workspace.workspaceFolders ?? [];
     const state = JSON.stringify({
-      folders: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),
+      folders: folders.map((f) => f.uri.fsPath),
       focused: vscode.window.state.focused,
       activeSessionId,
+      host: sshHost(folders),
     });
     if (state === lastState) return;
     mkdirSync(WINDOWS_DIR, { recursive: true });

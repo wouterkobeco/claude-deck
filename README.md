@@ -149,9 +149,24 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
+| `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |
 
 A session whose folder isn't open in a VS Code window is dropped: there'd be
 nothing to focus.
+
+A VS Code window opened through Remote-SSH runs `claude` on the remote host, so
+its registry, IDE lock and transcripts live in *that* machine's `~/.claude/`,
+fetched over `ssh` rather than read from disk. Its key shows everything a
+local key does except the context gauge: the daemon fetches `sessions`, `ide`,
+`tasks` and (non-transcript) `projects` from the remote, but not `ctx/`, so
+`~/.claude/ctx/<id>.json` is never fetched no matter what runs on the remote
+machine — a deliberate scope cut, not a setup step you can complete today. The
+status line block below is necessary but not sufficient for a remote gauge: it
+produces that file locally; a remote one would still need a fetch call here to
+collect it. Pressing a remote key does nothing for now — it
+reads, it doesn't act. A remote window also needs its own one-time step: it
+must be reloaded once after upgrading before it publishes which host it's on,
+same as the terminal-focus extension version above.
 
 ## Checks
 
@@ -169,6 +184,7 @@ npm run title-check     # title / cleared / blocked-on-denial / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check    # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
+npm run remote-check    # remote source: host validation, tar/tail framing, matches a local source's output
 npm run board-shot      # re-render the screenshots above
 ```
 
