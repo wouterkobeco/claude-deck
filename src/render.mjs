@@ -216,14 +216,14 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room. It never actually sits on its own red
   // (STATE_COLORS.requires_action, kept only for colors-check's contrast
-  // sweep): it flashes between the two gold tones waiting already owns —
-  // bright on-phase, dark gold off-phase — so it reads as the same "blocked
-  // on you" family as waiting, just moving.
+  // sweep): it flashes between waiting's own dark gold and plain idle grey,
+  // so it reads as "waiting on you" surfacing and settling, not a colour
+  // fighting a brighter version of itself.
   const color =
     state === "requires_action"
       ? pulse
-        ? "#ffc107"
-        : STATE_COLORS.waiting
+        ? STATE_COLORS.waiting
+        : STATE_COLORS.idle
       : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white. The bar
