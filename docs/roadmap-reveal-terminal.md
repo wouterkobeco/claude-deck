@@ -193,8 +193,22 @@ Trading `CLAUDE.md`'s "Ordering is first-seen, never activity" — and the muscl
 memory it exists to protect — for an undocumented approximation that silently
 misorders was not worth it.
 
-Reopen if VS Code exposes terminal groups in the API (microsoft/vscode#125916
-and relatives), which would make the order exact and documented.
+Reopen if VS Code exposes terminal groups in the API, which would make the
+order exact and documented. Watch microsoft/vscode#253020 (read/reorder
+terminal tabs, open since 2025) — #56495, the create-side ask, closed when
+`TerminalSplitLocationOptions` shipped, and that shipped API is write-only.
+
+**Re-checked 2026-08-16, still ruled out.** Three probes beyond the original:
+the shell environment of a live VS Code terminal carries no terminal identity
+at all (`TERM_PROGRAM`, git-askpass plumbing, nothing with a terminal or
+persistent-process id — so no env bridge between layoutInfo's persistent id
+and the OS pid); upstream `src/vscode-dts/` has no terminal-groups or
+pane-order *proposed* API even drafted (and a hand-copied extension can't use
+proposed APIs in stable VS Code regardless); and the installed VS Code was
+still 1.131.0, the exact version the original investigation used. The two
+data sources still share no join key — order lives in `layoutInfo` keyed by
+persistent process id, identity lives in `Terminal.processId` — and nothing
+on disk, in the environment, or in any API bridges them.
 
 ### Side finding: window position is free, and useless here
 
