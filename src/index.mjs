@@ -25,6 +25,11 @@ const RECONNECT_MS = 5000;
 // USB HID link across up to 14 keys at once (13 session keys plus the
 // attention key).
 const PULSE_MS = 400;
+// requires_action's own beat, 50% slower than the shared PULSE_MS tick —
+// deliberately off that tick rather than a slower divisor of it (every 2nd
+// or 3rd tick would land on 800ms/1200ms, not the 600ms asked for), so it's
+// timed against the wall clock instead of the tick counter.
+const REQUIRES_ACTION_PULSE_MS = PULSE_MS * 1.5;
 // The attention key blinks to announce a *new* waiter, then settles to solid
 // red — a key that flashes for an hour stops meaning anything.
 const ATTENTION_BLINK_MS = 5000;
@@ -786,9 +791,10 @@ async function refreshDetail(deck, buttons, view) {
 }
 
 // Flashes every requires_action key between dark gold and its idle
-// background — the one state that's actually blocked on you, so the one
-// worth catching your eye. The attention key joins the same beat, and only
-// when its cached count is nonzero — a CLEAR key stays dark and still. Runs on
+// background, on its own slower beat (REQUIRES_ACTION_PULSE_MS) — the one
+// state that's actually blocked on you, so the one worth catching your eye.
+// The attention key blinks on the plain PULSE_MS tick instead, and only when
+// its cached count is nonzero — a CLEAR key stays dark and still. Runs on
 // its own faster tick alongside the main poll rather than inside it:
 // `refresh` only redraws on change, but a pulse must redraw on a fixed beat
 // regardless. `btn.drawn` is left alone so the next `refresh`/`drawAttention`
@@ -799,6 +805,10 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
   while (!isDisconnected()) {
     bright = !bright;
     tick++;
+    // Its own wall-clock beat, not a multiple of `tick`: on the tick counter
+    // 400ms only divides evenly into 800ms/1200ms/etc, never the 600ms this
+    // asks for.
+    const actionBright = Math.floor(Date.now() / REQUIRES_ACTION_PULSE_MS) % 2 === 0;
     if (!isOverlayView()) {
       try {
         await Promise.all([
@@ -814,15 +824,16 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
               // The sweep advances a twelfth per 400ms tick — a full turn every
               // ~5s, slow enough to read as deliberate against a compaction
               // that runs a minute or two. The red gauge flips red/white every
-              // other tick, i.e. about once a second: half the requires_action
-              // beat, so the two don't read as the same alarm, but a hard flip
-              // rather than anything gradual. Two slow fades shipped before it
-              // (a pink one, then a white one) and neither was visible on the
-              // deck — 2px of line is too little to carry a gradient.
+              // other tick, i.e. about once a second — close to but off the
+              // requires_action beat, so the two don't read as the same
+              // alarm, but a hard flip rather than anything gradual. Two slow
+              // fades shipped before it (a pink one, then a white one) and
+              // neither was visible on the deck — 2px of line is too little
+              // to carry a gradient.
               const buf =
                 btn.renderParams.state === "compacting"
                   ? await renderCompacting({ ...btn, ...btn.renderParams, phase: (tick % 12) / 12 })
-                  : await renderKey({ ...btn, ...btn.renderParams, pulse: bright, contextPhase: (tick % 4) / 4 });
+                  : await renderKey({ ...btn, ...btn.renderParams, pulse: actionBright, contextPhase: (tick % 4) / 4 });
               await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
             }),
           ...(() => {
