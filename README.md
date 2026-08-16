@@ -168,14 +168,14 @@ npm run board-shot      # re-render the screenshots above
 ## Known limits
 
 - MK.2 only (15 keys, 72×72), macOS only.
-- Pressing a key raises the right *window*, not the right *terminal* inside it —
-  that needs a VS Code extension. See `docs/roadmap-reveal-terminal.md` for what
-  was ruled out and why.
 - Auto-triggered compactions aren't detected; only `/compact` is.
-- With **two windows open on the same folder**, a press can raise one window
-  while revealing the terminal in the other. The extension routes by process id
-  and gets it right; the window raise opens a file and macOS picks the window.
-  Nothing outside the editor can aim that raise at a specific window.
+- **Terminal focus needs the extension installed** — see "Reveal the right
+  terminal" under Setup, above. Without it, a press still raises the right
+  window; the terminal inside is left alone, exactly as before this feature.
+  With **two windows open on the same folder**, a press can raise one window
+  while revealing the terminal in the other: the extension routes by process
+  id and gets it right, but the window raise opens a file and macOS picks the
+  window. Nothing outside the editor can aim that raise at a specific window.
 
 Design notes: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 (partly superseded — its hook-based status reporting is gone).

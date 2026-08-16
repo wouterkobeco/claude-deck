@@ -26,8 +26,10 @@ non-trivial logic gets a case appended to the matching check, or a new
 
 ## Architecture
 
-A single polling daemon, ~1800 lines across six modules. Every 2s it rebuilds
-the whole board from disk; there is no event stream and no persisted state.
+A single polling daemon, a few thousand lines spread across `src/`'s modules
+(listed below — the count isn't pinned here so this sentence doesn't go stale
+every time one is added). Every 2s it rebuilds the whole board from disk;
+there is no event stream and no persisted state.
 
 ```
 ~/.claude/{sessions,ide,projects,tasks}   →  sessions.mjs  →  getLiveSessions()
@@ -412,6 +414,12 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - `docs/superpowers/specs/2026-08-11-*.md` — original design, partly superseded
   (its hook-based status reporting is gone); kept as the record of how the
   design was reached.
-- `docs/roadmap-reveal-terminal.md` — investigated-not-built: revealing the
-  specific *terminal* inside a window needs a VS Code extension. Lists what was
-  ruled out and why, so don't re-investigate the `code` CLI or `vscode://` URIs.
+- `docs/roadmap-reveal-terminal.md` — partly superseded: the extension it
+  investigated is now built (`extension/`, `src/terminal-focus.mjs`), so its
+  own "investigated, not built" header no longer holds for that part. Still
+  worth reading for what it still holds: every non-extension alternative ruled
+  out and why (`code` CLI, `vscode://` URIs, the IDE websocket, keystroke
+  automation — don't re-investigate any of these), the window-raise-addressing
+  problem neither this nor the extension solves (the source for the
+  duplicate-folder invariant above), and a second, separately-still-not-built
+  investigation into ordering the deck by terminal position.
