@@ -157,8 +157,13 @@ nothing to focus.
 A VS Code window opened through Remote-SSH runs `claude` on the remote host, so
 its registry, IDE lock and transcripts live in *that* machine's `~/.claude/`,
 fetched over `ssh` rather than read from disk. Its key shows everything a
-local key does except the context gauge, which needs the status line installed
-on the remote and isn't, yet. Pressing a remote key does nothing for now — it
+local key does except the context gauge: the daemon fetches `sessions`, `ide`,
+`tasks` and (non-transcript) `projects` from the remote, but not `ctx/`, so
+`~/.claude/ctx/<id>.json` is never fetched no matter what runs on the remote
+machine — a deliberate scope cut, not a setup step you can complete today. The
+status line block below is necessary but not sufficient for a remote gauge: it
+produces that file locally; a remote one would still need a fetch call here to
+collect it. Pressing a remote key does nothing for now — it
 reads, it doesn't act. A remote window also needs its own one-time step: it
 must be reloaded once after upgrading before it publishes which host it's on,
 same as the terminal-focus extension version above.

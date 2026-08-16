@@ -365,15 +365,14 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   host-scoped by construction, but a bare folder isn't. A local session's key
   is still the bare folder, so a machine with no remote hosts sees no change,
   accent included.
-  **Remote sessions take a slot in first-seen order like everything else** —
-  no tier, no cap, no precedence over local sessions, because there is no
-  conceptual difference between the two and any such ordering would be
-  arbitrary. The 13-slot overflow this makes more likely already has an answer
-  one layer up: `attentionQueue` is passed the whole session list, not the
-  visible one, so a slotless session that wants you still pulses the attention
-  key and gets a tile on the attention board — the case that actually matters
-  cannot happen, whether the session that has nowhere to say so is local or
-  remote.
+  **Remote sessions take a slot in first-seen order like everything else, no
+  tier, no cap, no precedence over local sessions** — the 13-slot overflow
+  this makes more likely already has an answer one layer up: `attentionQueue`
+  is passed the whole session list, not the visible one, so a slotless
+  session that wants you still pulses the attention key and gets a tile on
+  the attention board, whether the session that has nowhere to say so is
+  local or remote. There is no conceptual difference between the two, so any
+  ordering that favoured one would be arbitrary.
 - **Redraw is diffed** on the `btn.drawn` signature string in `refresh()` and in
   every other `refresh*`. Any new visual input must be added to that string or
   it will not appear until something else changes — a real bug twice already
