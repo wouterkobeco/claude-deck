@@ -1,0 +1,15 @@
+{
+  "name": "claude-streamdeck-terminal-focus",
+  "displayName": "Claude Stream Deck terminal focus",
+  "description": "Reveals the terminal of the Claude Code session whose Stream Deck key was pressed.",
+  "version": "1.0.0",
+  "publisher": "wouterkobeco",
+  "private": true,
+  "license": "ISC",
+  "categories": ["Other"],
+  "engines": { "vscode": "^1.90.0" },
+  "extensionKind": ["ui"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {}
+}
