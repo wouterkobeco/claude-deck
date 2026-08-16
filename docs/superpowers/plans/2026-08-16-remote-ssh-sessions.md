@@ -1129,6 +1129,14 @@ assert.deepEqual(dueHosts([w("h2")], 31000, memo), ["h2"], "and is due after it"
 memo.set("h2", { lastAt: 0, failures: 9 });
 assert.deepEqual(dueHosts([w("h2")], 31000, memo), ["h2"], "the backoff is capped at 30s");
 
+// A fetch already running is never dispatched again, however overdue it looks.
+// lastAt is stamped on completion, so without this a slow fetch stays "due"
+// for its whole duration and a second one races it into the same staging dir.
+memo.set("h3", { lastAt: 0, failures: 0, inFlight: true });
+assert.deepEqual(dueHosts([w("h3")], 999999, memo), [], "a host with a fetch in flight is not due");
+memo.set("h3", { lastAt: 0, failures: 0, inFlight: false });
+assert.deepEqual(dueHosts([w("h3")], 999999, memo), ["h3"], "and is due again once that fetch lands");
+
 process.env.STREAMDECK_NO_REMOTE = "1";
 assert.deepEqual(dueHosts([w("h1")], 999999, memo), [], "the kill switch stops every fetch");
 delete process.env.STREAMDECK_NO_REMOTE;
@@ -1172,7 +1180,15 @@ export function dueHosts(windows, now, memo) {
   const hosts = [...new Set(windows.map((w) => w.host).filter(Boolean))];
   return hosts.filter((h) => {
     const entry = memo.get(h);
-    return !entry || now - entry.lastAt >= waitFor(entry);
+    if (!entry) return true;
+    // A fetch already running is not due again. `lastAt` alone cannot say this:
+    // it is stamped when a fetch *finishes*, so a slow one stays due for its
+    // whole duration. That window is not theoretical — a hanging host runs to
+    // the 15s hard kill against a 6s interval — and two overlapping fetches for
+    // one host share a staging directory and a ControlPath, so their tar
+    // extractions interleave into the same tree.
+    if (entry.inFlight) return false;
+    return now - entry.lastAt >= waitFor(entry);
   });
 }
 
@@ -1190,14 +1206,18 @@ export async function remoteSources(windows, now, memo, fetch) {
   const due = dueHosts(windows, now, memo);
   await Promise.all(
     due.map(async (host) => {
+      const previous = memo.get(host) ?? { lastAt: 0, failures: 0, source: null };
+      // Claimed before the first await, so a poll landing mid-fetch sees this
+      // host as busy rather than starting a second one against the same
+      // staging directory.
+      memo.set(host, { ...previous, inFlight: true });
       const source = await fetch(host);
-      const previous = memo.get(host) ?? { failures: 0, source: null };
       if (source) {
         if (previous.failures) console.error(`remote ${host}: reachable again`);
-        memo.set(host, { lastAt: now, failures: 0, source });
+        memo.set(host, { lastAt: now, failures: 0, source, inFlight: false });
       } else {
         if (!previous.failures) console.error(`remote ${host}: unreachable, keys dropped`);
-        memo.set(host, { lastAt: now, failures: previous.failures + 1, source: null });
+        memo.set(host, { lastAt: now, failures: previous.failures + 1, source: null, inFlight: false });
       }
     })
   );
