@@ -785,9 +785,9 @@ async function refreshDetail(deck, buttons, view) {
   return sessions;
 }
 
-// Flashes every requires_action key between gold and its idle background —
-// the one state that's actually blocked on you, so the one worth catching
-// your eye. The attention key joins the same beat, and only when
+// Flashes every requires_action key between bright and dark gold — the one
+// state that's actually blocked on you, so the one worth catching your eye.
+// The attention key joins the same beat, and only when
 // its cached count is nonzero — a CLEAR key stays dark and still. Runs on
 // its own faster tick alongside the main poll rather than inside it:
 // `refresh` only redraws on change, but a pulse must redraw on a fixed beat
