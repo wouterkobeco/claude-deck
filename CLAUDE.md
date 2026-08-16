@@ -346,17 +346,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **13 session slots**. Extra sessions past that are dropped silently, by
   design.
 - **A second press means "tell me more".** Tracked as a global "was the
-  immediately preceding press in this same project" check (`lastPress` against
-  `isRepeatPress`), not a timeout, so any key outside the project breaks the
-  chain. First press focuses the window, second opens the pressed session's
-  detail board. **The match is on the session, and on whether the press
-  changed anything.** It used to be on the folder, justified by every key in a
-  project's block doing the identical thing — moving along the block was the
-  same gesture as pressing one key twice. **Terminal focus falsified that**:
-  key A and key B now reveal two different terminals, so B is a new first
-  press, not a repeat of A. The symptom was that a project's second session
-  was unreachable — its key opened the detail board instead of its terminal,
-  which is the one thing the extension exists to do.
+  immediately preceding press" check (`lastPress` against `isRepeatPress`), not
+  a timeout — only the press right before this one counts, so a key from
+  another project always breaks the chain. First press focuses the window,
+  second opens the pressed session's detail board. **The match is on the
+  session, and on whether the press changed anything.** It used to be on the
+  folder, justified by every key in a project's block doing the identical
+  thing — moving along the block was the same gesture as pressing one key
+  twice. **Terminal focus falsified that**: key A and key B now reveal two
+  different terminals, so B is a new first press, not a repeat of A. The
+  symptom was that a project's second session was unreachable — its key
+  opened the detail board instead of its terminal, which is the one thing the
+  extension exists to do.
   "Changed anything" is not knowable out here, so `readWindowStates` reads it
   from what the extension publishes: the window's focus and which session's
   terminal is in front. Inferring it instead ("you pressed this session last,
@@ -379,8 +380,9 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   chain**, in `setView` and again for every press the detail board swallows.
   Without it, the press that dismisses detail (or a poll-loop exit, when the
   session ends underneath you) leaves its project sitting in `lastPress`, and
-  the next press on that project reopens the board you just left instead of
-  focusing its window.
+  the next press that `isRepeatPress` would call a repeat — the same session
+  again, or any sibling key when the window publishes nothing — reopens the
+  board you just left instead of focusing its window.
 - **Nested means spawned by another session, not "in a subdirectory".**
   `sessions.mjs` sets `nested: true` from `entrypoint`: `sdk-py`/`sdk-ts` is an
   agent some script started, `cli` is one you started yourself.

@@ -41,12 +41,12 @@ dropped back to the normal board.
 
 ![The attention board](docs/img/board-attention.png)
 
-**Detail** — press a second key of the same project in a row (the same key
-twice counts) and that one session
+**Detail** — press a session's key, then press it again, and that one session
 takes over all 15 keys: its title across two keys, then state, context (a ring,
 in the same green/amber/red as the gauge) and
 model, then its task list (done dimmed, in-progress bright), and pinned to the
-end, the subagents it has running. `BACK` returns.
+end, the subagents it has running. `BACK` returns. What counts as "again"
+depends on the extension — see Known limits.
 
 ![The detail board](docs/img/board-detail.png)
 
