@@ -28,7 +28,7 @@ const PULSE_MS = 400;
 // requires_action's own beat: dark gold at rest, one PULSE_MS-wide flash to
 // bright gold every REQUIRES_ACTION_FLASH_MS — a blip, not a 50/50
 // alternation, so timed against the wall clock rather than the tick counter.
-const REQUIRES_ACTION_FLASH_MS = 2000;
+const REQUIRES_ACTION_FLASH_MS = 4000;
 // The attention key blinks to announce a *new* waiter, then settles to solid
 // red — a key that flashes for an hour stops meaning anything.
 const ATTENTION_BLINK_MS = 5000;
