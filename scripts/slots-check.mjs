@@ -446,6 +446,33 @@ eq(
 eq(folderKeyFor({ folder: "/x", host: null }), "/x", "a local key is the bare folder, as before");
 eq(folderKeyFor({ folder: "/x", host: "h" }), "h:/x", "a remote key is qualified by its host");
 
+// nestedFor's fallback branch (an SDK-entrypoint nested session, which never
+// carries a `parent`) used to match on folder alone — the same host-merge bug
+// one level down. Two hosts at the same path, each with its own primary
+// session and its own parentless SDK nested session: each host's subagent
+// must attach only to that host's key, not bleed onto the other host's.
+const twoHostsWithSdk = [
+  { session_id: "pA", folder: "/home/pi/x", host: "192.168.2.6", nested: false },
+  { session_id: "pB", folder: "/home/pi/x", host: "192.168.2.70", nested: false },
+  { session_id: "sdkA", folder: "/home/pi/x", host: "192.168.2.6", nested: true },
+  { session_id: "sdkB", folder: "/home/pi/x", host: "192.168.2.70", nested: true },
+];
+const twoHostSlots = new Array(13).fill(null);
+const twoHostNested = [];
+assignSlots(twoHostsWithSdk, twoHostSlots, twoHostNested);
+eq(twoHostSlots[0], "pA", "host A's session takes the first slot");
+eq(twoHostSlots[1], "pB", "host B's session takes its own slot");
+eq(
+  twoHostNested[0].map((n) => n.session_id),
+  ["sdkA"],
+  "host A's SDK nested session attaches only to host A's key"
+);
+eq(
+  twoHostNested[1].map((n) => n.session_id),
+  ["sdkB"],
+  "host B's SDK nested session attaches only to host B's key, not host A's"
+);
+
 // isRepeatPress must not let a window on one host answer for a session on
 // another. Both fall back to the folder rule when no window publishes, and that
 // rule compares paths — which two hosts can share.
@@ -454,10 +481,17 @@ const remotePress = { index: 1, session_id: "b", folder: "/home/pi/x", host: "19
 eq(isRepeatPress(remotePress, localPress, []), false, "a remote press does not make a local press at the same path a repeat");
 eq(isRepeatPress(localPress, localPress, []), true, "the same local session at the same path still repeats");
 
-// A published window on the wrong host must not satisfy the reveal test.
+// A published window on the wrong host must not satisfy the reveal test. The
+// previous press carries a different session_id than the current one, so the
+// live-reveal branch (which needs previous.session_id === press.session_id)
+// can only return true here by way of the host-scoped fallback — a filter
+// that let remoteWindow through would land in the live-reveal branch instead
+// and answer false, which is how this assertion actually pins the guard
+// rather than passing regardless of it.
 const remoteWindow = { pid: 1, folders: ["/home/pi/x"], focused: true, activeSessionId: "a", host: "192.168.2.6" };
+const previousDifferentSession = { ...localPress, session_id: "different" };
 eq(
-  isRepeatPress({ ...localPress }, localPress, [remoteWindow]),
+  isRepeatPress(previousDifferentSession, localPress, [remoteWindow]),
   true,
   "a window on another host is ignored, so the local folder rule still answers"
 );

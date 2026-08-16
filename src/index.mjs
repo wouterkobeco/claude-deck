@@ -302,7 +302,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
  */
 export function nestedFor(session, nested, primary) {
   return nested.filter((n) =>
-    n.parent ? n.parent === session.session_id : primary && n.folder === session.folder
+    n.parent ? n.parent === session.session_id : primary && folderKeyFor(n) === folderKeyFor(session)
   );
 }
 
@@ -412,8 +412,10 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // `folderKeyFor` solves for the board applies here too, so a window is only
   // a candidate when it's on the press's own host. `w.host` can be undefined
   // on a window object built before this change, so it's normalised with
-  // `?? null`; `press.host` is always set explicitly where the press is built
-  // (`deck.on("down")`) and needs no coalescing.
+  // `?? null`; `press.host` is always set explicitly where the real press is
+  // built (`deck.on("down")`), but `sameProject` below coalesces it too — a
+  // future call site that forgets `host` must not silently turn a real repeat
+  // into a false one, and the cost of the extra `?? null` is nothing.
   //
   // Exact match only — matchFolder also returns truthy for an *ancestor*
   // match (`nested: true`), which is a different, unrelated window whose
@@ -429,7 +431,7 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // Same path, same host — the fallback the folder rule reduces to whenever
   // there's no window to ask. Two hosts sharing a path must not pass this
   // just because the paths match.
-  const sameProject = previous?.folder === press.folder && (previous?.host ?? null) === press.host;
+  const sameProject = previous?.folder === press.folder && (previous?.host ?? null) === (press.host ?? null);
   // No extension in this session's window — today's rule, unchanged.
   if (matching.length === 0) return sameProject;
 
