@@ -293,7 +293,7 @@ const SEPARATOR = "\n---\n";
  */
 export const TREE_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | grep -E '^[0-9]+$'; " +
+  "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1 }'; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
@@ -377,40 +377,48 @@ Append to `scripts/remote-check.mjs`, before the final `console.log`:
 // --- call 2 framing -------------------------------------------------------
 import { parseTails } from "../src/remote-fs.mjs";
 
-// A short file: the declared size is the whole file, so `whole` is true and
-// absence in the lines is absence in the file.
-const short = Buffer.from("6\na\nb\n");
-const shortOut = parseTails(short, ["/p/a.jsonl"]);
-assert.deepEqual(shortOut.get("/p/a.jsonl"), { lines: ["a", "b", ""], whole: true }, "a short file is whole");
+const NUL = Buffer.from([0]);
 
-// A long file: 65536 bytes sent, a larger size declared. `whole` must be false
-// even though the payload is exactly the tail window — this is the case that
-// makes startedEmpty lie if it is got wrong.
+// A short file: fewer than TAIL_BYTES came back, so tail had nothing more to
+// give and absence in the lines is absence in the file.
+const short = Buffer.concat([Buffer.from("a\nb\n"), NUL]);
+assert.deepEqual(parseTails(short, ["/p/a.jsonl"]), new Map([["/p/a.jsonl", { lines: ["a", "b", ""], whole: true }]]), "a short file is whole");
+
+// A full tail window: whole must be false — this is the case that makes
+// startedEmpty lie, and a wrong `true` here puts CLEAR on a busy session.
 const body = "x".repeat(65536);
-const long = Buffer.concat([Buffer.from("233880\n"), Buffer.from(body)]);
-assert.equal(parseTails(long, ["/p/b.jsonl"]).get("/p/b.jsonl").whole, false, "a truncated tail is not whole");
+const long = Buffer.concat([Buffer.from(body), NUL]);
+assert.equal(parseTails(long, ["/p/b.jsonl"]).get("/p/b.jsonl").whole, false, "a full tail window is not whole");
 
-// Exactly at the boundary: 65536 bytes is still the whole file.
-const exact = Buffer.concat([Buffer.from("65536\n"), Buffer.from(body)]);
-assert.equal(parseTails(exact, ["/p/c.jsonl"]).get("/p/c.jsonl").whole, true, "65536 bytes exactly is whole");
+// Exactly TAIL_BYTES is reported not-whole. A file of exactly that size is
+// indistinguishable from a larger one truncated to it, and this is the safe
+// direction: it withholds startedEmpty rather than asserting it.
+assert.equal(parseTails(Buffer.concat([Buffer.from("x".repeat(65535)), NUL]), ["/p/c.jsonl"]).get("/p/c.jsonl").whole, true, "one byte under the window is whole");
 
-// Several files in one stream, read in the order they were asked for.
-const many = Buffer.concat([Buffer.from("2\nA\n"), Buffer.from("2\nB\n")]);
+// Several files in one stream, in the order they were asked for.
+const many = Buffer.concat([Buffer.from("A\n"), NUL, Buffer.from("B\n"), NUL]);
 const manyOut = parseTails(many, ["/p/x.jsonl", "/p/y.jsonl"]);
-assert.deepEqual(manyOut.get("/p/x.jsonl").lines, ["A", ""], "the first file's bytes stop at its declared size");
-assert.deepEqual(manyOut.get("/p/y.jsonl").lines, ["B", ""], "the second file starts where the first ended");
+assert.deepEqual(manyOut.get("/p/x.jsonl").lines, ["A", ""], "the first field ends at its terminator");
+assert.deepEqual(manyOut.get("/p/y.jsonl").lines, ["B", ""], "the second field starts after it");
 
-// wc -c pads on some systems.
-assert.equal(parseTails(Buffer.from("      2\nA\n"), ["/p/z.jsonl"]).get("/p/z.jsonl").whole, true, "a padded count parses");
+// The framing must not desync when a file yields more bytes than anything
+// predicted — the live-append race a length prefix could not survive.
+const grew = Buffer.concat([Buffer.from("A\nA\nA\n"), NUL, Buffer.from("B\n"), NUL]);
+const grewOut = parseTails(grew, ["/p/x.jsonl", "/p/y.jsonl"]);
+assert.deepEqual(grewOut.get("/p/x.jsonl").lines, ["A", "A", "A", ""], "a field longer than expected stays its own field");
+assert.deepEqual(grewOut.get("/p/y.jsonl").lines, ["B", ""], "and the next file is still read from the right offset");
 
-// A missing file reports 0 and consumes nothing.
-const missing = parseTails(Buffer.from("0\n2\nB\n"), ["/p/gone.jsonl", "/p/y.jsonl"]);
+// A missing file is an empty field: unknown, and it consumes exactly its terminator.
+const missing = parseTails(Buffer.concat([NUL, Buffer.from("B\n"), NUL]), ["/p/gone.jsonl", "/p/y.jsonl"]);
 assert.deepEqual(missing.get("/p/gone.jsonl"), { lines: [], whole: false }, "a missing file is unknown, not empty");
 assert.deepEqual(missing.get("/p/y.jsonl").lines, ["B", ""], "and the next file still parses");
 
-// A truncated stream yields unknown for what never arrived.
-const cut = parseTails(Buffer.from("5\nab"), ["/p/cut.jsonl"]);
-assert.deepEqual(cut.get("/p/cut.jsonl"), { lines: [], whole: false }, "a stream that stopped mid-file is unknown");
+// A stream that stopped before its terminator yields unknown.
+assert.deepEqual(parseTails(Buffer.from("ab"), ["/p/cut.jsonl"]), new Map([["/p/cut.jsonl", { lines: [], whole: false }]]), "an unterminated field is unknown");
+
+// More paths than fields: the surplus is unknown rather than undefined.
+const fewer = parseTails(Buffer.concat([Buffer.from("A\n"), NUL]), ["/p/x.jsonl", "/p/missing.jsonl"]);
+assert.deepEqual(fewer.get("/p/missing.jsonl"), { lines: [], whole: false }, "a path with no field at all is unknown");
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -436,17 +444,32 @@ const TAIL_BYTES = 65536;
  *
  * **The paths are relative to `~/.claude`, which is why the `cd` is here.** A
  * path read from stdin is data, and `~` is not expanded inside `"$f"` — sending
- * `~/.claude/projects/…` would make every `wc` and `tail` miss, and every remote
- * session would silently lose its title. `cd` once, send relative paths.
+ * `~/.claude/projects/…` would make every `tail` miss, and every remote session
+ * would silently lose its title. `cd` once, send relative paths.
  *
- * `wc -c` before `tail` is the frame *and* the answer to `whole`: the size is
- * the file's, the payload is at most the tail window, and the two together say
- * whether the window reached byte 0. Reconstructing that here from a byte offset
- * is what this design exists to avoid.
+ * **Fields are NUL-delimited, and there is deliberately no length prefix.** An
+ * earlier version sent `wc -c` before each tail and had the reader consume
+ * exactly `min(size, TAIL_BYTES)` bytes. That is two reads of a live file: a
+ * transcript under 64KB that grows between the `wc` and the `tail` makes `tail`
+ * emit more bytes than the count promised, and every following file in the
+ * batch is then read from the wrong offset — returning spliced garbage with
+ * `whole: true` on it. The failure needs an actively-appending transcript,
+ * which is the exact case this feature exists to show.
+ *
+ * A delimiter cannot desync, because the end of a field is marked rather than
+ * computed. NUL is safe here: a transcript is JSONL, and JSON forbids an
+ * unescaped control character — verified against the live host, zero NUL bytes
+ * in 64KB of real transcript. ssh's stdout is 8-bit clean without a tty.
+ *
+ * **`whole` now comes from the bytes actually received**, not from a separate
+ * size: fewer than `TAIL_BYTES` back means `tail` had nothing more to give, so
+ * the window reached byte 0. Exactly `TAIL_BYTES` is reported not-whole, which
+ * is conservative in the safe direction — a false `whole: false` only withholds
+ * `startedEmpty`, while a false `whole: true` makes a busy session read `CLEAR`.
  */
 export const TAILS_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  'while IFS= read -r f; do wc -c < "$f" 2>/dev/null || echo 0; tail -c 65536 "$f" 2>/dev/null; done';
+  `while IFS= read -r f; do tail -c ${TAIL_BYTES} "$f" 2>/dev/null; printf '\\0'; done`;
 
 /**
  * Read call 2's stream back into one `{ lines, whole }` per requested path, in
@@ -460,25 +483,25 @@ export function parseTails(buffer, paths) {
   const out = new Map();
   let at = 0;
   for (const path of paths) {
-    const nl = buffer.indexOf("\n", at);
-    if (nl < 0) {
+    const end = buffer.indexOf(0, at);
+    // No terminator left: the stream stopped early. Unknown, not empty — the
+    // same value tailLines returns for a read that failed.
+    if (end < 0) {
       out.set(path, { lines: [], whole: false });
       continue;
     }
-    const size = Number(buffer.subarray(at, nl).toString("utf8").trim());
-    at = nl + 1;
-    if (!Number.isInteger(size) || size <= 0) {
-      out.set(path, { lines: [], whole: false });
-      continue;
-    }
-    const expected = Math.min(size, TAIL_BYTES);
-    const body = buffer.subarray(at, at + expected);
-    if (body.length < expected) {
-      out.set(path, { lines: [], whole: false });
-      continue;
-    }
-    at += expected;
-    out.set(path, { lines: body.toString("utf8").split("\n"), whole: size <= TAIL_BYTES });
+    const body = buffer.subarray(at, end);
+    at = end + 1;
+    // An empty field is a missing or empty file. Reported unknown rather than
+    // "whole and empty": the only thing `whole` unlocks is startedEmpty, and
+    // withholding it costs a CLEAR that would otherwise be right, where
+    // granting it wrongly puts CLEAR on a session that is working.
+    out.set(
+      path,
+      body.length === 0
+        ? { lines: [], whole: false }
+        : { lines: body.toString("utf8").split("\n"), whole: body.length < TAIL_BYTES }
+    );
   }
   return out;
 }
