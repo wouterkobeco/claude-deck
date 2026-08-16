@@ -15,6 +15,7 @@ npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effo
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
+npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
 
@@ -33,7 +34,7 @@ there is no event stream and no persisted state.
 
 ```
 ~/.claude/{sessions,ide,projects,tasks}   →  sessions.mjs  →  getLiveSessions()
-                                                                   ↓
+ssh <host> ~/.claude/…              → remote-fs.mjs  ↗              ↓
                                               index.mjs: assignSlots + diff + draw
                                                             ↓              ↓
                                           render.mjs (SVG→RGBA)      Stream Deck
@@ -41,13 +42,76 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
                         ↘ terminal-focus.mjs → ~/.claude/streamdeck-focus.json → extension/ → terminal.show()
 ```
 
-- `src/sessions.mjs` — the only reader of Claude Code's state. Joins the
+- `src/sessions.mjs` — the only reader of Claude Code's state, read through a
+  *source*: `{ host, root, isAlive, tail }`. `getLiveSessions(sources =
+  [localSource()])` runs the same body over every source and concatenates the
+  result; `localSource(root?)` is today's behaviour with a name, so the
+  default argument is the whole of what changed for a machine with no remote
+  hosts. A remote host supplies nothing more than those three things — where
+  its tree landed after `remote-fs.mjs` fetched it, membership in a pid list
+  fetched alongside it instead of `process.kill`, and a tail read over ssh
+  instead of a local file — because every path in this module already derives
+  from one root (`CLAUDE_DIR`, or a source's `root`), so that's the entire
+  host-dependent surface — everything between a source going in and sessions
+  coming out (matching, enrichment, subagent synthesis) is the same code
+  either way. It joins the
   session registry against open VS Code workspace folders (a session with no
   local window is dropped), then enriches with `aiTitle` (tail-scanned from the
   transcript jsonl), task progress, and context usage. Every file read is wrapped in try/catch
   that skips rather than throws: these files are written by another process and
-  a poll can land mid-write. `readTranscriptSignals` reads `aiTitle` and two
+  a poll can land mid-write — a source's `isAlive`/`tail` are someone else's
+  code (an ssh-backed source can throw where a local read only fails), so
+  `getLiveSessions` itself wraps each source's `sessionsFrom` call so one bad
+  host drops only its own keys rather than the whole board. `readTranscriptSignals` reads `aiTitle` and two
   more things from that same tail scan — see the two invariants below.
+- `src/remote-fs.mjs` — fetches one remote host's small files and transcript
+  tails over `ssh`, assuming nothing on the other end but a POSIX shell: no
+  collector script, no interpreter, because `sessions.mjs` already computes
+  every path it needs from the registry it fetches first (an earlier draft of
+  this spec shipped a Python collector before that was noticed). Two calls.
+  `TREE_CMD` tars `sessions/`, `ide/`, `tasks/` and every non-transcript file
+  under `projects/`, with the member list built by piping `find` through an
+  anchored BRE rather than `tar --exclude`: `--exclude` matches with `fnmatch`
+  and no `FNM_PATHNAME`, so `*` crosses `/` — a `projects/*/*.jsonl` exclude
+  also drops the depth-four subagent transcripts, and the only symptom is that
+  no remote session ever shows a subagent. Measured against a real host: 20KB
+  fetched with the anchored list, 4.7MB without. `TAILS_CMD` reads exactly the
+  transcripts `sessions.mjs`'s own path functions ask for, NUL-delimited with
+  no length prefix — an earlier version sent `wc -c` then `tail -c`, two reads
+  of a live file, so a sub-64KB transcript that grows between them made the
+  reader take the surplus as the next file's opening bytes; `whole` now comes
+  from the bytes actually received, not a separate count. `swapTree` extracts
+  into a scratch directory and renames it over the previous one rather than
+  letting `tar -xf` merge: a merged tree keeps what the remote deleted, so a
+  closed window's `ide/*.lock` would linger and keep `matchFolder` matching a
+  folder with no window — the exact invariant the whole join exists to
+  enforce.
+- `src/remote-hosts.mjs` — which hosts are due for a fetch this tick, and what
+  to hand the board for the rest: `dueHosts`, `remoteSources`,
+  `cachedSources`. Remote hosts poll slower than local — `REMOTE_POLL_MS` (6s
+  against the daemon's 2s) — because two ssh round trips every 2s plus a held
+  `ControlPersist` connection is a constant background load on a machine doing
+  its own work, here a Raspberry Pi running home automation; nothing on a
+  remote key changes faster than it can be read, so the slower cadence costs
+  nothing visible. Consecutive failures back off 5s → 10s → 30s and one
+  success resets, the shape `usage.mjs` already uses for 429s.
+  `STREAMDECK_NO_REMOTE=1` skips every remote source — every other risky
+  reader here degrades to nothing by itself, and this is the one holding an
+  open connection to another machine, so it gets an explicit off switch.
+  **`cachedSources` is what the poll loop actually reads, every 2s — no fetch,
+  no await.** A fetch is two *sequential* ssh calls, each bounded by its own
+  15s hard kill, so awaiting one inline stalls a tick by up to ~30s — pausing
+  every key's redraw, local ones included, because one other machine went
+  quiet. A bounded stall is still a stall; `remoteSources` starts the fetch and
+  the poll draws whatever the last one produced, at the cost of one poll of
+  staleness the first time a remote window appears. Freshness, never frames.
+  **The in-flight guard is load-bearing, not hygiene**: `lastAt` is stamped
+  when a fetch *finishes*, so without an explicit in-flight claim a slow fetch
+  stays "due" for its whole duration and the next tick would start a second
+  one against the same staging directory and ControlPath; eviction likewise
+  skips an in-flight entry, or a window closing and reopening mid-fetch — a
+  reload, which this project treats as routine — would strip the guard out
+  from under a fetch that is still running.
 - `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`,
   `accentFor`, `attentionQueue` and `detailLayout` for the checks; the
   `import.meta.url === argv[1]` guard at the bottom is what keeps importing it
@@ -287,6 +351,29 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   fixed for the visit, but a session that ends mid-visit isn't held stale
   either — `refreshDetail` blanks every tile and returns `null`, and the poll
   loop leaves the board the same way.
+  **A folder's identity is `host:folder` for a remote session, and the bare
+  path for a local one** (`folderKeyFor`). Two hosts can hold the same path —
+  `/home/pi/x` on two Raspberry Pis is a live case on this machine — and
+  everything that groups a project keys on the folder: block ordering, accent
+  colour, the "is this the first key of a block" test. Unqualified, those two
+  projects merge into one block wearing one colour, which nothing on the deck
+  would explain. The same qualification has to reach `nestedFor`'s fallback
+  branch too: an SDK session carries no `parent` to attach its marker to and
+  matches by folder instead, so without the host in that key one host's
+  subagent draws its marker on the other host's key and feeds `mostUrgent` for
+  a project it has nothing to do with — a session id would have been
+  host-scoped by construction, but a bare folder isn't. A local session's key
+  is still the bare folder, so a machine with no remote hosts sees no change,
+  accent included.
+  **Remote sessions take a slot in first-seen order like everything else** —
+  no tier, no cap, no precedence over local sessions, because there is no
+  conceptual difference between the two and any such ordering would be
+  arbitrary. The 13-slot overflow this makes more likely already has an answer
+  one layer up: `attentionQueue` is passed the whole session list, not the
+  visible one, so a slotless session that wants you still pulses the attention
+  key and gets a tile on the attention board — the case that actually matters
+  cannot happen, whether the session that has nowhere to say so is local or
+  remote.
 - **Redraw is diffed** on the `btn.drawn` signature string in `refresh()` and in
   every other `refresh*`. Any new visual input must be added to that string or
   it will not appear until something else changes — a real bug twice already
@@ -325,6 +412,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   unrelated process, at which point the liveness check starts trusting a
   frozen `focused`/`activeSessionId` from a window that died weeks ago.
   An earlier hook-based version was deleted; don't reintroduce one.
+  A remote host bends "writes exactly one file" further than that: a fetch
+  extracts into a scratch tree at a literal `/tmp/streamdeck-remote-<pid>` —
+  **not** `os.tmpdir()`. That path also anchors `fetchSource`'s
+  `ControlPath` socket (that path, plus `cm-<host>`, plus ssh's own random
+  suffix while the bind is in flight), which is length-checked against the
+  ~104-byte Unix domain socket limit; `os.tmpdir()` on macOS is a long
+  per-user path under `/var/folders` that landed exactly on that limit, so
+  every fetch failed silently as an ordinary "host unreachable", with nothing
+  to point at the socket path as the cause. `/tmp` is a short, stable symlink
+  on macOS, and this daemon is macOS-only already. Each fetch swaps that tree
+  into place by rename rather than letting `tar -xf` merge it — see
+  `remote-fs.mjs` above — for the same reason the daemon never merges anything
+  else it's handed: a merged tree keeps what the remote host deleted.
 - **One install step, in the status line.** Context usage is the exception to
   the above: Claude Code hands a session's context percentage to the status
   line and nowhere else, so `~/.claude/statusline-command.sh` writes it to
