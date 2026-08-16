@@ -361,8 +361,20 @@ export async function renderKey({ width, height, state, label, accent, project, 
                    dominant-baseline="middle">${escapeXml(caps)}</text>`
           : ""
       }
-      <text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="${BODY_LETTER_SPACING}" fill="#ffffff"
-            text-anchor="start" dominant-baseline="middle">${tspans}</text>
+      ${
+        // Nothing to say yet: after a /clear, keyFields deliberately blanks the
+        // label rather than falling back to the pre-clear title, and a key with
+        // an empty body reads as one that failed to draw. Centered in the body,
+        // in the detail board's tile-label face. Gated on `project` so the
+        // detail board's own two-key title — project:"", and blank on the
+        // second key for any short title — stays blank.
+        lines.length === 0 && project
+          ? `<text x="50%" y="${(bodyTop + height - footHeight) / 2}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
+                   dominant-baseline="middle">CLEAR</text>`
+          : `<text font-family="sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="${BODY_LETTER_SPACING}" fill="#ffffff"
+            text-anchor="start" dominant-baseline="middle">${tspans}</text>`
+      }
       ${squares}
       ${
         progress

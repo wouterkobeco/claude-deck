@@ -193,6 +193,33 @@ for (const [name, nestedStates, wantLeft] of [
   eq(left, wantLeft, name);
 }
 
+// An empty body says CLEAR (the state after a /clear), centered in the body —
+// but only on a real session key. The detail board's title tiles pass
+// project:"" and are blank by design on the second key of any short title, so
+// they must stay blank. Read off the raster: white ink in the body rows,
+// and where its vertical middle sits.
+for (const [name, project, wantInk] of [
+  ["cleared body", "kob-backend", true],
+  ["detail title stays blank", "", false],
+]) {
+  const buf = await renderKey({ width, height, state: "idle", label: "", accent: "#4fc3f7", project });
+  let top = Infinity;
+  let bottom = -1;
+  for (let y = 18; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = (y * width + x) * 4;
+      if (buf[p] > 128 && buf[p + 1] > 128 && buf[p + 2] > 128) {
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+  }
+  eq(bottom > -1, wantInk, name);
+  // Centered in the body — 13px (under the accent bar) to 72px, so a middle
+  // of 42.5, give or take the glyph's own bearings.
+  if (wantInk) eq(Math.abs((top + bottom) / 2 - 42.5) <= 3, true, "cleared body centered");
+}
+
 // A long label plus nested squares together: the label must wrap inside the
 // reserved margin instead of centering across the full key width.
 const marginBuf = await renderKey({
