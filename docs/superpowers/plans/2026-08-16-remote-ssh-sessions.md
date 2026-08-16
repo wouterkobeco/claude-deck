@@ -267,13 +267,25 @@ const SEPARATOR = "\n---\n";
  * how it formats columns; `ps -A -o pid=` is the fallback for a remote without
  * `/proc`.
  *
- * **The exclude is `projects/*​/*.jsonl`, not `*.jsonl`.** A session transcript
- * is `projects/<slug>/<id>.jsonl` and runs to megabytes — only its tail is ever
- * read, in call 2. A *subagent* transcript is four levels down
- * (`projects/<slug>/<id>/subagents/agent-*.jsonl`), is small, and is what
- * `readRunningSubagents` reads to decide whether an agent is still running. A
- * blanket `*.jsonl` exclude drops those too, and the only symptom is that no
- * remote session ever shows a subagent marker or tile — nothing errors.
+ * **The member list is built positively with `find`, not by excluding a glob.**
+ * Two facts force this, both measured against a real host:
+ *
+ * 1. `tar --exclude` matches with `fnmatch` and *no* `FNM_PATHNAME`, so `*`
+ *    crosses `/`. `--exclude='projects/*​/*.jsonl'` therefore also drops
+ *    `projects/<slug>/<id>/subagents/agent-*.jsonl` four levels down — the
+ *    files `readRunningSubagents` reads. Nothing errors; remote sessions simply
+ *    never show a subagent again. The anchored BRE below cannot do this:
+ *    `[^/]*` provably does not cross `/`.
+ * 2. Excluding only the *live* sessions' transcripts is not enough. A project
+ *    directory holds every transcript it has ever had — this host carries a
+ *    4.3MB one from a session that ended days ago. The rule has to be "no
+ *    depth-2 transcript", not "not these ones".
+ *
+ * Measured on the live host: 20KB with this list, 4.7MB without it.
+ *
+ * Subagent transcripts ride along in the tar, with their real mtimes — which
+ * `readRunningSubagents` needs, since `SUBAGENT_IDLE_MAX_S` retires an agent
+ * that stopped writing. That is why they are not fetched as tails instead.
  *
  * A missing `~/.claude` exits 0 with an empty stream rather than failing: a host
  * you have opened a window on but never run Claude Code on is an ordinary state,
@@ -283,7 +295,9 @@ export const TREE_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
   "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | grep -E '^[0-9]+$'; " +
   "echo ---; " +
-  "tar --exclude='projects/*/*.jsonl' -cf - sessions ide tasks projects 2>/dev/null";
+  "{ find sessions ide tasks -type f 2>/dev/null; " +
+  '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
+  "} | tar -cf - -T - 2>/dev/null";
 
 /**
  * Split call 1's stream into the pid set and the tar bytes.
@@ -499,6 +513,7 @@ The heart of it. After this task a remote source produces the same sessions as a
   - `getLiveSessions(sources?: Source[])` — defaults to `[localSource()]`, unchanged for every existing caller.
   - Every returned session gains `host: string | null`.
   - `transcriptPathFor({cwd, sessionId}, root?)` and `readRunningSubagents(dir, tail?)` gain optional trailing parameters; existing calls are unaffected.
+  - `tailLines` becomes **exported**. `remote-fs.mjs`'s injected `tail` falls back to it for subagent transcripts, which ride in the tar and are read off the fetched tree like any local file.
 
 - [ ] **Step 1: Write the failing check**
 
@@ -849,7 +864,7 @@ First extend the imports at the top of `src/remote-fs.mjs`:
 import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { transcriptPathFor } from "./sessions.mjs";
+import { tailLines, transcriptPathFor } from "./sessions.mjs";
 ```
 
 Then append:
@@ -950,7 +965,13 @@ export async function fetchSource(host, scratchRoot) {
     host,
     root: finalDir,
     isAlive: (pid) => pids.has(pid),
-    tail: async (path) => tails.get(path) ?? { lines: [], whole: false },
+    // A session transcript was never fetched to disk, so it comes from the map.
+    // A *subagent* transcript did ride in the tar — small, and needed with its
+    // real mtime, since SUBAGENT_IDLE_MAX_S retires an agent by how long it has
+    // been quiet — so it is read off the tree like any local file. Without this
+    // fallback `readRunningSubagents` asks for a path the map has never heard
+    // of, gets the failure value, and no remote session ever shows a subagent.
+    tail: async (path) => tails.get(path) ?? tailLines(path),
   };
 }
 ```
