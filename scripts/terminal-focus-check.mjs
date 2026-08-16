@@ -4,8 +4,9 @@
 // matches against.
 // Run: node scripts/terminal-focus-check.mjs
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ancestorChain, parseProcessTable } from "../src/terminal-focus.mjs";
@@ -175,5 +176,32 @@ assert.equal(
   versionOf("../package.json"),
   "extension/package.json version must match the daemon's — bump both together"
 );
+
+// `npm start`'s prestart offer, run for real against a fake HOME — the three
+// answers it can give without a person in front of it. Spawned rather than
+// imported because the whole thing *is* its side effects; stdin is a pipe
+// here, which is also the "nobody to ask" case.
+{
+  const run = (home) =>
+    spawnSync(process.execPath, [new URL("./ext-prompt.mjs", import.meta.url).pathname], {
+      env: { ...process.env, HOME: home },
+      encoding: "utf8",
+    }).stdout;
+
+  const fake = await mkdtemp(join(tmpdir(), "streamdeck-ext-check-"));
+  // No ~/.vscode. On a machine with the app installed this still finds VS
+  // Code — /Applications isn't fakeable — so only assert the branch that
+  // machine can reach.
+  assert.match(
+    run(fake),
+    existsSync("/Applications/Visual Studio Code.app") ? /not installed/ : /vscode not detected/,
+    "no ~/.vscode: detected via the app bundle, or reported missing"
+  );
+  await mkdir(join(fake, ".vscode/extensions"), { recursive: true });
+  assert.match(run(fake), /not installed/, "vscode present, extension missing: offers to install");
+  await mkdir(join(fake, ".vscode/extensions/claude-streamdeck-terminal-focus"), { recursive: true });
+  assert.equal(run(fake), "", "already installed: says nothing");
+  await rm(fake, { recursive: true, force: true });
+}
 
 console.log("OK: terminal focus");

@@ -315,7 +315,12 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - **The extension rides on `npm install`; the window reload is the step that
   can't.** `postinstall` runs `ext:install`, which copies `extension/` into
   `~/.vscode/extensions` — so a fresh clone or a `npm install` after a pull has
-  the current extension without anyone remembering to ask for it. What that
+  the current extension without anyone remembering to ask for it. `prestart`
+  (`scripts/ext-prompt.mjs`) catches what postinstall misses — an install that
+  predates the extension, a copy deleted since — by offering to install it,
+  defaulting to yes, at the one moment someone is definitely watching. It
+  never fails the daemon it precedes: no VS Code on the machine, no TTY to ask
+  in, or EOF at the prompt all print a line and exit 0. What that
   cannot do is reload the editor: windows already open when it lands keep
   running the *old* code until `Developer: Reload Window`. That is why
   `ext:install` ends in an `echo` saying so. An automatic upgrade nobody
