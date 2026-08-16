@@ -505,6 +505,21 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   the tar by mtime was the alternative and is worse — a session can sit idle for
   days with a perfectly good context file, which is precisely what "a stale file
   is fine" above means.
+  **A remote session id is not this machine's data, and it reaches a path.**
+  It comes out of the other host's registry, so a compromised — or simply
+  hostile — box chooses it, and opening a Remote-SSH window is not a statement
+  of trust in that box's filesystem. `join(root, "ctx", id + ".json")` collapses
+  `../`, so an id like `../../../../tmp/x` escapes the scratch tree and the
+  bytes written there come from the same host: an arbitrary file write, on this
+  machine. The same string also goes over stdin as a path the host reads, so
+  traversal there reads a file outside `~/.claude` and streams it back.
+  `isPathSafeId` refuses rather than sanitises — a real session id is a UUID, so
+  a slash or a `..` in one has no legitimate reading, and rewriting an
+  attacker's string into a "safe" one is how the next bug gets built. Everything
+  else derived from remote data was already safe: `projectDirFor` flattens a cwd
+  through `[^a-zA-Z0-9] -> -`, and tar refuses absolute and `..` members. This
+  was the first place remote data reached a path that gets *written*, which is
+  the thing to watch for when adding the next one.
 - **The extension rides on `npm install`; the window reload is the step that
   can't.** `postinstall` runs `ext:install`, which copies `extension/` into
   `~/.vscode/extensions` — so a fresh clone or a `npm install` after a pull has
