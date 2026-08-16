@@ -499,17 +499,33 @@ eq(
 // A remote key can never be revealed (spec B is deferred), so its detail board
 // must still be reachable on a second press even though no window will ever
 // report it `activeSessionId`. Before the fix, `focusWindow` returns before
-// `requestedAt.set(...)` runs for a remote session, so `askedLongAgo` can never
-// arm and the `.some()` reveal test below it is false forever — the board would
-// be permanently, silently unreachable for every remote key. The published
-// window here matches host and folder and is focused, but its
-// `activeSessionId` is null exactly because a remote window never sets it.
+// A remote session is now revealable, so it takes the ordinary path: the second
+// press opens the board only once the window has reported the reveal actually
+// landed. This replaces a guard that short-circuited every remote press to the
+// folder rule — correct only while a remote reveal was impossible, and wrong
+// the moment it became possible. The guard would have made a *sibling* remote
+// key in the same folder read as a repeat, so a project's second remote session
+// would open the detail board instead of revealing its own terminal: the exact
+// failure the repeat-press rule was rewritten to fix for local sessions.
 const remotePress2 = { index: 5, session_id: "r1", folder: "/home/pi/x", host: "192.168.2.6" };
-const remoteWindowMatching = { pid: 2, folders: ["/home/pi/x"], focused: true, activeSessionId: null, host: "192.168.2.6" };
+const remoteRevealed = { pid: 2, folders: ["/home/pi/x"], focused: true, activeSessionId: "r1", host: "192.168.2.6" };
+const remoteNotYet = { pid: 2, folders: ["/home/pi/x"], focused: true, activeSessionId: null, host: "192.168.2.6" };
 eq(
-  isRepeatPress(remotePress2, remotePress2, [remoteWindowMatching]),
+  isRepeatPress(remotePress2, remotePress2, [remoteRevealed]),
   true,
-  "a remote session's second press opens detail even though no window can ever report it active"
+  "a remote second press opens detail once the window reports the reveal landed"
+);
+eq(
+  isRepeatPress(remotePress2, remotePress2, [remoteNotYet]),
+  false,
+  "but not while the reveal has not landed yet — that press still has work to do"
+);
+// The sibling case the removed guard broke: two remote sessions in one folder.
+const remoteSibling = { index: 6, session_id: "r2", folder: "/home/pi/x", host: "192.168.2.6" };
+eq(
+  isRepeatPress(remotePress2, remoteSibling, [remoteRevealed]),
+  false,
+  "pressing a sibling remote key is a new first press, not a repeat of its neighbour"
 );
 
 console.log("OK: project grouping");

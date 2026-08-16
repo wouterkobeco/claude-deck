@@ -91,6 +91,47 @@ await requestFocus(
 );
 assert.equal((await read()).sessionId, "sess-b");
 
+// A local press says so explicitly rather than by omission. The extension has
+// to tell "this request is for a local window" from "this request predates
+// hosts", and a missing field cannot carry that.
+assert.equal((await read()).host, null, "a local request names its host as null");
+
+// A remote session's chain cannot be walked here: its pids live on another
+// machine, and `ps` on this one either finds nothing or — worse — finds an
+// unrelated local process wearing the same number. The chain is precomputed
+// during the poll's own fetch and travels on the session, so a press never
+// waits on ssh.
+await requestFocus(
+  { pid: 2187779, session_id: "sess-remote", host: "192.168.2.6", ancestors: [2187779, 2187575, 2187506] },
+  {
+    path,
+    readProcessTable: async () => {
+      throw new Error("a press must never read the local process table for a remote session");
+    },
+  }
+);
+assert.deepEqual((await read()).pids, [2187779, 2187575, 2187506], "a remote press uses the chain it was given");
+assert.equal((await read()).host, "192.168.2.6", "and names the host it belongs to");
+
+// Host is what stops a local window acting on a remote request. Pids are only
+// unique per machine, and a remote pid is an ordinary number here — 2187575 is
+// a perfectly plausible local pid. Without the host the two are
+// indistinguishable and the wrong terminal is revealed.
+await requestFocus(
+  { pid: 99684, session_id: "sess-d", host: null },
+  { path, readProcessTable: async () => real }
+);
+assert.equal((await read()).host, null);
+
+// A remote session with no precomputed chain writes nothing rather than
+// falling back to the local table, which would match by coincidence or not at
+// all — both worse than the press simply not revealing a terminal.
+await requestFocus(
+  { pid: 2187779, session_id: "sess-remote-nochain", host: "192.168.2.6" },
+  { path, readProcessTable: async () => real }
+);
+assert.equal((await read()).sessionId, "sess-d", "a remote press with no chain leaves the previous request alone");
+
 await rm(dir, { recursive: true, force: true });
 
 // The reverse channel's reader. A window publishes state only while its

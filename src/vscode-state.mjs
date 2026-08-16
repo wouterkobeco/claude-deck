@@ -21,24 +21,37 @@ function isUnder(file, folder) {
  * Several can exist for one folder (older ones linger from previous
  * installs), so the most recently written wins.
  */
-async function storageDirFor(folder) {
-  if (storageDirCache.has(folder)) return storageDirCache.get(folder);
+/**
+ * How VS Code records a window's folder in `workspace.json`.
+ *
+ * A local window writes `file:///Users/...`. A Remote-SSH window writes
+ * `vscode-remote://ssh-remote%2B<host><path>` — note the `+` arrives
+ * percent-encoded, which is why this is built rather than compared loosely.
+ */
+function workspaceUri(folder, host) {
+  return host ? `vscode-remote://ssh-remote%2B${host}${folder}` : `file://${folder}`;
+}
+
+async function storageDirFor(folder, host, storageDir = STORAGE_DIR) {
+  const cacheKey = `${host ?? ""}:${folder}`;
+  if (storageDirCache.has(cacheKey)) return storageDirCache.get(cacheKey);
 
   let best = null;
   let bestMtime = -Infinity;
   let names = [];
   try {
-    names = await readdir(STORAGE_DIR);
+    names = await readdir(storageDir);
   } catch {
-    storageDirCache.set(folder, null);
+    storageDirCache.set(cacheKey, null);
     return null;
   }
 
+  const wanted = workspaceUri(folder, host);
   for (const name of names) {
-    const dir = join(STORAGE_DIR, name);
+    const dir = join(storageDir, name);
     try {
       const meta = JSON.parse(await readFile(join(dir, "workspace.json"), "utf8"));
-      if (meta.folder !== `file://${folder}`) continue;
+      if (meta.folder !== wanted) continue;
       const { mtimeMs } = await stat(join(dir, "state.vscdb"));
       if (mtimeMs > bestMtime) {
         best = dir;
@@ -49,7 +62,7 @@ async function storageDirFor(folder) {
     }
   }
 
-  storageDirCache.set(folder, best);
+  storageDirCache.set(cacheKey, best);
   return best;
 }
 
@@ -66,9 +79,9 @@ async function storageDirFor(folder) {
  * fall back to a static anchor file. This reads VS Code's internal state
  * format, so it's all best-effort by design.
  */
-export async function openFileIn(folder) {
+export async function openFileIn(folder, host = null, storageDir = STORAGE_DIR) {
   try {
-    const dir = await storageDirFor(folder);
+    const dir = await storageDirFor(folder, host, storageDir);
     if (!dir) return null;
 
     const { stdout } = await execFileAsync(
@@ -98,8 +111,24 @@ export async function openFileIn(folder) {
         } catch {
           continue;
         }
-        const path = value?.resourceJSON?.path;
-        if (path && isUnder(path, folder)) return path;
+        const resource = value?.resourceJSON;
+        const path = resource?.path;
+        if (!path || !isUnder(path, folder)) continue;
+        if (!host) return path;
+        // A remote window's editors are `vscode-remote://` URIs, and `open`
+        // cannot take one — the raise goes through `code --file-uri` instead.
+        // VS Code has already written the encoded form in `external`, so it is
+        // returned verbatim rather than rebuilt: the authority arrives as
+        // `ssh-remote%2B<host>` and re-encoding it by hand is a bug waiting to
+        // happen.
+        //
+        // The authority is checked, not assumed. One window's storage can
+        // outlive the folder being reopened against a different host, and
+        // opening the wrong host's file focuses the wrong window — the exact
+        // confusion `folderKeyFor` exists to prevent one layer up.
+        if (resource.scheme === "vscode-remote" && resource.authority === `ssh-remote+${host}` && resource.external) {
+          return resource.external;
+        }
       }
     }
     return null;

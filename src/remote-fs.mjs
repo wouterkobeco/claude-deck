@@ -8,11 +8,21 @@ import { tailLines, transcriptPathFor } from "./sessions.mjs";
 const SEPARATOR = "\n---\n";
 
 /**
- * Call 1: this host's live pids, then its small files as a tar stream.
+ * Call 1: this host's live pids and their parents, then its small files as a
+ * tar stream.
  *
- * `/proc` rather than `ps`, so nothing has to know which `ps` the host ships or
- * how it formats columns; `ps -A -o pid=` is the fallback for a remote without
- * `/proc`.
+ * **`ps` first, `/proc` as the fallback** — the reverse of how this started. The
+ * original reason for preferring `/proc` was that `ps` output formats vary and
+ * an anchored `grep` rejected its right-padded columns; `awk` splits on
+ * whitespace and made that moot. `ps` is now the primary because it is the one
+ * that can produce the *second* column, and `/proc` cannot without parsing
+ * `stat`, whose `comm` field can contain spaces and parentheses and so shifts
+ * every field after it.
+ *
+ * That second column is the ancestry the terminal reveal joins on, fetched here
+ * rather than at press time because a key press must never wait on ssh. A host
+ * whose `ps` cannot produce it falls back to a pid-only listing: sessions stay
+ * alive, and only the reveal is lost.
  *
  * **The member list is built positively with `find`, not by excluding a glob.**
  * Two facts force this, both measured against a real host:
@@ -40,7 +50,7 @@ const SEPARATOR = "\n---\n";
  */
 export const TREE_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  "{ ls /proc 2>/dev/null || ps -A -o pid= 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1 }'; " +
+  "{ ps -A -o pid=,ppid= 2>/dev/null || ls /proc 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1, $2 }'; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
@@ -55,13 +65,24 @@ export const TREE_CMD =
  */
 export function splitTreeStream(buffer) {
   const at = buffer.indexOf(SEPARATOR);
-  if (at < 0) return { pids: new Set(), tar: Buffer.alloc(0) };
+  if (at < 0) return { pids: new Set(), ppids: new Map(), tar: Buffer.alloc(0) };
   const pids = new Set();
+  // Second column, when the host had a `ps` that could produce one. Absent is a
+  // supported outcome, not a failure: it costs the terminal reveal for that
+  // host and nothing else, where treating it as an error would drop every
+  // session there as dead.
+  const ppids = new Map();
   for (const line of buffer.subarray(0, at).toString("utf8").split("\n")) {
-    const pid = Number(line.trim());
-    if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    const [first, second] = line.trim().split(/\s+/);
+    const pid = Number(first);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    pids.add(pid);
+    const ppid = Number(second);
+    // pid 1's parent is 0, and a ppid of 0 would make `ancestorChain` walk to a
+    // process that isn't one. Recorded only when it names a real parent.
+    if (Number.isInteger(ppid) && ppid > 0) ppids.set(pid, ppid);
   }
-  return { pids, tar: buffer.subarray(at + SEPARATOR.length) };
+  return { pids, ppids, tar: buffer.subarray(at + SEPARATOR.length) };
 }
 
 /**
@@ -249,7 +270,7 @@ export async function fetchSource(host, scratchRoot) {
 
     const stream = await run(["ssh", ...sshArgs(host, controlPath), TREE_CMD]);
     if (!stream) return null;
-    const { pids, tar } = splitTreeStream(stream);
+    const { pids, ppids, tar } = splitTreeStream(stream);
 
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
@@ -300,6 +321,11 @@ export async function fetchSource(host, scratchRoot) {
       host,
       root: finalDir,
       isAlive: (pid) => pids.has(pid),
+      // This host's pid -> ppid table, so a session's ancestor chain can be
+      // computed during the poll. The press that uses it happens inside a
+      // synchronous key handler and cannot afford an ssh round trip; empty on a
+      // host whose `ps` gave no second column, which costs only the reveal.
+      ppids,
       // A session transcript was never fetched to disk, so it comes from the
       // map. A *subagent* transcript did ride in the tar — small, and needed
       // with its real mtime, since SUBAGENT_IDLE_MAX_S retires an agent by

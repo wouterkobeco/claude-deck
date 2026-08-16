@@ -63,6 +63,18 @@ async function tick() {
   }
   if (!Array.isArray(request.pids) || Date.now() - request.ts > REQUEST_MAX_MS) return;
 
+  // Only the window on the request's own host may act on it. A pid is unique
+  // per machine and nothing else about the request is: the daemon's remote
+  // chain is full of ordinary five- and seven-digit numbers that a local
+  // terminal can hold too, so without this a local window would match a remote
+  // request by coincidence and reveal a stranger's terminal. `null` is the
+  // local case on both sides. A request written by a daemon that predates this
+  // field has no `host` at all, and is read as local — which is what it was:
+  // that daemon could only ever describe local sessions, so an old request
+  // still works in a local window and is correctly refused by a remote one.
+  const wf = vscode.workspace.workspaceFolders ?? [];
+  if ((request.host ?? null) !== sshHost(wf)) return;
+
   busy = true;
   try {
     for (const terminal of vscode.window.terminals) {
