@@ -3,11 +3,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
-const IDE_DIR = join(CLAUDE_DIR, "ide");
-const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
-const TASKS_DIR = join(CLAUDE_DIR, "tasks");
-const CTX_DIR = join(CLAUDE_DIR, "ctx");
-const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const TAIL_BYTES = 65536;
 // How long a subagent transcript can sit unwritten before the agent is assumed
 // gone. An agent that was interrupted never writes its `end_turn`, so without
@@ -87,12 +82,12 @@ export function isAlive(pid) {
  * title, model tile and blocked/compacting detection with nothing to show for
  * it.
  */
-export function transcriptPathFor({ cwd, sessionId }) {
-  return join(projectDirFor(cwd), `${sessionId}.jsonl`);
+export function transcriptPathFor({ cwd, sessionId }, root = CLAUDE_DIR) {
+  return join(projectDirFor(cwd, root), `${sessionId}.jsonl`);
 }
 
-function projectDirFor(cwd) {
-  return join(PROJECTS_DIR, cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+function projectDirFor(cwd, root = CLAUDE_DIR) {
+  return join(root, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
 /**
@@ -109,7 +104,7 @@ function projectDirFor(cwd) {
  * session yet" is the one that needs to know it saw everything. A read that
  * failed reports `false` — unknown, not empty.
  */
-async function tailLines(path) {
+export async function tailLines(path) {
   let fh;
   try {
     fh = await open(path, "r");
@@ -169,9 +164,9 @@ const USER_LINE_MARKER = '"type":"user"';
  * the turn, but by then it's usually done exactly what this flags) or you
  * reply. Good enough for a key that just needs your attention, not a promise.
  */
-export async function readTranscriptSignals(transcriptPath) {
+export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
   try {
-    const { lines, whole } = await tailLines(transcriptPath);
+    const { lines, whole } = await tail(transcriptPath);
 
     let aiTitle = null,
       clearedEmpty = false,
@@ -316,7 +311,7 @@ export async function readTranscriptSignals(transcriptPath) {
  * Takes the directory rather than a session so the check can point it at a
  * fixture. Every read is try/catch-skipped, same as everything else here.
  */
-export async function readRunningSubagents(dir) {
+export async function readRunningSubagents(dir, tail = tailLines) {
   let names;
   try {
     names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl"));
@@ -335,7 +330,7 @@ export async function readRunningSubagents(dir) {
     }
     if ((Date.now() - mtimeMs) / 1000 > SUBAGENT_IDLE_MAX_S) continue;
 
-    const { lines } = await tailLines(path);
+    const { lines } = await tail(path);
     let stopReason = null;
     for (let i = lines.length - 1; i >= 0 && stopReason === null; i--) {
       // Parse before trusting: "stop_reason" appears inside tool results and
@@ -398,8 +393,8 @@ export function taskCounter(tasks) {
  * Returns [] for a session that isn't using tasks, and skips any file caught
  * mid-write rather than throwing.
  */
-export async function readTaskList(sessionId) {
-  const dir = join(TASKS_DIR, sessionId);
+export async function readTaskList(sessionId, root = CLAUDE_DIR) {
+  const dir = join(root, "tasks", sessionId);
   let names;
   try {
     names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
@@ -424,8 +419,8 @@ export async function readTaskList(sessionId) {
  * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
  * tasks at all, so the button can stay clean rather than showing "0/0".
  */
-async function readTaskProgress(sessionId) {
-  const tasks = await readTaskList(sessionId);
+async function readTaskProgress(sessionId, root) {
+  const tasks = await readTaskList(sessionId, root);
   if (tasks.length === 0) return null;
   return { ...taskCounter(tasks), active: tasks.find((t) => t.status === "in_progress")?.subject ?? null };
 }
@@ -456,9 +451,9 @@ export function taskWindow(tasks, size) {
  * A stale file is fine: context can't change while a session sits idle, and an
  * active session rewrites this on every render.
  */
-async function readContext(sessionId) {
+async function readContext(sessionId, root) {
   try {
-    const { context } = JSON.parse(await readFile(join(CTX_DIR, `${sessionId}.json`), "utf8"));
+    const { context } = JSON.parse(await readFile(join(root, "ctx", `${sessionId}.json`), "utf8"));
     return typeof context === "number" ? context : null;
   } catch {
     return null;
@@ -485,8 +480,28 @@ async function readContext(sessionId) {
  * subagent, which has no registry entry at all and is read off disk by
  * `readRunningSubagents`.
  */
-export async function getLiveSessions() {
-  const [registry, locks] = await Promise.all([readJsonFiles(SESSIONS_DIR), readJsonFiles(IDE_DIR, [".lock"])]);
+/**
+ * The local machine as a source: today's behaviour, named.
+ *
+ * A source is the whole host-dependent surface of this module — where the tree
+ * is, whether a pid is alive, and how a transcript tail is read. Every path here
+ * derives from one root, so those three are all a remote host needs to supply;
+ * everything between them is this file, unchanged, which is the point. See
+ * docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
+ */
+export function localSource(root = CLAUDE_DIR) {
+  return { host: null, root, isAlive, tail: tailLines };
+}
+
+export async function getLiveSessions(sources = [localSource()]) {
+  return (await Promise.all(sources.map(sessionsFrom))).flat();
+}
+
+async function sessionsFrom(source) {
+  const [registry, locks] = await Promise.all([
+    readJsonFiles(join(source.root, "sessions")),
+    readJsonFiles(join(source.root, "ide"), [".lock"]),
+  ]);
 
   // Locks aren't only VS Code's — JetBrains IDEs write the same file with
   // their own `ideName`. Keep that per folder so a press focuses the IDE the
@@ -515,7 +530,7 @@ export async function getLiveSessions() {
     // Matching the sdk prefix rather than allowlisting "cli", so an entrypoint
     // we haven't seen yet gets a key rather than disappearing.
     const isNested = s.entrypoint?.startsWith("sdk") ?? false;
-    if (!isAlive(s.pid)) continue;
+    if (!source.isAlive(s.pid)) continue;
     const match = matchFolder(s.cwd, folders);
     if (!match) continue; // no live local VS Code window for this session
     matched.push({
@@ -531,6 +546,8 @@ export async function getLiveSessions() {
       name: s.name ?? null,
       state: s.status ?? "idle",
       ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),
+      host: source.host,
+      root: source.root,
     });
   }
 
@@ -550,7 +567,9 @@ export async function getLiveSessions() {
   const subagents = (
     await Promise.all(
       matched.map(async (s) =>
-        (await readRunningSubagents(join(projectDirFor(s.cwd), s.session_id, "subagents"))).map((a) => ({
+        (
+          await readRunningSubagents(join(projectDirFor(s.cwd, source.root), s.session_id, "subagents"), source.tail)
+        ).map((a) => ({
           ...s,
           session_id: a.id,
           parent: s.session_id,
@@ -566,7 +585,8 @@ export async function getLiveSessions() {
   const enriched = await Promise.all(
     matched.map(async (s) => {
       const { blockedOnDenial, compactRequestedAt, ...signals } = await readTranscriptSignals(
-        transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id })
+        transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root),
+        source.tail
       );
       // A manual /compact writes its command line the moment it starts, then
       // nothing until the finished boundary — so "newest user line is
@@ -583,8 +603,8 @@ export async function getLiveSessions() {
         ...s,
         ...signals,
         state: compacting ? "compacting" : s.state === "idle" && blockedOnDenial ? "requires_action" : s.state,
-        progress: await readTaskProgress(s.session_id),
-        context: await readContext(s.session_id),
+        progress: await readTaskProgress(s.session_id, source.root),
+        context: await readContext(s.session_id, source.root),
       };
     })
   );

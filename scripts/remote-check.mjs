@@ -112,4 +112,67 @@ assert.deepEqual(parseTails(Buffer.from("ab"), ["/p/cut.jsonl"]), new Map([["/p/
 const fewer = parseTails(Buffer.concat([Buffer.from("A\n"), NUL]), ["/p/x.jsonl", "/p/missing.jsonl"]);
 assert.deepEqual(fewer.get("/p/missing.jsonl"), { lines: [], whole: false }, "a path with no field at all is unknown");
 
+// --- one body, two sources ------------------------------------------------
+// The whole point of the design: a remote source is the same code reading the
+// same bytes. Build one fixture tree, read it as local, then read it again as a
+// "remote" source whose tail and isAlive are canned, and require the two to
+// agree on everything but `host`.
+import { mkdir } from "node:fs/promises";
+import { getLiveSessions, localSource, transcriptPathFor } from "../src/sessions.mjs";
+
+const fx = await mkdtemp(join(tmpdir(), "streamdeck-remote-fixture-"));
+await mkdir(join(fx, "sessions"), { recursive: true });
+await mkdir(join(fx, "ide"), { recursive: true });
+const SID = "3afa50c6-168d-4a35-8448-dcb2350d1bff";
+const CWD = "/home/pi/domotica/dom-setup";
+await writeFile(
+  join(fx, "sessions", "2187779.json"),
+  JSON.stringify({
+    pid: process.pid, // alive for the local source
+    sessionId: SID,
+    cwd: CWD,
+    kind: "interactive",
+    entrypoint: "cli",
+    name: "dom-setup-2d",
+    status: "idle",
+    statusUpdatedAt: 1786879076976,
+  })
+);
+await writeFile(
+  join(fx, "ide", "39433.lock"),
+  JSON.stringify({ workspaceFolders: [CWD], ideName: "Visual Studio Code" })
+);
+const transcript = transcriptPathFor({ cwd: CWD, sessionId: SID }, fx);
+await mkdir(join(transcript, ".."), { recursive: true });
+const aiTitleLine = JSON.stringify({ type: "assistant", aiTitle: "wiring the relay board" });
+await writeFile(transcript, aiTitleLine + "\n");
+
+const localOut = await getLiveSessions([localSource(fx)]);
+assert.equal(localOut.length, 1, "the fixture yields exactly one session");
+assert.equal(localOut[0].host, null, "a local session carries no host");
+
+const remoteSource = {
+  host: "192.168.2.6",
+  root: fx,
+  isAlive: (pid) => pid === process.pid,
+  tail: async () => ({ lines: [aiTitleLine, ""], whole: true }),
+};
+const remoteOut = await getLiveSessions([remoteSource]);
+assert.equal(remoteOut.length, 1, "the same tree read as remote yields the same one session");
+assert.equal(remoteOut[0].host, "192.168.2.6", "a remote session carries its host");
+assert.deepEqual(
+  { ...remoteOut[0], host: null },
+  { ...localOut[0], host: null },
+  "a remote source and a local source cannot disagree about a session"
+);
+
+// isAlive is per source: a remote pid must never be checked against this
+// machine's process table.
+const deadRemote = await getLiveSessions([{ ...remoteSource, isAlive: () => false }]);
+assert.deepEqual(deadRemote, [], "a pid absent from the host's list drops the session");
+
+// Two sources at once, which is the daemon's real shape.
+const both = await getLiveSessions([localSource(fx), remoteSource]);
+assert.equal(both.length, 2, "sources concatenate");
+
 console.log("remote-check: OK");
