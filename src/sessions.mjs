@@ -63,7 +63,11 @@ export function matchFolder(cwd, folders) {
   return { folder, nested: true };
 }
 
-function isAlive(pid) {
+// Exported for window-state.mjs, which needs the same test on a different kind
+// of pid — a VS Code extension host rather than a Claude process. One
+// definition rather than two: signal 0 meaning "does this pid exist" is the
+// kind of detail that gets re-derived subtly wrong.
+export function isAlive(pid) {
   try {
     process.kill(pid, 0); // signal 0 only tests for existence
     return true;

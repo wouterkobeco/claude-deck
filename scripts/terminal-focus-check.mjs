@@ -5,11 +5,12 @@
 // Run: node scripts/terminal-focus-check.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ancestorChain, parseProcessTable } from "../src/terminal-focus.mjs";
 import { requestFocus } from "../src/terminal-focus.mjs";
+import { countVsCodeWindows, readWindowStates } from "../src/window-state.mjs";
 
 // The real shape, from the roadmap doc's own measurement:
 //   99684 claude  <-  92021 zsh  <-  2433 ptyHost  <-  1316 Code  <-  1
@@ -90,6 +91,60 @@ await requestFocus(
 assert.equal((await read()).sessionId, "sess-b");
 
 await rm(dir, { recursive: true, force: true });
+
+// The reverse channel's reader. A window publishes state only while its
+// extension host is alive, so the filename IS the liveness handle — no
+// timestamps, no staleness window, no heartbeat writes.
+const wdir = await mkdtemp(join(tmpdir(), "streamdeck-windows-check-"));
+const winFile = (name, body) => writeFile(join(wdir, name), typeof body === "string" ? body : JSON.stringify(body));
+
+// A live window: this very process, which is alive by definition.
+await winFile(`${process.pid}.json`, {
+  folders: ["/repo"],
+  focused: true,
+  activeSessionId: "sess-a",
+});
+// A window that crashed without unlinking. 999999 is above macOS's default
+// pid_max, so it cannot be a running process and cannot be recycled onto one.
+await winFile("999999.json", { folders: ["/gone"], focused: true, activeSessionId: "sess-x" });
+// Caught mid-write, and a name that isn't a pid at all.
+await winFile("truncated.json.tmp", "{\"folders\":[");
+await winFile(`${process.pid + 0.5}.json`, { folders: ["/nope"] });
+await winFile("notes.txt", "not json");
+
+const live = readWindowStates(wdir);
+assert.deepEqual(
+  live.map((w) => w.folders[0]),
+  ["/repo"],
+  "only windows whose extension host is still alive count"
+);
+assert.equal(live[0].pid, process.pid);
+assert.equal(live[0].focused, true);
+assert.equal(live[0].activeSessionId, "sess-a");
+
+// A state file that parses but lacks `folders` can't be matched to a window,
+// so it is not a window. Guarded rather than assumed: this file is written by
+// another process and a read can land mid-rewrite.
+await winFile(`${process.pid}.json`, { focused: true, activeSessionId: "sess-a" });
+assert.deepEqual(readWindowStates(wdir), [], "a state without folders is unusable, not a window");
+
+// No directory at all — the extension has never run anywhere.
+assert.deepEqual(readWindowStates(join(wdir, "missing")), []);
+
+// How many VS Code windows are open at all, for the "N of M windows have the
+// extension" line. JetBrains writes the same lock shape with its own ideName
+// and must not inflate M — it can never run this extension.
+const idedir = await mkdtemp(join(tmpdir(), "streamdeck-ide-check-"));
+const lock = (name, body) => writeFile(join(idedir, name), JSON.stringify(body));
+await lock("1.lock", { ideName: "Visual Studio Code", workspaceFolders: ["/a"] });
+await lock("2.lock", { workspaceFolders: ["/b"] }); // no ideName — VS Code, same as focusWindow assumes
+await lock("3.lock", { ideName: "PhpStorm", workspaceFolders: ["/c"] });
+await writeFile(join(idedir, "notes.txt"), "ignored");
+assert.equal(countVsCodeWindows(idedir), 2, "JetBrains windows can't run this extension and don't count");
+assert.equal(countVsCodeWindows(join(idedir, "missing")), 0);
+
+await rm(idedir, { recursive: true, force: true });
+await rm(wdir, { recursive: true, force: true });
 
 // The extension's version tracks the daemon's, and this is what enforces it.
 //
