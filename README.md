@@ -114,6 +114,21 @@ fi
 
 Skip it and everything else still works; the gauge just never draws.
 
+### Reveal the right terminal (optional)
+
+Raising a window is only half the job when several sessions share it — the
+terminal showing may be another session's. A small VS Code extension in this
+repo fixes that: pressing a key reveals that session's terminal, bringing a
+joined split group forward with the right pane active.
+
+```
+npm run ext:install
+```
+
+Then run `Developer: Reload Window` in each VS Code window that is already
+open; new windows pick it up on their own. Without it, everything else works
+exactly as before — the window is raised and the terminal is left alone.
+
 ## Where the data comes from
 
 All read-only, all maintained by Claude Code itself:
@@ -146,6 +161,7 @@ npm run stats-check     # stats board formatting (--live prints the real tiles)
 npm run title-check     # title / cleared / blocked-on-denial / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check    # palette contrast + separation floors
+npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run board-shot      # re-render the screenshots above
 ```
 
@@ -156,6 +172,10 @@ npm run board-shot      # re-render the screenshots above
   that needs a VS Code extension. See `docs/roadmap-reveal-terminal.md` for what
   was ruled out and why.
 - Auto-triggered compactions aren't detected; only `/compact` is.
+- With **two windows open on the same folder**, a press can raise one window
+  while revealing the terminal in the other. The extension routes by process id
+  and gets it right; the window raise opens a file and macOS picks the window.
+  Nothing outside the editor can aim that raise at a specific window.
 
 Design notes: `docs/superpowers/specs/2026-08-11-claude-streamdeck-monitor-design.md`
 (partly superseded — its hook-based status reporting is gone).

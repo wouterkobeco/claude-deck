@@ -14,6 +14,8 @@ npm run stats-check    # stats board formatting
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
+npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
+npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
 
 The checks are the test suite: plain `node scripts/*-check.mjs` files that
@@ -34,6 +36,7 @@ the whole board from disk; there is no event stream and no persisted state.
                                                             ↓              ↓
                                           render.mjs (SVG→RGBA)      Stream Deck
 button press → index.mjs → vscode-state.mjs (already-open file) → `open -a "Visual Studio Code"`
+                        ↘ terminal-focus.mjs → ~/.claude/streamdeck-focus.json → extension/ → terminal.show()
 ```
 
 - `src/sessions.mjs` — the only reader of Claude Code's state. Joins the
@@ -192,6 +195,27 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `sqlite3` CLI, to find a file the target window already has open. Reads an
   undocumented internal format, so *every* failure path returns `null` and the
   caller falls back to a static anchor file. Never make this throw.
+- `src/terminal-focus.mjs` — asks the VS Code window that owns a session's
+  terminal to reveal it. The join is process ancestry: `Terminal.processId` is
+  the shell's pid and Claude is a descendant of it, so the daemon writes the
+  session's whole ancestor chain to `~/.claude/streamdeck-focus.json` and the
+  extension picks the terminal whose pid is in it. **The request is
+  self-routing** — every window reads the same file and only the one owning a
+  match acts, which is why there is no port file, no token and no window
+  addressing here, unlike `~/.claude/ide/*.lock`. `issued` is not decoration:
+  `requestFocus` is fired without `await` and spawns `ps` before it writes, so
+  two quick presses can complete out of order and the *earlier* one would land
+  last; the counter is taken before the first `await`, so the file only ever
+  holds the newest press and the extension needs no ordering logic of its own.
+  Best-effort throughout, like `vscode-state.mjs` — every failure degrades to
+  today's behaviour, the window raised and the terminal untouched.
+- `extension/` — the other half, ~45 lines of plain CommonJS with no build step
+  and no dependencies, installed by copying it into `~/.vscode/extensions`.
+  Polls the request file every 400ms and calls `terminal.show()`, which
+  activates the terminal's tab group — that is what brings a joined split
+  forward with the right pane active. `extensionKind: ["ui"]` is required, not
+  cosmetic: in a remote window the extension host runs remotely, where the
+  request file is another machine's and the terminal pids are remote pids.
 
 ### Invariants worth knowing before changing things
 
@@ -236,10 +260,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   not because pulse wrote something. `run()`'s `setView()` helper nulls
   `attentionButton.drawn` on every transition so the next `drawAttention` call
   repaints it for real regardless of what pulse left behind.
-- **Read-only, near-zero-install.** No hooks, no `settings.json` writes, no
-  config file. The daemon itself only reads — from `~/.claude/`, VS Code's
-  storage, and the usage endpoint. An earlier hook-based version was deleted;
-  don't reintroduce one.
+- **Read-only, two install steps.** No hooks, no `settings.json` writes, no
+  config file. The daemon reads from `~/.claude/`, VS Code's storage and the
+  usage endpoint, and writes exactly one file: `~/.claude/streamdeck-focus.json`,
+  the terminal-focus request. An earlier hook-based version was deleted; don't
+  reintroduce one.
 - **One install step, in the status line.** Context usage is the exception to
   the above: Claude Code hands a session's context percentage to the status
   line and nowhere else, so `~/.claude/statusline-command.sh` writes it to
@@ -249,6 +274,25 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Don't be tempted by the transcript's `usage` totals instead: the percentage
   needs the model's window size (1M on some, 200k on others), which the
   transcript doesn't record.
+- **The second install step is the extension, and it needs a window reload.**
+  `npm run ext:install` copies `extension/` into `~/.vscode/extensions`; windows
+  already open when it lands do not have it until `Developer: Reload Window`.
+  Terminals survive that reload (`terminal.integrated.enablePersistentSessions`
+  defaults on, and ptyHost is a separate process holding the `claude` processes
+  up), but prove it on a scratch window before doing it to one with real work in
+  it. A window without the extension simply doesn't reveal terminals — never
+  make its absence an error, same rule as the status line's context file.
+- **Terminal focus makes the duplicate-folder ambiguity worse, deliberately.**
+  Two windows open on the same folder (live on this machine already —
+  `11854.lock` and `53173.lock` both claim `kob/kob-backend`) route differently
+  for the two halves of a press: the extension matches by pid and so reveals the
+  terminal in the window that really owns the session, while `focusWindow` opens
+  a file and macOS can raise the *other* one. You end up in the wrong window
+  with the right window's panel changed behind you. Today's fix would be to aim
+  the raise at a specific window, which is not possible from outside the editor
+  (see `docs/roadmap-reveal-terminal.md`). Gating the reveal on "is this folder
+  unambiguous" was rejected: it would disable the feature for the multi-root
+  windows it helps most.
 - **Window focus must not disturb the window.** The current route (open a file
   the window already has open) was chosen because `code -r`, `open -a Code
   <folder>` and `vscode://` all either replace a window's content or spawn an
