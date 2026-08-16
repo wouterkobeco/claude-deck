@@ -72,6 +72,22 @@ function claimAccent(folder, liveFolders) {
   return ACCENTS.find((c) => !taken.has(c)) ?? ACCENTS[folderAccent.size % ACCENTS.length];
 }
 
+/**
+ * A folder's identity across the whole board.
+ *
+ * Two hosts can hold the same path — `/home/pi/x` on two Raspberry Pis is the
+ * live case here — and everything that groups a project keys on the folder:
+ * block ordering, accent colour, and the "is this the first key of a block"
+ * test. Unqualified, those two projects merge into one block wearing one
+ * colour, which nothing on the deck explains.
+ *
+ * A local session's key is the bare folder, so nothing about a machine with no
+ * remote hosts changes, including the accent it has been wearing.
+ */
+export function folderKeyFor(session) {
+  return session.host ? `${session.host}:${session.folder}` : session.folder;
+}
+
 export function accentFor(folder) {
   return folderAccent.get(folder) ?? ACCENTS[0];
 }
@@ -227,10 +243,11 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   const real = sessions.filter((s) => !s.nested);
   const nested = sessions.filter((s) => s.nested);
 
-  const liveFolders = new Set(real.map((s) => s.folder));
+  const liveFolders = new Set(real.map(folderKeyFor));
   for (const s of real) {
-    if (!folderOrder.has(s.folder)) folderOrder.set(s.folder, folderOrder.size);
-    if (!folderAccent.has(s.folder)) folderAccent.set(s.folder, claimAccent(s.folder, liveFolders));
+    const key = folderKeyFor(s);
+    if (!folderOrder.has(key)) folderOrder.set(key, folderOrder.size);
+    if (!folderAccent.has(key)) folderAccent.set(key, claimAccent(key, liveFolders));
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
   for (const s of nested) {
@@ -248,7 +265,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
 
   const ordered = [...real].sort(
     (a, b) =>
-      folderOrder.get(a.folder) - folderOrder.get(b.folder) ||
+      folderOrder.get(folderKeyFor(a)) - folderOrder.get(folderKeyFor(b)) ||
       sessionOrder.get(a.session_id) - sessionOrder.get(b.session_id)
   );
 
@@ -264,7 +281,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
     // show in exactly one place per project. Nested sessions are sorted by
     // their own first-seen order (nestedOrder), not whatever order this
     // particular poll happened to report them in.
-    const isPrimary = i === 0 || visible[i - 1].folder !== s.folder;
+    const isPrimary = i === 0 || folderKeyFor(visible[i - 1]) !== folderKeyFor(s);
     const own = nestedFor(s, nested, isPrimary);
     if (isPrimary || own.length) {
       nestedBySlot[i] = own.sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
@@ -391,6 +408,13 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // having no folder, can't continue one.
   if (press.session_id === null || press.folder === null) return false;
 
+  // Two hosts can publish the same folder — the same host-merge problem
+  // `folderKeyFor` solves for the board applies here too, so a window is only
+  // a candidate when it's on the press's own host. `w.host` can be undefined
+  // on a window object built before this change, so it's normalised with
+  // `?? null`; `press.host` is always set explicitly where the press is built
+  // (`deck.on("down")`) and needs no coalescing.
+  //
   // Exact match only — matchFolder also returns truthy for an *ancestor*
   // match (`nested: true`), which is a different, unrelated window whose
   // open folder merely contains this one. `press.folder` is by construction
@@ -399,16 +423,22 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   // through to an ancestor match instead suppresses the folder rule for a
   // session whose own window was never reloaded, on the say-so of a sibling
   // window that was.
-  const matching = windows.filter((w) => matchFolder(press.folder, w.folders)?.nested === false);
+  const matching = windows.filter(
+    (w) => (w.host ?? null) === press.host && matchFolder(press.folder, w.folders)?.nested === false
+  );
+  // Same path, same host — the fallback the folder rule reduces to whenever
+  // there's no window to ask. Two hosts sharing a path must not pass this
+  // just because the paths match.
+  const sameProject = previous?.folder === press.folder && (previous?.host ?? null) === press.host;
   // No extension in this session's window — today's rule, unchanged.
-  if (matching.length === 0) return previous?.folder === press.folder;
+  if (matching.length === 0) return sameProject;
 
   // This session was asked for a while ago and no window has ever reported
   // it active: proof it can't be revealed through the extension (see the
   // docstring), so answer with the folder rule instead of a `.some()` that
   // can only ever be false for it.
   const askedLongAgo = requestedAt.has(press.session_id) && now - requestedAt.get(press.session_id) >= REVEAL_GRACE_MS;
-  if (askedLongAgo && !everActive.has(press.session_id)) return previous?.folder === press.folder;
+  if (askedLongAgo && !everActive.has(press.session_id)) return sameProject;
 
   // Every candidate is asked, rather than one being elected with .find().
   // Two windows can have the same folder open — CLAUDE.md records exactly that
@@ -602,7 +632,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
         return;
       }
       const { label, project } = keyFields(session);
-      const accent = accentFor(session.folder);
+      const accent = accentFor(folderKeyFor(session));
 
       // One object drives both the render call and the drawn signature (the
       // shape refreshDetail set and refresh() now also follows) so a field
@@ -643,7 +673,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
         return;
       }
       const { label, project } = keyFields(session);
-      const accent = accentFor(session.folder);
+      const accent = accentFor(folderKeyFor(session));
       const nestedStates = btn.nestedSessions.map((n) => n.state);
       // The key stands for its whole project block, so its colour takes the
       // most urgent state in it: a session working only through a worktree
@@ -735,7 +765,7 @@ async function refreshDetail(deck, buttons, view) {
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;
   const tiles = holdTiles(view.tiles, fresh, tasks, sessions);
-  const accent = accentFor(session.folder);
+  const accent = accentFor(folderKeyFor(session));
 
   await Promise.all(
     buttons.map(async (btn, i) => {
@@ -963,7 +993,8 @@ async function run() {
     const btn = isUsage || isAttention ? null : buttons[control.index];
     const sessionId = btn?.assigned?.session_id ?? null;
     const folder = btn?.assigned?.folder ?? null;
-    const press = { index: control.index, session_id: sessionId, folder };
+    const host = btn?.assigned?.host ?? null;
+    const press = { index: control.index, session_id: sessionId, folder, host };
 
     // The detail board owns the whole deck, so it leaves only by its own back
     // key. Every other key there is a tile describing something — pressing a

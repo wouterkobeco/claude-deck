@@ -2,7 +2,7 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX } from "../src/index.mjs";
+import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor } from "../src/index.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -336,10 +336,10 @@ eq(mostUrgent(["busy", "no-such-state"]), "busy", "unknown state loses to a know
 // A second press anywhere in the same project means "tell me more": the
 // project's keys are one block, so moving along it is the same gesture as
 // pressing one key twice.
-const p1 = { index: 0, session_id: "a", folder: "/repo" };
-const p2 = { index: 1, session_id: "b", folder: "/repo" };
-const other = { index: 2, session_id: "c", folder: "/elsewhere" };
-const empty = { index: 3, session_id: null, folder: null };
+const p1 = { index: 0, session_id: "a", folder: "/repo", host: null };
+const p2 = { index: 1, session_id: "b", folder: "/repo", host: null };
+const other = { index: 2, session_id: "c", folder: "/elsewhere", host: null };
+const empty = { index: 3, session_id: null, folder: null, host: null };
 // Windows the extension is running in. `folders` is what ties a published
 // window to a session; `activeSessionId` is the session whose terminal is
 // actually in front, which is the fact the whole rule turns on.
@@ -400,7 +400,7 @@ eq(isRepeatPress(p1, p1, [win(["/repo"], false, null), win(["/repo"], false, "a"
 // second press used to open detail. Without capability info a window that
 // never reveals this session must, past a grace period, fall back to the
 // folder rule instead of staying permanently stuck.
-const pz = { index: 4, session_id: "z", folder: "/repo" };
+const pz = { index: 4, session_id: "z", folder: "/repo", host: null };
 const onlyAEverRevealed = [win(["/repo"], true, "a")]; // matches the folder, never reports "z"
 const T0 = 1_000_000;
 
@@ -423,6 +423,43 @@ eq(
   isRepeatPress(pz, pz, onlyAEverRevealed, { requestedAt: new Map([["z", T0]]), everActive: new Set(["z"]), now: T0 + 5000 }),
   false,
   "seen active before but not right now (alt-tabbed away): the verified rule still says no rather than the fallback overriding it"
+);
+
+// Two hosts can hold the same path. Before folder keys were host-qualified,
+// these two sessions shared one block and one accent — a merge nothing on the
+// deck would explain.
+const twoHosts = [
+  { session_id: "a", folder: "/home/pi/x", host: "192.168.2.6", state: "idle", nested: false },
+  { session_id: "b", folder: "/home/pi/x", host: "192.168.2.70", state: "idle", nested: false },
+];
+const twoSlots = new Array(13).fill(null);
+assignSlots(twoHosts, twoSlots);
+eq(twoSlots[0], "a", "the first host's session takes the first slot");
+eq(twoSlots[1], "b", "the second host's session takes its own slot");
+eq(
+  accentFor(folderKeyFor(twoHosts[0])) !== accentFor(folderKeyFor(twoHosts[1])),
+  true,
+  "same path on two hosts gets two accents"
+);
+
+// And a local session is not merged with a remote one at the same path.
+eq(folderKeyFor({ folder: "/x", host: null }), "/x", "a local key is the bare folder, as before");
+eq(folderKeyFor({ folder: "/x", host: "h" }), "h:/x", "a remote key is qualified by its host");
+
+// isRepeatPress must not let a window on one host answer for a session on
+// another. Both fall back to the folder rule when no window publishes, and that
+// rule compares paths — which two hosts can share.
+const localPress = { index: 0, session_id: "a", folder: "/home/pi/x", host: null };
+const remotePress = { index: 1, session_id: "b", folder: "/home/pi/x", host: "192.168.2.6" };
+eq(isRepeatPress(remotePress, localPress, []), false, "a remote press does not make a local press at the same path a repeat");
+eq(isRepeatPress(localPress, localPress, []), true, "the same local session at the same path still repeats");
+
+// A published window on the wrong host must not satisfy the reveal test.
+const remoteWindow = { pid: 1, folders: ["/home/pi/x"], focused: true, activeSessionId: "a", host: "192.168.2.6" };
+eq(
+  isRepeatPress({ ...localPress }, localPress, [remoteWindow]),
+  true,
+  "a window on another host is ignored, so the local folder rule still answers"
 );
 
 console.log("OK: project grouping");
