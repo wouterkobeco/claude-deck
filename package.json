@@ -1,6 +1,6 @@
 {
   "name": "claude-streamdeck",
-  "version": "1.1.24",
+  "version": "1.1.25",
   "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
   "main": "src/index.mjs",
   "directories": {
@@ -22,7 +22,8 @@
     "ext:install": "rm -rf \"$HOME/.vscode/extensions/claude-streamdeck-terminal-focus\" && mkdir -p \"$HOME/.vscode/extensions\" && cp -R extension \"$HOME/.vscode/extensions/claude-streamdeck-terminal-focus\" && echo \"extension installed — run 'Developer: Reload Window' in VS Code windows already open\"",
     "postinstall": "npm run ext:install",
     "board-shot": "node scripts/board-shot.mjs",
-    "vscode-state-check": "node scripts/vscode-state-check.mjs"
+    "vscode-state-check": "node scripts/vscode-state-check.mjs",
+    "extension-check": "node scripts/extension-check.mjs"
   },
   "keywords": [
     "claude-code",

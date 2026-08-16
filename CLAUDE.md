@@ -16,6 +16,7 @@ npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run vscode-state-check   # which window's storage answers for a folder
+npm run extension-check      # whose window a focus request is for
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
@@ -341,7 +342,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   what brings a joined split forward with the right pane active.
   `extensionKind: ["ui"]` is required, not cosmetic: in a remote window the
   extension host runs remotely, where the request file is another machine's
-  and the terminal pids are remote pids. It also does the two things
+  and the terminal pids are remote pids.
+  **`extension/routing.js` exists so the routing can be checked at all.**
+  `extension.js` opens with `require("vscode")`, so nothing in it can be loaded
+  outside a running editor — which made this the one piece of the project whose
+  bugs surfaced only by reloading a window and watching, and every mistake its
+  routing made was found by reading rather than running. `routing.js` requires
+  nothing and takes `folders` and `remoteName` as arguments, so
+  `extension-check` exercises the real decision path instead of a copy of it.
+  Writing that check immediately found a request with no `ts` being accepted
+  forever: `now - undefined` is `NaN`, and every comparison against `NaN` is
+  false, so the staleness guard read it as fresh. Keep new routing decisions in
+  that file rather than inline here, for the same reason. It also does the two things
   `window-state.mjs` reads: publishes this window's folders/focus/active-terminal
   to `~/.claude/streamdeck-windows/<pid>.json` on every tick (and immediately
   after a reveal, so a fast second press doesn't read a stale one), and sweeps

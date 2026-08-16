@@ -8,12 +8,14 @@ const { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } = requ
 const { homedir } = require("node:os");
 const { join } = require("node:path");
 const vscode = require("vscode");
+// Which requests are ours, and what this window's own identity is. Separate
+// because this file cannot be loaded outside a running editor — the line above
+// sees to that — and that routing is the part worth checking. See
+// scripts/extension-check.mjs.
+const { sshHost, requestIsOurs } = require("./routing.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
-// A request older than this is ignored, so a window that was closed when the
-// key was pressed doesn't act on it whenever it next opens.
-const REQUEST_MAX_MS = 5000;
 // Where this window publishes what it can see, for the daemon to read when it
 // decides what a key press means. Named for this extension host's own pid, so
 // the daemon can tell a live window from a crashed one exactly
@@ -61,31 +63,18 @@ async function tick() {
   } catch {
     return; // caught mid-write; the next distinct read picks it up
   }
-  if (!Array.isArray(request.pids) || Date.now() - request.ts > REQUEST_MAX_MS) return;
-
-  // Only the window on the request's own host may act on it. A pid is unique
-  // per machine and nothing else about the request is: the daemon's remote
-  // chain is full of ordinary five- and seven-digit numbers that a local
-  // terminal can hold too, so without this a local window would match a remote
-  // request by coincidence and reveal a stranger's terminal. `null` is the
-  // local case on both sides. A request written by a daemon that predates this
-  // field has no `host` at all, and is read as local — which is what it was:
-  // that daemon could only ever describe local sessions, so an old request
-  // still works in a local window and is correctly refused by a remote one.
-  const wf = vscode.workspace.workspaceFolders ?? [];
-  const host = sshHost(wf);
-  // `sshHost` answers `null` for four different situations, and only one of
-  // them is "this window is local": a dev container, a WSL window, an
-  // `ssh-remote` window with no folder open, and a host this build declines to
-  // name all collapse to the same value. A dev-container window's extension
-  // host runs locally (`extensionKind: ["ui"]`) and reads this very file, but
-  // its terminals resolve to *container* pids — so treating its `null` as
-  // "local" hands it every local request to match against a pid space that has
-  // nothing to do with this machine. `remoteName` is what tells the four apart:
-  // set means remote of some kind, and a remote window this build cannot name
-  // must claim nothing rather than claim to be local.
-  if (vscode.env.remoteName && host === null) return;
-  if ((request.host ?? null) !== host) return;
+  // Freshness, shape, and whose window this request is for — all of it in
+  // `routing.js`, which knows nothing about vscode and is therefore the one part
+  // of this extension a check can reach. The reasoning for each rule lives with
+  // the code there rather than being restated here.
+  if (
+    !requestIsOurs(request, {
+      remoteName: vscode.env.remoteName,
+      folders: vscode.workspace.workspaceFolders ?? [],
+    })
+  ) {
+    return;
+  }
 
   busy = true;
   try {
@@ -125,28 +114,6 @@ async function tick() {
   }
 }
 
-// The host half of a Remote-SSH window's identity, for the daemon's own ssh.
-//
-// A window carries a single remote authority — local and remote folders cannot
-// be mixed in one window — so folder 0 is representative rather than arbitrary.
-// The agreement is asserted anyway: it costs nothing and catches the day that
-// stops being true.
-//
-// Only the plain `ssh-remote+<host>` form is understood. Dev containers and WSL
-// encode their authority as hex JSON (`dev-container+7b22686f7374…`), which is
-// a remote kind this feature does not support and must never reach `ssh`.
-const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-function sshHost(folders) {
-  if (vscode.env.remoteName !== "ssh-remote" || !folders.length) return null;
-  const authorities = new Set(folders.map((f) => f.uri.authority));
-  if (authorities.size !== 1) return null;
-  const [authority] = authorities;
-  if (!authority.startsWith("ssh-remote+")) return null;
-  const host = authority.slice("ssh-remote+".length);
-  return HOST_RE.test(host) ? host : null;
-}
-
 // Publish what this window can see. Synchronous and cheap; the daemon reads it
 // from a synchronous key-press handler, so there is nothing to await on either
 // end.
@@ -163,7 +130,7 @@ function publishState() {
       folders: folders.map((f) => f.uri.fsPath),
       focused: vscode.window.state.focused,
       activeSessionId,
-      host: sshHost(folders),
+      host: sshHost(folders, vscode.env.remoteName),
     });
     if (state === lastState) return;
     mkdirSync(WINDOWS_DIR, { recursive: true });
