@@ -25,11 +25,10 @@ const RECONNECT_MS = 5000;
 // USB HID link across up to 14 keys at once (13 session keys plus the
 // attention key).
 const PULSE_MS = 400;
-// requires_action's own beat, 50% slower than the shared PULSE_MS tick —
-// deliberately off that tick rather than a slower divisor of it (every 2nd
-// or 3rd tick would land on 800ms/1200ms, not the 600ms asked for), so it's
-// timed against the wall clock instead of the tick counter.
-const REQUIRES_ACTION_PULSE_MS = PULSE_MS * 1.5;
+// requires_action's own beat: dark gold at rest, one PULSE_MS-wide flash to
+// bright gold every REQUIRES_ACTION_FLASH_MS — a blip, not a 50/50
+// alternation, so timed against the wall clock rather than the tick counter.
+const REQUIRES_ACTION_FLASH_MS = 2000;
 // The attention key blinks to announce a *new* waiter, then settles to solid
 // red — a key that flashes for an hour stops meaning anything.
 const ATTENTION_BLINK_MS = 5000;
@@ -790,10 +789,12 @@ async function refreshDetail(deck, buttons, view) {
   return sessions;
 }
 
-// Flashes every requires_action key between dark gold and its idle
-// background, on its own slower beat (REQUIRES_ACTION_PULSE_MS) — the one
-// state that's actually blocked on you, so the one worth catching your eye.
-// The attention key blinks on the plain PULSE_MS tick instead, and only when
+// Flashes every requires_action key from its dark-gold background up to
+// bright gold for one tick every REQUIRES_ACTION_FLASH_MS — the one state
+// that's actually blocked on you, so the one worth catching your eye, but a
+// blip rather than a steady alternation so a board with one blocked session
+// doesn't read as though something's actively wrong the whole time. The
+// attention key blinks on the plain PULSE_MS tick instead, and only when
 // its cached count is nonzero — a CLEAR key stays dark and still. Runs on
 // its own faster tick alongside the main poll rather than inside it:
 // `refresh` only redraws on change, but a pulse must redraw on a fixed beat
@@ -805,10 +806,10 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
   while (!isDisconnected()) {
     bright = !bright;
     tick++;
-    // Its own wall-clock beat, not a multiple of `tick`: on the tick counter
-    // 400ms only divides evenly into 800ms/1200ms/etc, never the 600ms this
-    // asks for.
-    const actionBright = Math.floor(Date.now() / REQUIRES_ACTION_PULSE_MS) % 2 === 0;
+    // Bright for the first PULSE_MS of every REQUIRES_ACTION_FLASH_MS window,
+    // dark gold the rest — a blip on the wall clock, not a tick-counter
+    // alternation.
+    const actionBright = Date.now() % REQUIRES_ACTION_FLASH_MS < PULSE_MS;
     if (!isOverlayView()) {
       try {
         await Promise.all([

@@ -216,14 +216,15 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room. It never actually sits on its own red
   // (STATE_COLORS.requires_action, kept only for colors-check's contrast
-  // sweep): it flashes between waiting's own dark gold and plain idle grey,
-  // so it reads as "waiting on you" surfacing and settling, not a colour
-  // fighting a brighter version of itself.
+  // sweep): it sits on waiting's own dark gold and briefly lifts to bright
+  // gold on `pulse` (the blip index.mjs's `actionBright` drives), so at rest
+  // it reads as the same "blocked on you" family as waiting, and the flash
+  // is a lift within that family rather than a colour fighting a grey.
   const color =
     state === "requires_action"
       ? pulse
-        ? STATE_COLORS.waiting
-        : STATE_COLORS.idle
+        ? "#ffc107"
+        : STATE_COLORS.waiting
       : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white. The bar
