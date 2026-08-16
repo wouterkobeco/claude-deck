@@ -284,6 +284,19 @@ projects into one block and one accent. Folder identity becomes `host:folder`.
 session folders through `matchFolder`. A remote window's folder must not match a
 local session's cwd, so the same host qualification applies there.
 
+**Nested attachment.** `nestedFor` decides which key a nested session's marker
+lands on. Its `parent` branch is already safe — a session id is globally unique,
+so it is host-scoped by construction. Its *fallback*, for SDK-entrypoint sessions
+that carry no `parent`, compares bare folders: two hosts at the same path each
+match the other's SDK session, so one host's subagent draws its marker on the
+other's key and feeds `mostUrgent` for a project it has nothing to do with.
+
+This third site was missed when this section was first written and found in
+review of the implementation. It is worth stating why the omission was easy:
+the first two are about *ordering and colour*, which is where "same folder"
+obviously matters, while this one is about *attachment*, which reads like a
+parent-child question until you notice half its cases have no parent.
+
 ### 5. Overflow: nothing changes, deliberately
 
 Remote sessions join the single pool and take slots in first-seen order like
