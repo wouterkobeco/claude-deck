@@ -435,7 +435,7 @@ Append to `src/remote-fs.mjs`:
 const TAIL_BYTES = 65536;
 
 /**
- * Call 2: the true byte size of each transcript, then its last 64KB.
+ * Call 2: each transcript's last 64KB, NUL-terminated.
  *
  * Paths arrive on **stdin, one per line**, and are never interpolated into this
  * string. A cwd with a space or an apostrophe in it is an ordinary thing to
