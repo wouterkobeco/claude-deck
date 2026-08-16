@@ -667,3 +667,81 @@ this directory is written by the extension and only *read* by the daemon. The
 invariant needs a sentence saying so, because "the daemon writes one file" is
 now sitting next to a second file the daemon knows about, and the next reader
 will assume it writes that one too.
+
+## Pushback review, 2026-08-16
+
+Four issues found against the amendment above before any of it was built. All
+four are folded into the design; recorded here because each was a real hole and
+the reasoning is worth more than the patch.
+
+### 1. The published state lagged the press that changed it
+
+The extension publishes on its 400ms tick, and the interval was written
+`publishState(); tick()` — so a reveal in tick N was only published in tick
+N+1, up to ~800ms after the press. A second press inside that window reads a
+stale `activeSessionId`, concludes the press changed something, and re-reveals
+instead of escalating. **The double-press the rule is named after would have
+been the one gesture that didn't work.**
+
+`publishState()` is therefore called **immediately after `terminal.show()`**,
+inside `tick`, as well as on the timer. That collapses the window to the time
+the extension takes to notice the request at all, and it captures the corrected
+`focused` in the same write, since `show()` has just taken focus.
+
+Rejected: dropping `POLL_MS` to ~150ms — triples the polling cost in every open
+window forever to fix one interaction. Also rejected: a daemon-side optimistic
+bridge ("I asked for this session <1s ago, assume it landed"), which works but
+puts back a piece of the inference this whole design exists to remove. If
+acceptance shows the fast double-tap still misses, that bridge is the follow-up.
+
+### 2. Electing one window broke the duplicate-folder case
+
+Step 1 of the rule said "find a live window whose folders contain the session's
+folder". With two windows open on one folder — which `CLAUDE.md` records as live
+on this machine, `11854.lock` and `53173.lock` both claiming `kob/kob-backend` —
+`find` returns whichever `readdir` yielded first. Elect the wrong one and its
+`activeSessionId` can never match, so **the detail board becomes permanently
+unreachable for every session in that folder**, silently.
+
+The rule now `filter`s to all matching windows and asks `some` of them. Only the
+window that actually revealed a session can report it active, so this is
+self-disambiguating: it needs no way to tell two same-folder windows apart,
+which is a problem this project has not solved and does not need to solve here.
+
+### 3. Nothing said which windows were stale
+
+The one failure this feature reliably produces is a window that was never
+reloaded. It cost a full debugging session on 2026-08-16 — extension installed,
+`code --list-extensions` reporting it, and zero open windows running it.
+
+This amendment makes that worse, because the two states stop being
+distinguishable by eye: a stale window opens the detail board on a sibling
+press, a reloaded one switches terminals, and both look like working software.
+
+The daemon now logs `terminal focus: N/M windows have the extension`, comparing
+live state files against VS Code IDE locks, printed **when the number changes**
+rather than at startup — the number changes as you reload windows, which is
+exactly when the feedback is worth having; a startup-only line would need a
+daemon restart to confirm a reload worked. JetBrains locks are excluded from the
+denominator: they can never run this extension, and counting them would leave a
+fully-reloaded machine permanently reading as incomplete.
+
+### 4. Pid reuse could resurrect a dead window
+
+"The filename is the liveness handle" has one hole: `isAlive(pid)` asks whether
+*a* process with that pid exists, not whether it is the window that wrote the
+file. A window that crashes never runs `deactivate()`, macOS recycles pids, and
+weeks later the daemon starts trusting a frozen `focused`/`activeSessionId` from
+a window that died — either blocking escalation forever or satisfying it
+wrongly. The amendment's "an orphan the liveness check ignores forever" was true
+only until the pid came back around.
+
+The **extension** now sweeps dead siblings' files in `activate()`. It is already
+the writer of that directory, and a window opening or reloading is frequent
+enough that no file survives long enough for a pid to recycle onto it. Kept out
+of the daemon deliberately: a daemon that deletes files it did not write is a
+worse trade than the orphan it removes.
+
+Rejected: a process-start-time token in the filename, which needs the extension
+to read its own start time and the daemon to verify it — more machinery for the
+same guarantee.

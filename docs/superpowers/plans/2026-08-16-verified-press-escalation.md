@@ -49,6 +49,7 @@
 - Produces:
   - `export function isAlive(pid: number): boolean` from `src/sessions.mjs`
   - `export function readWindowStates(dir?: string): Array<{ pid: number, folders: string[], focused: boolean, activeSessionId: string|null }>` from `src/window-state.mjs`
+  - `export function countVsCodeWindows(dir?: string): number` from `src/window-state.mjs`
 
 **Why this is synchronous:** it is called from `deck.on("down")`, which is a synchronous event handler. An async read would resolve after the press had already been handled. It reads a handful of ~80-byte files, so `readdirSync`/`readFileSync` cost nothing measurable.
 
@@ -96,13 +97,26 @@ assert.deepEqual(readWindowStates(wdir), [], "a state without folders is unusabl
 // No directory at all — the extension has never run anywhere.
 assert.deepEqual(readWindowStates(join(wdir, "missing")), []);
 
+// How many VS Code windows are open at all, for the "N of M windows have the
+// extension" line. JetBrains writes the same lock shape with its own ideName
+// and must not inflate M — it can never run this extension.
+const idedir = await mkdtemp(join(tmpdir(), "streamdeck-ide-check-"));
+const lock = (name, body) => writeFile(join(idedir, name), JSON.stringify(body));
+await lock("1.lock", { ideName: "Visual Studio Code", workspaceFolders: ["/a"] });
+await lock("2.lock", { workspaceFolders: ["/b"] }); // no ideName — VS Code, same as focusWindow assumes
+await lock("3.lock", { ideName: "PhpStorm", workspaceFolders: ["/c"] });
+await writeFile(join(idedir, "notes.txt"), "ignored");
+assert.equal(countVsCodeWindows(idedir), 2, "JetBrains windows can't run this extension and don't count");
+assert.equal(countVsCodeWindows(join(idedir, "missing")), 0);
+
+await rm(idedir, { recursive: true, force: true });
 await rm(wdir, { recursive: true, force: true });
 ```
 
 Add `writeFile` to the existing `node:fs/promises` import, and add:
 
 ```js
-import { readWindowStates } from "../src/window-state.mjs";
+import { countVsCodeWindows, readWindowStates } from "../src/window-state.mjs";
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -189,6 +203,43 @@ export function readWindowStates(dir = WINDOWS_DIR) {
   }
   return states;
 }
+
+const IDE_DIR = join(homedir(), ".claude", "ide");
+
+/**
+ * How many VS Code windows are open, from the IDE locks Claude Code writes.
+ *
+ * Only used for the "N of M windows have the extension" line the daemon logs:
+ * the extension takes effect in a window only after that window has been
+ * reloaded, and a window that silently behaves like the old build is the one
+ * failure this feature reliably produces. Comparing this against
+ * `readWindowStates().length` is the whole diagnostic.
+ *
+ * JetBrains writes the same lock shape with its own `ideName` and can never run
+ * this extension, so counting it would permanently overstate the denominator
+ * and make a fully-reloaded machine still look incomplete. A lock with no
+ * `ideName` counts as VS Code — that's the same normalisation `focusWindow`
+ * already applies, and it's the common case.
+ */
+export function countVsCodeWindows(dir = IDE_DIR) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const name of names) {
+    if (!name.endsWith(".lock")) continue;
+    try {
+      const { ideName } = JSON.parse(readFileSync(join(dir, name), "utf8"));
+      if ((ideName ?? "Visual Studio Code") === "Visual Studio Code") count++;
+    } catch {
+      // mid-write or corrupt — not countable
+    }
+  }
+  return count;
+}
 ```
 
 - [ ] **Step 5: Run it to verify it passes**
@@ -264,6 +315,18 @@ eq(isRepeatPress(p1, p2, [win(["/elsewhere"], true, "a")]), true, "an unrelated 
 // Multi-root: the published folders are matched with matchFolder, so a session
 // under an open folder resolves to that window rather than missing it.
 eq(isRepeatPress(p1, p1, [win(["/", "/repo"], true, "a")]), true, "matchFolder picks the most specific published folder");
+
+// TWO windows open on the same folder — live on this machine, per CLAUDE.md
+// (11854.lock and 53173.lock both claim kob/kob-backend). Only the window that
+// actually revealed the session can report it as active, so every candidate is
+// asked rather than one being elected. Electing one with .find() would answer
+// from whichever readdir happened to return first, and get it wrong half the
+// time — permanently, for every session in that folder.
+const twoWindows = [win(["/repo"], false, null), win(["/repo"], true, "a")];
+eq(isRepeatPress(p1, p1, twoWindows), true, "the window that revealed it answers, whichever order they're read in");
+eq(isRepeatPress(p1, p1, [...twoWindows].reverse()), true, "and read order must not change the answer");
+eq(isRepeatPress(p1, p1, [win(["/repo"], false, null), win(["/repo"], false, "a")]), false,
+   "still false when no matching window is both focused and showing it");
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -310,14 +373,19 @@ export function isRepeatPress(previous, press, windows = []) {
   // having no folder, can't continue one.
   if (press.session_id === null || press.folder === null) return false;
 
-  const owner = windows.find((w) => matchFolder(press.folder, w.folders));
+  const matching = windows.filter((w) => matchFolder(press.folder, w.folders));
   // No extension in this session's window — today's rule, unchanged.
-  if (!owner) return previous?.folder === press.folder;
+  if (matching.length === 0) return previous?.folder === press.folder;
 
+  // Every candidate is asked, rather than one being elected with .find().
+  // Two windows can have the same folder open — CLAUDE.md records exactly that
+  // live on this machine — and electing one would answer from whichever
+  // readdir returned first. Only the window that actually revealed the session
+  // can report it active, so `.some` is self-disambiguating: it needs no way to
+  // tell the windows apart, which is a problem this project has not solved.
   return (
     previous?.session_id === press.session_id &&
-    owner.focused &&
-    owner.activeSessionId === press.session_id
+    matching.some((w) => w.focused && w.activeSessionId === press.session_id)
   );
 }
 ```
@@ -352,7 +420,44 @@ Change the press handler line (currently `const isRepeat = isRepeatPress(lastPre
     const isRepeat = isRepeatPress(lastPress, press, readWindowStates());
 ```
 
-- [ ] **Step 6: Verify the daemon still loads and nothing regressed**
+- [ ] **Step 6: Log how many windows are actually running the extension**
+
+The one failure this feature reliably produces is a window that was never reloaded and so silently behaves like the old build. It cost a full debugging session on 2026-08-16, when the extension was installed, `code --list-extensions` said yes, and **zero** open windows were running it. After this change the two states stop being distinguishable by eye — a stale window opens the detail board on a sibling press, a reloaded one switches terminals, and both look like working software.
+
+Add to the import from `./window-state.mjs`:
+
+```js
+import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
+```
+
+Inside `run()`, beside the other loop-local state (near `let lastPress = null;`):
+
+```js
+  // Last logged "N of M windows have the extension", so the line is printed
+  // when it changes rather than every 2s. Logged on change and not only at
+  // startup because the number changes as you reload windows, and that is
+  // exactly the moment the feedback is worth having — a startup-only message
+  // would need a daemon restart to tell you the reload worked.
+  let lastCoverage = null;
+```
+
+In the poll loop's `else` branch (the sessions board — the one that calls `refresh`), after the existing `attentionCount = await drawAttention(...)` line:
+
+```js
+        const withExt = readWindowStates().length;
+        const total = countVsCodeWindows();
+        const coverage = `${withExt}/${total}`;
+        if (coverage !== lastCoverage) {
+          lastCoverage = coverage;
+          console.log(
+            withExt === total
+              ? `terminal focus: ${coverage} windows have the extension`
+              : `terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`
+          );
+        }
+```
+
+- [ ] **Step 7: Verify the daemon still loads and nothing regressed**
 
 Run: `node --check src/index.mjs && node -e "import('./src/index.mjs').then(() => console.log('imports clean, no daemon started'))"`
 Expected: `imports clean, no daemon started`
@@ -360,7 +465,7 @@ Expected: `imports clean, no daemon started`
 Run: `npm run slots-check && npm run terminal-focus-check && npm run title-check && npm run tasks-check && npm run subagents-check && npm run colors-check`
 Expected: six `OK:` lines.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/index.mjs scripts/slots-check.mjs
@@ -385,7 +490,7 @@ git commit -m "feat: escalate to detail only when a press changed nothing"
 In `extension/extension.js`, replace the `node:fs` import line and add constants and state below the existing ones:
 
 ```js
-const { mkdirSync, readFileSync, unlinkSync, writeFileSync } = require("node:fs");
+const { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } = require("node:fs");
 ```
 
 After the `REQUEST_MAX_MS` constant:
@@ -425,6 +530,17 @@ In `tick`, at the `terminal.show()` call, record it first:
         // This also activates the terminal's tab group, which is what brings a
         // joined split forward with the right pane active.
         terminal.show();
+        // Publish immediately rather than waiting for the next tick. The
+        // daemon reads this to decide whether the *next* press changed
+        // anything, and the interval calls publishState() before tick(), so
+        // leaving it to the timer would report this reveal a full tick late —
+        // up to ~800ms after the press. A second press inside that window
+        // would read a stale `activeSessionId`, conclude the press changed
+        // something, and re-reveal instead of opening the detail board:
+        // the double-press the whole rule is named after would be the one
+        // gesture that didn't work. show() has also just taken focus, so this
+        // captures the corrected `focused` at the same time.
+        publishState();
         return;
 ```
 
@@ -465,8 +581,42 @@ function publishState() {
 
 Replace `activate` and `deactivate`:
 
+Note `publishState` is declared with `function`, so it is hoisted and `tick` can call it from above its definition.
+
 ```js
+// Sweep state files whose extension host is gone. A window that crashes or is
+// force-quit never runs deactivate(), and the daemon's liveness check only
+// asks "does a process with this pid exist" — which stops meaning "that window
+// exists" as soon as macOS recycles the number onto something unrelated. The
+// daemon would then trust a frozen `focused`/`activeSessionId` from a window
+// that died weeks ago.
+//
+// Done here rather than in the daemon on purpose: the daemon must not delete
+// files it did not write, and a window opening or reloading is frequent enough
+// that nothing survives long enough for a pid to come back around.
+function reapDeadWindows() {
+  try {
+    for (const name of readdirSync(WINDOWS_DIR)) {
+      if (!name.endsWith(".json")) continue;
+      const pid = Number(name.slice(0, -".json".length));
+      if (!Number.isInteger(pid) || pid === process.pid) continue;
+      try {
+        process.kill(pid, 0); // alive — leave it alone
+      } catch {
+        try {
+          unlinkSync(join(WINDOWS_DIR, name));
+        } catch {
+          // raced with another window's sweep, or not ours to delete
+        }
+      }
+    }
+  } catch {
+    // directory doesn't exist yet — nothing to sweep
+  }
+}
+
 function activate() {
+  reapDeadWindows();
   // Two independent concerns on one timer rather than two: publishing is
   // synchronous and must run on every tick, while tick() is async and guards
   // itself with `busy`, so a slow request pass must not also stall publishing.
@@ -614,13 +764,14 @@ Expected: nine `OK:` lines.
 
 Requires the deck, and a VS Code window **reloaded after Task 3's `ext:install`**. In the `claude-streamdeck` window with two Claude sessions:
 
-1. Press session A's key twice — detail opens on the second press.
+1. Press session A's key twice — detail opens on the second press. **Do this once slowly and once as a fast double-tap**; both must open detail. The fast one is what the `publishState()` call after `show()` exists for.
 2. Press A, then B — B's terminal comes forward, **no detail board**. This is the bug being fixed.
 3. Press B again — detail opens for B.
 4. Press A, alt-tab to another app, press A — the window is raised, no detail.
 5. Press A, click B's terminal by hand, press A — A's terminal returns, no detail.
 6. In a window **not** reloaded since install, press two sibling keys — old behaviour, detail on the second press.
-7. Quit VS Code entirely and reopen — check `ls ~/.claude/streamdeck-windows/` has no file for a dead pid.
+7. Quit VS Code entirely and reopen — `ls ~/.claude/streamdeck-windows/` shows no file for a dead pid. Then force-quit one window (`kill -9` its extension host, so `deactivate` never runs), confirm its file is left behind, reload any other window, and confirm the orphan is gone — that is `reapDeadWindows` doing the job that stops pid reuse resurrecting it.
+8. Watch the daemon's output while reloading windows one at a time: `terminal focus: N/M windows have the extension` should count up, printing only when it changes, and drop the "reload the rest" tail once N === M.
 
 - [ ] **Step 7: Commit**
 
