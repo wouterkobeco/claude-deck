@@ -16,6 +16,7 @@
     "tasks-check": "node scripts/tasks-check.mjs",
     "subagents-check": "node scripts/subagents-check.mjs",
     "colors-check": "node scripts/colors-check.mjs",
+    "terminal-focus-check": "node scripts/terminal-focus-check.mjs",
     "board-shot": "node scripts/board-shot.mjs"
   },
   "keywords": [
