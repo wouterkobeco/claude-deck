@@ -3,6 +3,11 @@
 Date: 2026-08-15
 Status: **built** (2026-08-15)
 
+There is an amendment at the end of this file — *Verified press escalation*,
+2026-08-16, **designed, not built**. Everything before it is shipped and
+accurate; the amendment adds a reverse channel and changes what a second key
+press means. Read both before changing either.
+
 Supersedes the "design that does work" section of
 `docs/roadmap-reveal-terminal.md`. That document's investigation — what was
 ruled out and why — still stands and is not repeated here.
@@ -418,3 +423,247 @@ the terminal panel. It was investigated and dropped — the two data sources sha
 no join key. It is not part of this spec and needs none of this spec's
 machinery; the findings live with the rest of the ruled-out work, in
 `docs/roadmap-reveal-terminal.md`.
+
+---
+
+# Amendment: verified press escalation
+
+Date: 2026-08-16
+Status: **designed, not built**
+
+Adds a reverse channel — the extension publishes what it can see, the daemon
+reads it when deciding what a key press means. Everything above still stands;
+this section only adds to it.
+
+## Why the original rule expired
+
+`CLAUDE.md` documents the repeat-press rule and justifies matching on the
+**folder** rather than the key:
+
+> The match is on the folder, not the key: a project's sessions sit in one
+> contiguous block, so moving along that block is the same gesture as pressing
+> one key twice — either way you're already looking at that project.
+
+That reasoning was sound when a press could only raise a **window**. Every key
+in a project's block did the identical thing, so a second press had nothing new
+to give you and escalating to the detail board was the only useful next step.
+
+**Terminal focus falsified the premise.** Pressing key A and then key B now
+produce visibly different results — two different terminals. B is not a repeat
+of A; it is a new first press. The observed symptom: with two Claude sessions in
+one window, pressing the second session's key opens the detail board instead of
+switching to that session's terminal, so the deck cannot do the one thing the
+extension was built for.
+
+The rule this replaces it with: **a press escalates only when it changed
+nothing.** If the press had to switch terminals, it was a first press.
+
+## Why this needs a reverse channel
+
+"Changed nothing" is not knowable from the daemon side. It needs two facts that
+live only inside the editor: whether that window is focused, and which terminal
+is currently in front. `docs/roadmap-reveal-terminal.md` and the transport
+section above both closed the door on a reply channel, correctly, with the
+caveat that it *"would matter the moment there is something to say back."* This
+is that moment.
+
+The daemon could instead **infer** it — "you pressed this same session last
+time, so its terminal must still be showing." One line, no channel. Rejected
+because it is wrong in exactly the cases a user notices: after alt-tabbing away,
+and after clicking a different terminal by hand. Both leave the deck opening a
+detail board when it should have brought you back.
+
+## The latency problem, and why there isn't one
+
+The press handler decides "first or second" synchronously, in `deck.on("down")`.
+The extension cannot answer a question in that window — its poll is 400ms and a
+press must feel instant.
+
+So the extension does not answer requests. **It publishes state continuously**,
+and the daemon reads the latest at press time. Request/response would have
+forced the press to wait; published state costs the press nothing.
+
+## What the extension publishes
+
+`~/.claude/streamdeck-windows/<extension-host pid>.json`, one per window:
+
+```json
+{
+  "folders": ["/Users/wouterd/projects/claude-streamdeck"],
+  "focused": true,
+  "activeSessionId": "9a3577e2-d87a-42be-8037-fec01df440cf"
+}
+```
+
+- `folders` — `vscode.workspace.workspaceFolders` mapped to filesystem paths,
+  mirroring what `~/.claude/ide/*.lock` already publishes. This is what lets the
+  daemon tell *which* window a session belongs to.
+- `focused` — `vscode.window.state.focused` (`vscode.d.ts:11040`).
+- `activeSessionId` — the session whose terminal is currently in front, or
+  `null`.
+
+**`activeSessionId` is derived by object identity, not by pid.** The extension
+already remembers the `Terminal` it last revealed and the `sessionId` from the
+request that revealed it. Each tick it compares `vscode.window.activeTerminal`
+(`vscode.d.ts:11167`) against that remembered object: still the same one →
+publish that session id; anything else → publish `null`. No pid chain crosses
+this channel, and the daemon needs no `ps` call at press time — which is what
+keeps the press synchronous.
+
+### Keyed by the extension host's pid
+
+The filename is the extension host's own `process.pid`. That gives the daemon
+exact liveness: `process.kill(pid, 0)`, the same trick `sessions.mjs`'s
+`isAlive` already uses on session pids. No timestamps, no staleness window, no
+guessing whether a window is gone.
+
+**Written only on change**, never on a heartbeat. Six open windows writing every
+400ms is fifteen pointless writes a second for state that changes when you
+switch terminals. The extension keeps the last JSON string it wrote and skips
+the write when nothing differs — the same content-comparison trick the request
+reader already uses.
+
+The extension unlinks its own file in `deactivate()`. A window that crashes
+leaves an ~80-byte orphan which the liveness check ignores forever. Accepted
+rather than building a reaper for it: the file is inert, bounded at one per
+window instance, and a daemon that deletes files it did not write is a worse
+trade than a few dead bytes.
+
+## The new rule
+
+At press time, in order:
+
+1. Find a **live** window whose `folders` contain the pressed session's folder,
+   using `matchFolder` from `sessions.mjs` — the same function that already
+   resolves a session's cwd to an open window, with exact-match-beats-ancestor
+   and longest-ancestor-wins already settled. No second implementation.
+2. **No such window** → that window is not running the extension. Fall back to
+   today's folder rule, unchanged.
+3. **Found** → escalate to detail only if the previous press was the **same
+   session** *and* that window reports `focused: true` with `activeSessionId`
+   equal to this session.
+
+| Sequence | Result |
+|---|---|
+| press A, press A | detail — window focused, A's terminal already in front |
+| press A, press B | switch to B's terminal, a first press |
+| press A, alt-tab away, press A | raise the window, **not** detail |
+| press A, click terminal B by hand, press A | switch back to A, a first press |
+| window without the extension | today's folder rule |
+
+Both conditions are required. The previous-press chain stays because "second
+click" is the gesture being described; the window state is what makes it
+truthful.
+
+## Graceful degradation is per window, not per machine
+
+Checking whether the extension is *installed* — testing for
+`~/.vscode/extensions/claude-streamdeck-terminal-focus` — would be the wrong
+check, and there is direct evidence why: on 2026-08-16 it was installed and
+**zero** open windows were running it, because every window predated the install
+and none had been reloaded. An install check would have answered "yes" and been
+useless.
+
+A live window-state file *is* the detection, and a better one: it proves that
+**this specific window** is running the extension, which is the fact that
+actually decides how its keys should behave.
+
+The consequence, during the reload migration: **two windows behave differently
+and nothing on the deck says which is which.** A sibling key press switches
+terminals in a reloaded window and opens detail in a stale one. That is inherent
+to degrading per window rather than a flaw in it, and it resolves itself once
+every window has been reloaded. The alternative — one global switch — would make
+the deck's behaviour depend on which window you last reloaded, which is worse.
+
+## Components
+
+### `extension/extension.js` — publish state
+
+A second interval concern alongside the existing request poll, sharing its
+timer. Per tick: read `window.state.focused` and compare
+`window.activeTerminal` against the remembered revealed terminal; build the
+JSON; write only if it differs from the last write. Record the revealed
+`Terminal` object and its `sessionId` at the point `terminal.show()` is called.
+`deactivate()` clears the timer and unlinks the file.
+
+Same silence rule as everything else here: every failure path returns without
+logging.
+
+### `src/window-state.mjs` — new, small
+
+Reads `~/.claude/streamdeck-windows/`, drops entries whose pid is not alive,
+returns the live ones. Pure apart from the directory read, best-effort
+throughout — an unreadable or half-written file is skipped, never thrown.
+
+Its own module rather than more lines in `terminal-focus.mjs`: that file is the
+*writer* half of a one-way channel, and this is the reader half of the other
+one. `vscode-state.mjs` is the precedent — one best-effort external read per
+file.
+
+### `src/index.mjs` — the rule
+
+`isRepeatPress(previous, press, windows)` gains the window list. The press
+handler reads window state once per press and passes it in. The function stays
+pure and exported, for the same reason it already is: none of this is visible
+without a deck.
+
+## Errors
+
+Every failure degrades to today's behaviour — the folder rule — because that is
+what step 2 already does for a window with no extension. There is no path here
+that can make a press throw: the reader is try/catch-per-file and the press
+handler treats an empty list as "no extension anywhere."
+
+| Failure | Result |
+|---|---|
+| Directory missing (extension never ran) | empty list → folder rule |
+| A file mid-write or corrupt | that window skipped → folder rule for it |
+| Window crashed, file orphaned | pid not alive → skipped |
+| Extension loaded but has revealed nothing yet | `activeSessionId: null` → never escalates until it has |
+
+## Testing
+
+`scripts/slots-check.mjs` already covers `isRepeatPress` and is where this
+belongs — it is the check that pins press semantics.
+
+The assertion at `slots-check.mjs:345` — *"a sibling session of the same project
+counts as the second press"* — **inverts**, and its replacement should say why,
+since a future reader will otherwise assume it was a mistake.
+
+Cases: sibling is no longer a repeat; same session with `focused: true` and
+matching `activeSessionId` escalates; same session with `focused: false` does
+not; same session whose `activeSessionId` is null or another session does not;
+a session whose folder matches no live window falls back to the folder rule
+(including the old sibling behaviour); a dead pid is treated as no window.
+
+The extension's publishing half is not unit-tested, for the same reason the
+reader half wasn't: it is VS Code API that only a running editor exercises.
+
+## Manual acceptance
+
+The two windows in `claude-streamdeck`, both with a Claude session:
+
+1. Press session A's key twice — detail opens on the second.
+2. Press A, then B — B's terminal comes forward; no detail board.
+3. Press B again — detail opens for B.
+4. Press A, alt-tab to another app, press A — the window is raised, no detail.
+5. Press A, click B's terminal by hand, press A — A's terminal returns, no detail.
+6. In a window that has **not** been reloaded since install, press two sibling
+   keys — today's behaviour, detail on the second press.
+7. Quit VS Code entirely and reopen — no stale window-state file changes
+   behaviour.
+
+## Install cost
+
+None beyond what already exists. The new file appears the first time a reloaded
+window runs the extension, and its absence is a supported state rather than an
+error.
+
+## Invariant amended, again
+
+`CLAUDE.md`'s **"Read-only, two install steps"** currently claims the daemon
+writes exactly one file. Still true — the daemon does not write here at all;
+this directory is written by the extension and only *read* by the daemon. The
+invariant needs a sentence saying so, because "the daemon writes one file" is
+now sitting next to a second file the daemon knows about, and the next reader
+will assume it writes that one too.
