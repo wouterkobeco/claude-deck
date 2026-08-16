@@ -1,7 +1,7 @@
 # Design: reveal a session's terminal, via a VS Code extension
 
 Date: 2026-08-15
-Status: **designed, not built**
+Status: **built** (2026-08-15)
 
 Supersedes the "design that does work" section of
 `docs/roadmap-reveal-terminal.md`. That document's investigation — what was
@@ -52,7 +52,7 @@ index.mjs focusWindow()
           ↓ writes
       ~/.claude/streamdeck-focus.json   { pids: [...], sessionId, ts }
           ↓ polled every 400ms by every window's extension host
-      extension/src/extension.ts
+      extension/extension.js
           ↓ matches Terminal.processId against pids
       terminal.show()
 ```
@@ -218,17 +218,31 @@ covering both the first and the repeat press, which already share one call.
 
 ### 4. `extension/` — the extension
 
-Monorepo, not a second repository: `extension/` with its own `package.json` and
-`tsconfig.json`. The root `package.json` is untouched apart from one script; the
-two halves share no code, so npm workspaces would add hoisting surprises to a
-`sharp` + `node-hid` dependency tree for no benefit.
+Monorepo, not a second repository: `extension/` with its own `package.json`.
+The root `package.json` is untouched apart from one script; the two halves
+share no code, so npm workspaces would add hoisting surprises to a `sharp` +
+`node-hid` dependency tree for no benefit.
+
+**Deviation from the original plan below: plain CommonJS, no build step.**
+This was designed as TypeScript — `src/extension.ts`, a `tsconfig.json`, a
+`.vscodeignore`, packaged with `vsce` into a `.vsix` and installed with `code
+--install-extension`. What shipped is `extension/extension.js`, required
+directly by VS Code's extension host (which runs plain Node), with no compile
+step, no `.vsix`, and no dependency of its own. `npm run ext:install` copies
+the folder straight into `~/.vscode/extensions/claude-streamdeck-terminal-focus`
+and a window reload picks it up. Deliberate, not a shortcut that slipped
+through: ~90 lines of `require("vscode")` and two file-system calls need
+nothing TypeScript's toolchain buys — no npm install, no `tsc`, no `vsce`, no
+packaging step, no `.vsix` to keep in sync with source — and it removes the
+only build artifact this repo would otherwise have besides a rendered PNG. If
+this file ever needs types, dependencies, or a build step, revisit the
+decision then; it does not need it today.
 
 ```
 extension/
-  package.json      name, activationEvents, extensionKind, engines
-  tsconfig.json
-  src/extension.ts  ~40 lines
-  .vscodeignore
+  package.json    name, activationEvents, extensionKind, engines
+  extension.js    ~90 lines
+  README.md
 ```
 
 `package.json` essentials:
@@ -242,11 +256,18 @@ extension/
 - `"contributes": {}` — no commands, no settings, no views. Nothing to
   configure.
 
-`extension.ts`:
+`extension.js`:
 
 ```
 activate():
-  interval = setInterval(tick, 400)
+  interval = setInterval(() => tick().catch(() => {}), 400)
+                                 // tick can reject past its own guards — a
+                                 // terminal disposed mid-await, a parsed
+                                 // `null` whose .pids throws — and the
+                                 // no-match path has to stay silent, so the
+                                 // interval callback swallows rather than the
+                                 // caller printing an Extension Host warning
+                                 // on every window, every 400ms
 
 tick():
   if busy: return                        // reentrancy guard, see below
@@ -340,12 +361,14 @@ a temp directory for it — that is the one thing this check needs the module to
 allow, and it is the reason the path should be resolved at call time rather than
 frozen in a module-level `const`.
 
-The extension is not unit-tested: 40 lines of VS Code API that only a running
+The extension is not unit-tested: ~90 lines of VS Code API that only a running
 editor can exercise. It is covered by the manual acceptance below.
 
 ## Manual acceptance
 
-1. Package and install: `npm run ext:package && code --install-extension extension/*.vsix`.
+1. Install: `npm run ext:install` (copies `extension/` straight into
+   `~/.vscode/extensions/claude-streamdeck-terminal-focus` — no packaging, no
+   `.vsix`, see the deviation noted under "extension/" above).
 2. **Reload a scratch window first.** Already-open windows need
    `Developer: Reload Window` for the extension to activate in them.
    `terminal.integrated.enablePersistentSessions` defaults on and ptyHost is a

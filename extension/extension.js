@@ -74,7 +74,13 @@ async function tick() {
 }
 
 function activate() {
-  timer = setInterval(tick, POLL_MS);
+  // tick() can reject past its own try/catches: `await terminal.processId` on
+  // a terminal disposed mid-iteration, or `request.pids` on a parsed `null`
+  // (valid JSON, e.g. the literal `null`, but not an object). Either would
+  // otherwise surface as an unhandled rejection — a stray Extension Host
+  // warning — on every window that doesn't own the terminal, on every
+  // request, which is the opposite of the silent no-match this is meant to be.
+  timer = setInterval(() => tick().catch(() => {}), POLL_MS);
 }
 
 function deactivate() {

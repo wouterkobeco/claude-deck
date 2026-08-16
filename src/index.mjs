@@ -165,7 +165,6 @@ async function anchorFile(folder) {
 async function focusWindow(session) {
   const { folder, ide } = session;
   const app = ide ?? "Visual Studio Code";
-  const file = (app === "Visual Studio Code" ? await openFileIn(folder) : null) ?? (await anchorFile(folder));
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`
   // call to raise its window.
@@ -174,7 +173,20 @@ async function focusWindow(session) {
   // `ide === null` for a perfectly ordinary VS Code window, so gating on the
   // raw field would silently disable this for most sessions. `app` is the
   // normalised name the line above already computes for exactly this reason.
+  //
+  // Called here, above `openFileIn`, and specifically before this function's
+  // first `await` — `requestFocus`'s own press-order guard takes its sequence
+  // number synchronously at call time, so that number has to be stamped in
+  // press order. `openFileIn` shells out to `sqlite3` and, on a cold
+  // `storageDirCache`, first `readdir`s all of VS Code's `workspaceStorage`;
+  // that's hundreds of milliseconds and varies wildly per folder. Call this
+  // after `await openFileIn(...)` instead and a press on an already-focused
+  // (warm-cache, fast) project can resolve before an earlier press on a
+  // cold-cache project — stamping the *earlier* press with the *higher*
+  // number, so it wins the guard and the deck reveals the wrong terminal.
+  // Keep this above the await.
   if (app === "Visual Studio Code") requestFocus(session);
+  const file = (app === "Visual Studio Code" ? await openFileIn(folder) : null) ?? (await anchorFile(folder));
   if (!file) {
     console.error(`focus failed for ${folder}: no file found to open`);
     return;

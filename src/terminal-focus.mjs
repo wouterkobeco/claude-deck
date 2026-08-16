@@ -16,7 +16,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { rename, writeFile } from "node:fs/promises";
+import { rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -94,7 +94,11 @@ async function psTable() {
  * filesystem and a reader polling on its own clock will otherwise eventually
  * catch a half-written file. (It would recover — a torn JSON read fails to
  * parse and the next tick retries — but rename costs nothing and removes the
- * case. The temp name carries `mine` so two writers can never share one.)
+ * case. The temp name carries `mine` so two concurrent calls in this process
+ * can never share one; it does not extend across processes — `issued` is
+ * module-level, so a second daemon would start from 1 too — but the Stream
+ * Deck's exclusive HID handle means a second daemon can never be running to
+ * collide with the first.)
  *
  * Every failure is swallowed: the window is already being raised by the time
  * this runs, and a press that reveals no terminal is exactly today's product.
@@ -105,10 +109,10 @@ async function psTable() {
 export async function requestFocus(session, { path = FOCUS_FILE, readProcessTable = psTable } = {}) {
   if (!session?.pid) return;
   const mine = ++issued;
+  const tmp = `${path}.${mine}.tmp`;
   try {
     const table = await readProcessTable();
     if (mine !== issued) return; // a newer press was issued while ps ran
-    const tmp = `${path}.${mine}.tmp`;
     await writeFile(
       tmp,
       JSON.stringify({
@@ -119,6 +123,9 @@ export async function requestFocus(session, { path = FOCUS_FILE, readProcessTabl
     );
     await rename(tmp, path);
   } catch {
-    // ps unavailable, ~/.claude unwritable, session gone — all best-effort
+    // ps unavailable, ~/.claude unwritable, session gone — all best-effort.
+    // A write that succeeded before a later step threw would otherwise leave
+    // `tmp` behind forever; unlink it too, ignoring whether it was ever created.
+    await unlink(tmp).catch(() => {});
   }
 }
