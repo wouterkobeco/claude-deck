@@ -742,8 +742,9 @@ async function refreshDetail(deck, buttons, view) {
 }
 
 // Flashes every requires_action key between its normal red and a brighter
-// red — the one state that's actually blocked on you, so the one worth
-// catching your eye. The attention key joins the same beat, and only when
+// red, and every waiting key between its normal gold and a brighter gold —
+// the two states actually blocked on you, so the ones worth catching your
+// eye. The attention key joins the same beat, and only when
 // its cached count is nonzero — a CLEAR key stays dark and still. Runs on
 // its own faster tick alongside the main poll rather than inside it:
 // `refresh` only redraws on change, but a pulse must redraw on a fixed beat
@@ -762,6 +763,7 @@ async function pulse(deck, buttons, attentionButton, isOverlayView, isDisconnect
             .filter(
               (btn) =>
                 btn.renderParams?.state === "requires_action" ||
+                btn.renderParams?.state === "waiting" ||
                 btn.renderParams?.state === "compacting" ||
                 (btn.renderParams?.nestedStates?.length ?? 0) > 0 ||
                 btn.renderParams?.context >= CONTEXT_CRITICAL

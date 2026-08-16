@@ -212,10 +212,17 @@ function fitCaps(project, width, fontSize) {
 // the brightest one, so a board that never pulses looks the same as it always
 // did.
 export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell }) {
-  // requires_action is the one state worth flashing — it's the only one
-  // that's actually blocked on you, so it's the only one that should chase
-  // your eye across the room.
-  const color = pulse && state === "requires_action" ? "#ff5252" : STATE_COLORS[state] ?? STATE_COLORS.idle;
+  // requires_action and waiting are the two states worth flashing — both are
+  // blocked on you right now (a denial with no reply, or an open permission
+  // prompt), so both should chase your eye across the room. Each flashes its
+  // own hue rather than sharing red, so the board still tells "denied" from
+  // "asking" at a glance while it's flashing.
+  const color =
+    pulse && state === "requires_action"
+      ? "#ff5252"
+      : pulse && state === "waiting"
+        ? "#ffc107" // same amber as MARKER_COLORS.waiting
+        : STATE_COLORS[state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white. The bar
   // carries the project name alone: an age shared it for one release and
