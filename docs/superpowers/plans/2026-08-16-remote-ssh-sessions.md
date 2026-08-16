@@ -682,7 +682,15 @@ export function localSource(root = CLAUDE_DIR) {
 }
 
 export async function getLiveSessions(sources = [localSource()]) {
-  return (await Promise.all(sources.map(sessionsFrom))).flat();
+  // A source that throws contributes nothing and takes nothing with it. The
+  // spec requires a failing host's keys to vanish the way a closed window's do
+  // — not to blank the board. `Promise.all` did the opposite: one rejection
+  // anywhere, including from source-supplied `isAlive` in the hot loop, would
+  // reject the whole call and skip every key for that tick, local ones
+  // included. Skipping rather than throwing is this module's rule everywhere
+  // else; this is the same rule one level up.
+  const perSource = await Promise.all(sources.map((s) => sessionsFrom(s).catch(() => [])));
+  return perSource.flat();
 }
 
 async function sessionsFrom(source) {
