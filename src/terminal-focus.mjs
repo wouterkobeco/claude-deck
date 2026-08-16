@@ -15,6 +15,18 @@
  * moment a terminal is renamed.
  */
 
+import { execFile } from "node:child_process";
+import { rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
+
+// Press order, captured synchronously at every call. See requestFocus.
+let issued = 0;
+
 /**
  * Every pid from `pid` up to (but not including) pid 1.
  *
@@ -54,4 +66,59 @@ export function parseProcessTable(stdout) {
     if (Number.isInteger(pid) && Number.isInteger(ppid)) table.set(pid, ppid);
   }
   return table;
+}
+
+async function psTable() {
+  const { stdout } = await execFileAsync("ps", ["-Ao", "pid,ppid"], { maxBuffer: 8 * 1024 * 1024 });
+  return parseProcessTable(stdout);
+}
+
+/**
+ * Ask whichever VS Code window owns this session's terminal to reveal it.
+ *
+ * Self-routing: one file, read by every window's extension, acted on by the
+ * single one that finds a matching `Terminal.processId`. The alternative — a
+ * port file per window plus an HTTP POST — buys a delivery confirmation the
+ * deck has nowhere to display, in exchange for three more ways to address the
+ * wrong window.
+ *
+ * `issued` is the fix for a real race, not a theoretical one. This is fired
+ * without `await` from the press handler and spawns a process before it
+ * writes, so two presses 400ms apart can have their `ps` calls complete out of
+ * order — and the *earlier* press would land last, revealing the terminal you
+ * just moved on from. Taking the number before the first `await` records press
+ * order rather than completion order, which is why the extension needs no
+ * ordering logic of its own: this file only ever holds the newest press.
+ *
+ * Written to a temp file and renamed, because rename is atomic within a
+ * filesystem and a reader polling on its own clock will otherwise eventually
+ * catch a half-written file. (It would recover — a torn JSON read fails to
+ * parse and the next tick retries — but rename costs nothing and removes the
+ * case. The temp name carries `mine` so two writers can never share one.)
+ *
+ * Every failure is swallowed: the window is already being raised by the time
+ * this runs, and a press that reveals no terminal is exactly today's product.
+ *
+ * `path` and `readProcessTable` exist for `terminal-focus-check`; the daemon
+ * passes neither.
+ */
+export async function requestFocus(session, { path = FOCUS_FILE, readProcessTable = psTable } = {}) {
+  if (!session?.pid) return;
+  const mine = ++issued;
+  try {
+    const table = await readProcessTable();
+    if (mine !== issued) return; // a newer press was issued while ps ran
+    const tmp = `${path}.${mine}.tmp`;
+    await writeFile(
+      tmp,
+      JSON.stringify({
+        pids: ancestorChain(session.pid, table),
+        sessionId: session.session_id ?? null,
+        ts: Date.now(),
+      })
+    );
+    await rename(tmp, path);
+  } catch {
+    // ps unavailable, ~/.claude unwritable, session gone — all best-effort
+  }
 }
