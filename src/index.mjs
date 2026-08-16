@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions, readTaskList, taskWindow } from "./sessions.mjs";
 import { openFileIn } from "./vscode-state.mjs";
+import { requestFocus } from "./terminal-focus.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, splitLabel, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
@@ -154,9 +155,26 @@ async function anchorFile(folder) {
 // ...), which doubles as the .app name `open -a` wants. Only VS Code gets the
 // already-open-file preference — that comes out of VS Code's own storage, so
 // for any other IDE it's the anchor file or nothing.
-async function focusWindow(folder, ide) {
+//
+// Raising the window is only half of it when several sessions share one: the
+// terminal that's showing may be someone else's. `requestFocus` asks the
+// window's own extension to reveal the right one — see
+// docs/superpowers/specs/2026-08-15-terminal-focus-extension-design.md. It is
+// a no-op without the extension installed, which is why it's fired and
+// forgotten rather than checked.
+async function focusWindow(session) {
+  const { folder, ide } = session;
   const app = ide ?? "Visual Studio Code";
   const file = (app === "Visual Studio Code" ? await openFileIn(folder) : null) ?? (await anchorFile(folder));
+  // Reveal the session's own terminal inside the window we're about to raise.
+  // Not awaited: the two are independent, and a press must not wait on a `ps`
+  // call to raise its window.
+  //
+  // Gated on `app`, not on `ide` — a lock file without an `ideName` yields
+  // `ide === null` for a perfectly ordinary VS Code window, so gating on the
+  // raw field would silently disable this for most sessions. `app` is the
+  // normalised name the line above already computes for exactly this reason.
+  if (app === "Visual Studio Code") requestFocus(session);
   if (!file) {
     console.error(`focus failed for ${folder}: no file found to open`);
     return;
@@ -846,7 +864,7 @@ async function run() {
       setView({ kind: "sessions" });
       // A session key still focuses its window on the way out — that's the
       // whole point of pressing one there.
-      if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
+      if (btn?.assigned) focusWindow(btn.assigned);
       lastPress = press;
       return;
     }
@@ -876,7 +894,7 @@ async function run() {
     // Both presses focus the window: between the two you may well have
     // alt-tabbed somewhere else, and a press that opens the detail board but
     // leaves you looking at Safari has done half its job.
-    if (btn?.assigned) focusWindow(btn.assigned.folder, btn.assigned.ide);
+    if (btn?.assigned) focusWindow(btn.assigned);
     // setView cleared the chain, so the press that opened detail can't also
     // seed the next one — see the detail branch above for the other half.
     if (isRepeat) setView({ kind: "detail", session_id: sessionId });

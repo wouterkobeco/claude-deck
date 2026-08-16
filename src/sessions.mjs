@@ -470,6 +470,10 @@ export async function getLiveSessions() {
       session_id: s.sessionId,
       cwd: s.cwd,
       folder: match.folder,
+      // Claude's own pid, kept for terminal-focus.mjs: the VS Code terminal
+      // running this session is the one whose shell is an ancestor of it.
+      // Already read just above for the liveness check.
+      pid: s.pid,
       ide: ideByFolder.get(match.folder) ?? null,
       nested: isNested,
       name: s.name ?? null,
