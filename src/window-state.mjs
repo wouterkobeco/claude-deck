@@ -30,6 +30,27 @@ const WINDOWS_DIR = join(homedir(), ".claude", "streamdeck-windows");
  * these files are written by another process and a read can land mid-write. A
  * missing directory just means the extension has never run.
  */
+
+/**
+ * A host string safe to hand to `ssh` as an argument.
+ *
+ * Every other field this file returns is consumed as data — `folders` is
+ * checked for being strings only because a non-string would throw inside
+ * `folder.endsWith`, in a synchronous press handler. `host` is different in
+ * kind: it is *executed*. A value beginning with `-` is taken by `ssh` as an
+ * option, so `-oProxyCommand=…` would run a command on this machine, and
+ * `execFile` does not help because the parsing is ssh's own. The daemon also
+ * passes it after `--`; this is the other half of that pair.
+ *
+ * Deliberately narrower than the set of legal hostnames. A host this rejects
+ * is a host you can add to `~/.ssh/config` under a plain alias.
+ */
+const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function validHost(value) {
+  return typeof value === "string" && HOST_RE.test(value) ? value : null;
+}
+
 export function readWindowStates(dir = WINDOWS_DIR) {
   let names;
   try {
@@ -60,6 +81,7 @@ export function readWindowStates(dir = WINDOWS_DIR) {
         folders: state.folders,
         focused: state.focused === true,
         activeSessionId: state.activeSessionId ?? null,
+        host: validHost(state.host),
       });
     } catch {
       // mid-write or corrupt — skip this window, not the whole read
