@@ -195,4 +195,21 @@ const mixed = await getLiveSessions([localSource(fx), { ...remoteSource, isAlive
 assert.equal(mixed.length, 1, "a throwing source contributes nothing, but the healthy source is unaffected");
 assert.equal(mixed[0].host, null, "the surviving session is the local one");
 
+// --- the tree is replaced, never merged -----------------------------------
+import { readdir } from "node:fs/promises";
+import { swapTree } from "../src/remote-fs.mjs";
+
+const swapRoot = await mkdtemp(join(tmpdir(), "streamdeck-remote-swap-"));
+const finalDir = join(swapRoot, "host");
+await mkdir(join(finalDir, "ide"), { recursive: true });
+await writeFile(join(finalDir, "ide", "closed.lock"), "{}");
+
+const staging = join(swapRoot, "host.new");
+await mkdir(join(staging, "ide"), { recursive: true });
+await writeFile(join(staging, "ide", "open.lock"), "{}");
+
+await swapTree(staging, finalDir);
+assert.deepEqual(await readdir(join(finalDir, "ide")), ["open.lock"], "a lock the remote deleted does not survive the swap");
+assert.deepEqual(await readdir(swapRoot), ["host"], "the staging directory is cleaned up");
+
 console.log("remote-check: OK");

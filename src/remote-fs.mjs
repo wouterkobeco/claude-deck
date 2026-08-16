@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tailLines, transcriptPathFor } from "./sessions.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
 // because everything before it is digits and newlines.
@@ -157,4 +160,135 @@ export function parseTails(buffer, paths) {
     );
   }
   return out;
+}
+
+/**
+ * Replace a host's tree with a freshly extracted one.
+ *
+ * `tar -xf` merges, and a merged tree keeps what the remote deleted. Only one of
+ * the four things in there has a pid to check: a closed window's `ide/*.lock`
+ * would linger and keep `matchFolder` matching a folder with no window —
+ * silently defeating the invariant the whole join exists to enforce — and
+ * `tasks/<id>/` would keep a finished session's list on the detail board.
+ *
+ * Renaming rather than removing-then-extracting also means a reader sees the old
+ * complete tree or the new one, never a half-written one.
+ */
+export async function swapTree(stagingDir, finalDir) {
+  const doomed = `${finalDir}.old`;
+  await rm(doomed, { recursive: true, force: true });
+  await rename(finalDir, doomed).catch(() => {}); // first fetch: nothing to move
+  await rename(stagingDir, finalDir);
+  await rm(doomed, { recursive: true, force: true });
+}
+
+function run(argv, { input, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "ignore"] });
+    const chunks = [];
+    const kill = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.stdout.on("data", (c) => chunks.push(c));
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => {
+      clearTimeout(kill);
+      resolve(code === 0 ? Buffer.concat(chunks) : null);
+    });
+    child.stdin.on("error", () => {}); // a host that closed early is not a crash
+    child.stdin.end(input ?? "");
+  });
+}
+
+async function readJsonFiles(dir) {
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      out.push(JSON.parse(await readFile(join(dir, name), "utf8")));
+    } catch {
+      // partial write or corrupt file — skip it, not a crash
+    }
+  }
+  return out;
+}
+
+/**
+ * Everything one host contributes, as a source `getLiveSessions` can read.
+ *
+ * Two round trips, ~300ms warm. Returns `null` on any failure — a host that is
+ * asleep, unreachable, or has never run Claude Code is an ordinary state, and
+ * the caller drops its keys the way a closed window's are dropped.
+ */
+export async function fetchSource(host, scratchRoot) {
+  const controlPath = join(scratchRoot, "cm-%h");
+  const finalDir = join(scratchRoot, host);
+  const staging = `${finalDir}.new`;
+
+  // ssh's ControlPath is a socket bind, not a file write: with no directory yet
+  // to bind it in, ssh exits 255 before it ever reaches the network — measured
+  // against the live host on a fresh scratch root, the daemon's actual first
+  // run every time. `run()` reports that exit like any other failure, so this
+  // has to exist before the first call, not be inferred from one failing.
+  await mkdir(scratchRoot, { recursive: true }).catch(() => {});
+
+  const stream = await run(["ssh", ...sshArgs(host, controlPath), TREE_CMD]);
+  if (!stream) return null;
+  const { pids, tar } = splitTreeStream(stream);
+
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  // No `-P`: without it both GNU tar and bsdtar strip a leading `/` and refuse
+  // `..` members, so a stream cannot write outside the tree. `-P` would disable
+  // exactly that — it is the flag to *not* reach for here.
+  const extracted = await run(["tar", "-xf", "-", "-C", staging], { input: tar });
+  if (extracted === null) {
+    await rm(staging, { recursive: true, force: true });
+    return null;
+  }
+  await swapTree(staging, finalDir);
+
+  // The registry is now on local disk, so the daemon resolves transcript paths
+  // itself — with the same functions it uses locally — rather than asking the
+  // remote to know which files matter.
+  const registry = await readJsonFiles(join(finalDir, "sessions"));
+  // The remote path is relative to ~/.claude, because TAILS_CMD `cd`s there
+  // first: a path read from stdin is data, and `~` is not expanded inside "$f".
+  // The local path is the same file inside the fetched tree, and is what the
+  // injected `tail` will be asked for — `sessionsFrom` resolves it with this
+  // same function against the source's root.
+  const wanted = registry
+    .filter((s) => s.sessionId && s.cwd && pids.has(s.pid))
+    .map((s) => ({
+      local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
+      remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
+    }));
+
+  let tails = new Map();
+  if (wanted.length) {
+    const body = await run(["ssh", ...sshArgs(host, controlPath), TAILS_CMD], {
+      input: wanted.map((w) => w.remote).join("\n") + "\n",
+    });
+    if (body) {
+      const byRemote = parseTails(body, wanted.map((w) => w.remote));
+      for (const w of wanted) tails.set(w.local, byRemote.get(w.remote));
+    }
+  }
+
+  return {
+    host,
+    root: finalDir,
+    isAlive: (pid) => pids.has(pid),
+    // A session transcript was never fetched to disk, so it comes from the map.
+    // A *subagent* transcript did ride in the tar — small, and needed with its
+    // real mtime, since SUBAGENT_IDLE_MAX_S retires an agent by how long it has
+    // been quiet — so it is read off the tree like any local file. Without this
+    // fallback `readRunningSubagents` asks for a path the map has never heard
+    // of, gets the failure value, and no remote session ever shows a subagent.
+    tail: async (path) => tails.get(path) ?? tailLines(path),
+  };
 }
