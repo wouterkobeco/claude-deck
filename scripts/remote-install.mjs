@@ -15,16 +15,18 @@
 // Refuses rather than overwrites, in every case where something is already
 // there. A status line is a thing the user sees on every turn, and silently
 // replacing one to add a gauge to a Stream Deck key is not a fair trade.
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { validHost } from "../src/window-state.mjs";
 import { sshArgs } from "../src/remote-fs.mjs";
 
-const execFileAsync = promisify(execFile);
+// Nothing here should take anywhere near this long — the probe is one round
+// trip and the writes are a few hundred bytes. It exists so a command that
+// reads stdin can never wait forever, which is precisely how this failed once.
+const TIMEOUT_MS = 30_000;
 const LOCAL_STATUSLINE = join(homedir(), ".claude", "statusline-command.sh");
 
 // The block the README documents, on its own, for a host where there is no
@@ -98,11 +100,47 @@ if (isCommand && !host) {
   process.exit(1);
 }
 
-const ssh = (command, input) =>
-  execFileAsync("ssh", [...sshArgs(host, join("/tmp", `streamdeck-install-${process.pid}`)), command], {
-    input,
-    maxBuffer: 8 * 1024 * 1024,
+/**
+ * Run one command on the host, optionally feeding it stdin.
+ *
+ * `spawn` and an explicit `stdin.end()`, **not** `execFile` with `{ input }`.
+ * That option exists only on the *Sync* variants — `execFileSync`,
+ * `spawnSync` — and async `execFile` ignores it silently, leaving the child's
+ * stdin pipe open forever. The remote's `cat > …` then waits for an EOF that
+ * never comes and the whole command hangs, which is exactly what it did.
+ *
+ * The timeout is the second half of that lesson: a command that reads stdin has
+ * no natural end if the writer never finishes, so this cannot be left to good
+ * behaviour.
+ */
+function ssh(command, input) {
+  const args = [...sshArgs(host, join("/tmp", `streamdeck-install-${process.pid}`)), command];
+  return new Promise((resolve, reject) => {
+    const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] });
+    const out = [];
+    const err = [];
+    const kill = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`timed out after ${TIMEOUT_MS / 1000}s`));
+    }, TIMEOUT_MS);
+    child.stdout.on("data", (c) => out.push(c));
+    child.stderr.on("data", (c) => err.push(c));
+    child.on("error", (e) => {
+      clearTimeout(kill);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(kill);
+      const stderr = Buffer.concat(err).toString();
+      if (code === 0) resolve({ stdout: Buffer.concat(out).toString(), stderr });
+      else reject(Object.assign(new Error(`ssh exited ${code}`), { stderr }));
+    });
+    // EPIPE if the far end closed early — the close handler above reports the
+    // real reason, and an unhandled error event here would mask it.
+    child.stdin.on("error", () => {});
+    child.stdin.end(input ?? "");
   });
+}
 
 async function main() {
   // Everything this needs to know about the host, in one round trip, before
@@ -145,10 +183,18 @@ async function main() {
   // Written via a temp file and moved into place, the same way the block itself
   // writes ctx files: a status line read while half-written would break every
   // turn on that host until the next write.
+  // `[ -s ]` on the temp file before the `mv`, and remove it otherwise. An
+  // interrupted `cat` exits *0* with nothing written, so without this check the
+  // chain cheerfully chmods and moves an empty file into place — which is how a
+  // zero-byte status line appeared on a real host, twice, and then blocked the
+  // install that would have fixed it. Never leave the tmp behind either: it is
+  // the thing the next run would trip over.
   await ssh(
-    'mkdir -p ~/.claude && cat > ~/.claude/statusline-command.sh.tmp && ' +
+    "mkdir -p ~/.claude && cat > ~/.claude/statusline-command.sh.tmp && " +
+      "if [ -s ~/.claude/statusline-command.sh.tmp ]; then " +
       "chmod +x ~/.claude/statusline-command.sh.tmp && " +
-      "mv ~/.claude/statusline-command.sh.tmp ~/.claude/statusline-command.sh",
+      "mv ~/.claude/statusline-command.sh.tmp ~/.claude/statusline-command.sh; " +
+      "else rm -f ~/.claude/statusline-command.sh.tmp; exit 1; fi",
     body
   );
 
