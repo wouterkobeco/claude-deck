@@ -9,6 +9,7 @@ import { fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
+import { publishSessions } from "./publish-sessions.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
@@ -87,6 +88,20 @@ function allSources() {
   // rather than just a poll tick. Belt, not suspenders.
   void remoteSources(windows, Date.now(), remoteMemo, (host) => fetchSource(host, SCRATCH_ROOT)).catch(() => {});
   return [localSource(), ...cachedSources(windows, remoteMemo)];
+}
+
+// The single session read, so that publishing the list for the extension's
+// restore command happens on every poll rather than on the polls of whichever
+// board happens to be up. Every branch of the loop reads sessions; only this
+// one writes them out.
+async function liveSessions() {
+  const sessions = await getLiveSessions(allSources());
+  // Not awaited: the file is for a window that has not restarted yet, so it is
+  // never worth a frame. void-and-catch for the same reason as above — an
+  // unwatched rejection would take the daemon down, and this one can only be a
+  // filesystem that isn't answering.
+  void publishSessions(sessions).catch(() => {});
+  return sessions;
 }
 
 // Colour is picked from what no other live folder is using, not from
@@ -698,7 +713,7 @@ async function refreshStats(deck, buttons, stats) {
 // poll. Unlike the detail view this deliberately re-sorts while it's up — a
 // session that gets unblocked should leave the queue you're looking at.
 async function refreshAttention(deck, buttons, attentionButton) {
-  const sessions = await getLiveSessions(await allSources());
+  const sessions = await liveSessions();
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const count = await drawAttention(deck, attentionButton, sessions, false);
 
@@ -738,7 +753,7 @@ async function refreshAttention(deck, buttons, attentionButton) {
 }
 
 async function refresh(deck, buttons, slots, nestedBySlot) {
-  const sessions = await getLiveSessions(await allSources());
+  const sessions = await liveSessions();
   assignSlots(sessions, slots, nestedBySlot);
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
 
@@ -813,7 +828,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
 // rather than in getLiveSessions so the 2s poll costs exactly what it did
 // before this view existed.
 async function refreshDetail(deck, buttons, view) {
-  const sessions = await getLiveSessions(await allSources());
+  const sessions = await liveSessions();
   const session = sessions.find((s) => s.session_id === view.session_id);
   if (!session) {
     // It ended while you were looking at it. Stale-but-plausible tiles (a
@@ -1163,7 +1178,7 @@ async function run() {
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         await refreshStats(deck, buttons, statTiles);
-        attentionCount = await drawAttention(deck, attentionButton, await getLiveSessions(await allSources()), false);
+        attentionCount = await drawAttention(deck, attentionButton, await liveSessions(), false);
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);
         // The queue re-sorts while it's up so an unblocked session leaves it;
