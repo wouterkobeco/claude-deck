@@ -136,6 +136,23 @@ it.
 Without the extension — or before that reload — everything else works exactly
 as before: the window is raised and the terminal is left alone.
 
+### Restore your sessions after a VS Code restart
+
+Quit VS Code and the terminals go with it, taking every Claude session running
+in them. The same extension can put them back: **Claude Stream Deck: Restore
+Claude sessions in this window**, from the command palette. It offers the
+sessions this window had open, all ticked; each one you keep gets a terminal in
+its own working directory running `claude --resume <id>`.
+
+The list is remembered while the daemon is running — Claude Code deletes a
+session's registry entry the moment it exits, so after the restart there is
+nothing left to read. Remote-SSH windows are included, because the daemon
+already fetches their sessions over ssh; in practice those often survive a local
+restart on their own, and the command then correctly offers nothing.
+
+Sessions still running are never offered, so a plain `Developer: Reload Window`
+(where terminals survive) shows an empty list rather than opening duplicates.
+
 ## Where the data comes from
 
 All read-only, all maintained by Claude Code itself:

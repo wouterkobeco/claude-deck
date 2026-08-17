@@ -109,4 +109,67 @@ assert.equal(requestIsOurs({ ts: now, host: null }, LOCAL), false, "a request wi
 assert.equal(requestIsOurs(null, LOCAL), false, "no request at all is refused rather than thrown on");
 assert.equal(requestIsOurs({ pids: [1] }, LOCAL), false, "a request with no ts is refused");
 
-console.log("OK: extension routing");
+// --- restore: which published sessions are this window's ------------------
+// The other half of the same problem — routing.js decides whose *request* this
+// is, restore.js decides whose *sessions* these are. Both get it wrong in the
+// same invisible way: by acting on another window's data.
+const { sessionsForWindow, toRestore, resumeCommand } = require("../extension/restore.js");
+
+const ID = "ac185680-913f-4c24-ace4-2ee9edea6405";
+const ID2 = "62f1c5d8-b1d2-40be-a260-1a817f7f0983";
+const row = (over = {}) => ({ id: ID, cwd: "/Users/w/p", folder: "/Users/w/p", host: null, title: "T", ...over });
+
+assert.deepEqual(
+  sessionsForWindow([row()], ["/Users/w/p"], null),
+  [{ id: ID, cwd: "/Users/w/p", title: "T" }],
+  "a local window keeps its own folder's session"
+);
+assert.deepEqual(sessionsForWindow([row()], ["/Users/w/other"], null), [], "and drops another folder's");
+
+// The reason a local window compares `host` instead of assuming it: one path
+// can exist on this machine and on a remote host at once, and matching on the
+// folder alone would hand each window the other's sessions.
+const remoteRow = row({ cwd: "/home/pi/p", folder: "/home/pi/p", host: "192.168.2.6" });
+assert.deepEqual(sessionsForWindow([remoteRow], ["/home/pi/p"], null), [], "a local window refuses a remote row");
+assert.deepEqual(sessionsForWindow([row({ folder: "/home/pi/p", cwd: "/home/pi/p" })], ["/home/pi/p"], "192.168.2.6"), [],
+  "and a remote window refuses a local one");
+assert.equal(sessionsForWindow([remoteRow], ["/home/pi/p"], "192.168.2.6").length, 1, "a remote window keeps its own host's");
+assert.deepEqual(sessionsForWindow([remoteRow], ["/home/pi/p"], "192.168.2.70"), [], "but not another host's, same path");
+
+// A session id reaches a shell (`claude --resume <id>`), and for a remote
+// window it was chosen by the other machine. Refused here, and refused again at
+// the point of use, so no future caller can route around this filter.
+assert.deepEqual(sessionsForWindow([row({ id: "; rm -rf ~" })], ["/Users/w/p"], null), [], "a non-uuid id is dropped");
+assert.deepEqual(sessionsForWindow([row({ id: `${ID} && curl evil` })], ["/Users/w/p"], null), [], "and so is one with a real id inside it");
+assert.throws(() => resumeCommand("$(whoami)"), "resumeCommand refuses what sessionsForWindow would never hand it");
+assert.equal(resumeCommand(ID), `claude --resume ${ID}`, "and builds the plain command for a real id");
+
+// Junk from a truncated or foreign file is refused rather than thrown on — this
+// runs on a timer in every open window.
+assert.deepEqual(sessionsForWindow(null, ["/Users/w/p"], null), [], "a non-array file is refused");
+assert.deepEqual(sessionsForWindow([null, 7, {}], ["/Users/w/p"], null), [], "and so are rows that aren't rows");
+assert.equal(sessionsForWindow([row({ title: 42 })], ["/Users/w/p"], null)[0].title, null, "a non-string title becomes no title");
+assert.equal(sessionsForWindow([row({ title: undefined })], ["/Users/w/p"], null)[0].title, null, "and a missing one too");
+
+// Restoring is what's remembered minus what's running: an ordinary reload keeps
+// its terminals, so every row is live and the picker is correctly empty.
+const savedTwo = [{ id: ID, cwd: "/a" }, { id: ID2, cwd: "/b" }];
+assert.deepEqual(toRestore(savedTwo, savedTwo), [], "a reload that kept its terminals offers nothing");
+assert.deepEqual(toRestore(savedTwo, []), savedTwo, "a restart that lost them offers both");
+assert.deepEqual(toRestore(savedTwo, [{ id: ID }]), [savedTwo[1]], "and a second run offers only what the first didn't restore");
+
+// The two sides meet here: what the daemon publishes has to be what the window
+// can read. A field renamed on one side and not the other is invisible until a
+// restore silently offers nothing.
+const { sessionRows } = await import("../src/publish-sessions.mjs");
+const published = sessionRows([
+  { session_id: ID, cwd: "/Users/w/p/worktree", folder: "/Users/w/p", host: null, aiTitle: "Fix the thing", nested: false },
+  { session_id: ID2, cwd: "/Users/w/p", folder: "/Users/w/p", host: null, name: "p-0d", nested: true },
+]);
+assert.deepEqual(
+  sessionsForWindow(published, ["/Users/w/p"], null),
+  [{ id: ID, cwd: "/Users/w/p/worktree", title: "Fix the thing" }],
+  "a worktree session lands on its window's folder, and a nested one is never published at all"
+);
+
+console.log("OK: extension routing, session restore");

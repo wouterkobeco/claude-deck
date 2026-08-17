@@ -13,9 +13,23 @@ const vscode = require("vscode");
 // sees to that — and that routing is the part worth checking. See
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
+const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
+// The daemon's published list of live sessions, local and remote. See
+// src/publish-sessions.mjs for why the daemon answers this rather than the
+// window reading ~/.claude/sessions itself.
+const SESSIONS_FILE = join(homedir(), ".claude", "streamdeck-sessions.json");
+// Snapshot cadence. Far slower than POLL_MS on purpose: this is a file read in
+// every open window, and its only reader is a command run after a restart —
+// being five seconds out of date costs nothing, and five seconds is already
+// finer than "the sessions you had open" ever changes.
+const SNAPSHOT_MS = 5000;
+// Where the snapshot lives between runs: VS Code's own per-workspace storage,
+// so it is scoped to this window's folders by the platform, survives a restart,
+// and leaves no file to reap when the window goes away for good.
+const SNAPSHOT_KEY = "restorableSessions";
 // Where this window publishes what it can see, for the daemon to read when it
 // decides what a key press means. Named for this extension host's own pid, so
 // the daemon can tell a live window from a crashed one exactly
@@ -24,6 +38,7 @@ const WINDOWS_DIR = join(homedir(), ".claude", "streamdeck-windows");
 const STATE_FILE = join(WINDOWS_DIR, `${process.pid}.json`);
 
 let timer = null;
+let snapshotTimer = null;
 // The last raw file contents seen. Change detection is on the bytes, not on
 // the timestamp: `ts > lastTs` would assume a monotonic wall clock, which
 // Date.now() is not, so an NTP correction could drop real presses or accept
@@ -143,6 +158,86 @@ function publishState() {
   }
 }
 
+// This window's sessions, right now, from the daemon's published list. `null`
+// when there is nothing to read — no daemon running, or it has never written —
+// which is deliberately different from "this window has no sessions": the first
+// must not overwrite a good snapshot, and the second is not distinguishable
+// from it at the moment VS Code is quitting anyway (see remember()).
+function currentSessions() {
+  let rows;
+  try {
+    rows = JSON.parse(readFileSync(SESSIONS_FILE, "utf8"));
+  } catch {
+    return null; // never written, unreadable, or caught mid-rename
+  }
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  return sessionsForWindow(
+    rows,
+    folders.map((f) => f.uri.fsPath),
+    sshHost(folders, vscode.env.remoteName)
+  );
+}
+
+// Remember what is open, for the restore command to offer after the next
+// restart.
+//
+// An empty list is never written over a non-empty one. Quitting VS Code kills
+// the terminals before it deactivates extensions, so a snapshot taken in that
+// window would record the truth — nothing is running — and erase the only copy
+// of what to restore. The cost is that closing every session by hand leaves the
+// last non-empty list behind; the restore picker subtracts what is live and
+// lets you deselect the rest, so an offer to resume a conversation you finished
+// is a keystroke, not a surprise.
+function remember(context) {
+  const sessions = currentSessions();
+  if (!sessions || !sessions.length) return;
+  try {
+    context.workspaceState.update(SNAPSHOT_KEY, sessions);
+  } catch {
+    // storage unavailable — the command simply finds nothing
+  }
+}
+
+// The command: reopen a terminal per session and resume it. One terminal each,
+// named and started in the session's own cwd, because that is what was there
+// before — `claude --resume <id>` reattaches the conversation, and the cwd is
+// what makes the project around it the same one.
+async function restoreSessions(context) {
+  const live = currentSessions() ?? [];
+  const saved = context.workspaceState.get(SNAPSHOT_KEY) ?? [];
+  const candidates = toRestore(saved, live);
+  if (!candidates.length) {
+    vscode.window.showInformationMessage(
+      saved.length
+        ? "Claude sessions: nothing to restore — every remembered session is already running."
+        : "Claude sessions: nothing remembered for this window yet."
+    );
+    return;
+  }
+
+  const items = candidates.map((s) => ({
+    label: s.title ?? s.cwd.split("/").filter(Boolean).pop() ?? s.cwd,
+    description: s.cwd,
+    session: s,
+    picked: true,
+  }));
+  // Multi-select with everything pre-picked: the common case is "all of them",
+  // and the picker exists for the one that isn't — a session you closed on
+  // purpose and don't want back.
+  const picks = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    title: "Restore Claude sessions",
+    placeHolder: "Sessions open in this window before it was closed",
+  });
+  if (!picks) return; // dismissed
+
+  for (const { session } of picks) {
+    const terminal = vscode.window.createTerminal({ name: "claude", cwd: session.cwd });
+    terminal.sendText(resumeCommand(session.id));
+    terminal.show();
+  }
+}
+
 // Sweep state files whose extension host is gone. A window that crashes or is
 // force-quit never runs deactivate(), and the daemon's liveness check only
 // asks "does a process with this pid exist" — which stops meaning "that window
@@ -174,8 +269,20 @@ function reapDeadWindows() {
   }
 }
 
-function activate() {
+function activate(context) {
   reapDeadWindows();
+  context.subscriptions.push(
+    vscode.commands.registerCommand("claudeStreamdeck.restoreSessions", () =>
+      restoreSessions(context).catch((err) =>
+        vscode.window.showErrorMessage(`Restore Claude sessions failed: ${err.message}`)
+      )
+    )
+  );
+  // Its own timer rather than a counter on the one below: the snapshot is a
+  // file read and a storage write, and there is no reason for it to share a
+  // 400ms beat sized for how fast a key press must be answered.
+  remember(context);
+  snapshotTimer = setInterval(() => remember(context), SNAPSHOT_MS);
   // Two independent concerns on one timer rather than two: publishing is
   // synchronous and must run on every tick, while tick() is async and guards
   // itself with `busy`, so a slow request pass must not also stall publishing.
@@ -194,6 +301,10 @@ function activate() {
 
 function deactivate() {
   clearInterval(timer);
+  clearInterval(snapshotTimer);
+  // No final remember() here: by the time this runs the terminals are already
+  // gone, so it would record an empty window. The last timer tick before the
+  // quit is the snapshot that matters.
   // The clean-exit half of cleanup: a window that closes normally takes its
   // own state file with it here. A window that crashes never reaches this
   // function at all — that's what `reapDeadWindows()` in `activate()` is for,

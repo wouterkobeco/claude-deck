@@ -339,6 +339,24 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   detected exactly with `isAlive` rather than guessed from a timestamp, which
   is what lets the extension write only on change instead of heartbeating a
   file every 400ms in every open window forever.
+- `src/publish-sessions.mjs` — the daemon's second write, and the only one that
+  isn't a key press: `~/.claude/streamdeck-sessions.json`, the live session list
+  (id, cwd, folder, host, title) for the extension's "restore my sessions"
+  command to remember while the window is still open. **Claude Code removes its
+  own registry entry on exit**, so after VS Code has been quit there is nothing
+  left on disk saying what was running — measured on this machine, every entry
+  in `~/.claude/sessions` belongs to a live process and there are no corpses to
+  read. The snapshot therefore has to be taken while the sessions are alive, and
+  it has to come from here rather than the window reading `~/.claude/sessions`
+  itself, for two reasons the extension cannot solve: a remote window's sessions
+  live on the other machine and only `remote-fs.mjs` has fetched them, and
+  attaching a session to a window is `matchFolder` plus the IDE locks — a join
+  `getLiveSessions()` has already done by the time anything is drawn. Nested
+  sessions are excluded: an Agent-tool subagent has no session of its own to
+  resume and an SDK one was started by a script, so restoring either restores
+  something nobody opened. Published through `liveSessions()` in `index.mjs`,
+  which wraps every `getLiveSessions` call site, so the file is written on every
+  poll rather than only on the polls of whichever board happens to be up.
 - `extension/` — the other half, plain CommonJS with no build step and no
   dependencies, installed by copying it into `~/.vscode/extensions` (a line
   count isn't pinned here for the same reason it isn't for `src/`: it goes
@@ -358,7 +376,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Writing that check immediately found a request with no `ts` being accepted
   forever: `now - undefined` is `NaN`, and every comparison against `NaN` is
   false, so the staleness guard read it as fresh. Keep new routing decisions in
-  that file rather than inline here, for the same reason. It also does the two things
+  that file rather than inline here, for the same reason. `extension/restore.js`
+  is the same split for the restore command, and the part of it worth checking
+  is the same part: whose sessions these are. It refuses a session id that
+  isn't a UUID — twice, once when filtering the published list and again in
+  `resumeCommand` — because that id reaches a shell as `claude --resume <id>`
+  and, for a remote window, was chosen by the other machine.
+  **Restoring is what was remembered minus what is running**, so an ordinary
+  window reload (whose terminals survive) correctly offers nothing, and a second
+  run of the command doesn't open a second copy of everything the first one
+  restored. The remembering itself is `context.workspaceState`, VS Code's own
+  per-workspace storage: scoped to this window by the platform, survives a
+  restart, and unlike `streamdeck-windows/` leaves no file for anyone to reap.
+  **An empty list is never written over a non-empty one** — quitting VS Code
+  kills the terminals before it deactivates extensions, so a snapshot taken then
+  would honestly record nothing running and erase the only copy of what to
+  restore. `deactivate()` deliberately does *not* take a final snapshot for that
+  reason; the last timer tick before the quit is the one that matters. It also does the two things
   `window-state.mjs` reads: publishes this window's folders/focus/active-terminal
   to `~/.claude/streamdeck-windows/<pid>.json` on every tick (and immediately
   after a reveal, so a fast second press doesn't read a stale one), and sweeps
@@ -451,9 +485,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   repaints it for real regardless of what pulse left behind.
 - **Read-only, two install steps.** No hooks, no `settings.json` writes, no
   config file. The daemon reads from `~/.claude/`, VS Code's storage and the
-  usage endpoint, and writes exactly one file: `~/.claude/streamdeck-focus.json`,
-  the terminal-focus request.
-  There is a second file in this feature and the daemon does **not** write it:
+  usage endpoint, and writes two files into it: `~/.claude/streamdeck-focus.json`,
+  the terminal-focus request, and `~/.claude/streamdeck-sessions.json`, the live
+  session list the extension's restore command remembers (`publish-sessions.mjs`).
+  Both are the same shape of thing — one file, rewritten in place, no reader
+  addressing, every window reads it and keeps what is its own — and both are
+  best-effort in the same way: a window that finds neither behaves as it did
+  before either existed. It was one file until the restore command needed the
+  daemon's remote reach, which is the bar for a third.
+  There is another file in this feature and the daemon does **not** write it:
   `~/.claude/streamdeck-windows/<pid>.json` is published by the extension and
   only read here. Keep it that way — a daemon that deletes files it did not
   write is a worse trade than leaving that sweep to the extension, which
@@ -462,7 +502,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   unrelated process, at which point the liveness check starts trusting a
   frozen `focused`/`activeSessionId` from a window that died weeks ago.
   An earlier hook-based version was deleted; don't reintroduce one.
-  A remote host bends "writes exactly one file" further than that: a fetch
+  A remote host bends "only files in `~/.claude`" further than that: a fetch
   extracts into a scratch tree at a literal `/tmp/streamdeck-remote-<pid>` —
   **not** `os.tmpdir()`. That path also anchors `fetchSource`'s
   `ControlPath` socket (that path, plus `cm-<host>`, plus ssh's own random
