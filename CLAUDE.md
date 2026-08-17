@@ -103,6 +103,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `STREAMDECK_NO_REMOTE=1` skips every remote source — every other risky
   reader here degrades to nothing by itself, and this is the one holding an
   open connection to another machine, so it gets an explicit off switch.
+  **A failing host used to vanish silently**, and that was the one dishonest
+  thing on the board: a failed fetch leaves `source: null`, `cachedSources`
+  filters it out, and its keys disappear exactly the way a closed window's do.
+  `unreachableHosts` says so instead, and what makes that possible is that a
+  remote window's extension host runs *locally* (`extensionKind: ["ui"]`), so
+  `readWindowStates()` still knows that host's windows and folders while ssh is
+  dead — the information was always there and was being discarded. It reports
+  one entry per *folder*, so each stand-in key lands in the block slot its
+  project already held, and it keys them so a folder open in two windows on one
+  host is one key rather than two on the same slot. It tests `failures`, not
+  `source == null`: a host never fetched also has no source, and "not yet" is
+  not "unreachable". `failingSince` is stamped once at the transition into
+  failure and cleared on success — `lastAt` would answer "how long since the
+  last retry", which is always about zero and says nothing.
   **`cachedSources` is what the poll loop actually reads, every 2s — no fetch,
   no await.** A fetch is two *sequential* ssh calls, each bounded by its own
   15s hard kill, so awaiting one inline stalls a tick by up to ~30s — pausing
@@ -169,6 +183,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   for the same reason `detailLayout` is — it also has to stop a worktree
   session drawing on two keys at once, which `detailLayout` re-pinning its tail
   every poll otherwise causes and which nothing but a deck would show you.
+- **A key whose host went away says so; it does not disappear.** `refresh`
+  synthesises one stand-in "session" per unreachable folder
+  (`unreachableTiles`) and passes it to `assignSlots` **there and nowhere
+  else** — deliberately not through `liveSessions()`. It must not reach
+  `publishSessions` (the restore command would try to `claude --resume` an id
+  nothing can resume), `liveProjects` (the config page would list a project
+  that isn't running), or `attentionQueue` (nothing here is blocked on you).
+  It carries the real folder and host, which is exactly what earns it the
+  block's own slot and accent: `folderKeyFor` and `folderOrder` treat it as the
+  missing sessions were treated, so the key appears where it always was. Drawn
+  grey rather than red — `CLAUDE.md` reserves the pulse for things blocked on
+  you — which means the *word* on the key is what tells it apart from an idle
+  session, and that word is `offline` rather than the accurate `unreachable`
+  because `renderKey` fills lines by character and eleven letters broke as
+  "pi unreac / hable 4m" on the raster. `renderParams` is nulled on that
+  branch, like every other board that isn't the session view, so `pulse()`
+  never redraws a key this branch owns from stale data.
 - **Nothing in a transcript line may be matched as a raw substring.** A
   transcript stores tool results verbatim, so a session that greps this repo or
   prints another transcript writes `<command-name>/clear</command-name>`,

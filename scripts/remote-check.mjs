@@ -386,3 +386,65 @@ for (const t of ctxTargets(hostile.concat({ sessionId: "ok-1", cwd: "/x", pid: 8
 }
 
 console.log("remote-check: OK");
+
+// --- unreachable hosts -----------------------------------------------------
+import { unreachableHosts } from "../src/remote-hosts.mjs";
+
+// A failed fetch sets source:null, so cachedSources filters the host out and
+// its keys vanish exactly like a closed window's. The window is still open and
+// still published locally — the extension host is local even for a remote
+// window — so the board can say so instead of going quietly short.
+const unMemo = new Map();
+const winIn = (host, folders) => ({ pid: 1, folders, focused: false, activeSessionId: null, host });
+
+assert.deepEqual(unreachableHosts([winIn("pi", ["/a"])], unMemo), [], "a host never fetched is not yet unreachable");
+unMemo.set("pi", { lastAt: 0, failures: 0, source: { host: "pi" } });
+assert.deepEqual(unreachableHosts([winIn("pi", ["/a"])], unMemo), [], "a reachable host is not unreachable");
+
+unMemo.set("pi", { lastAt: 9000, failures: 2, failingSince: 4000, source: null });
+assert.deepEqual(
+  unreachableHosts([winIn("pi", ["/a", "/b"])], unMemo),
+  [{ host: "pi", folder: "/a", since: 4000 }, { host: "pi", folder: "/b", since: 4000 }],
+  "one entry per folder of an unreachable host's windows"
+);
+
+// Two windows on one host, sharing a folder: the board has one block per
+// folder, so it must get one key rather than two stacked on the same slot.
+assert.deepEqual(
+  unreachableHosts([winIn("pi", ["/a"]), winIn("pi", ["/a", "/b"])], unMemo),
+  [{ host: "pi", folder: "/a", since: 4000 }, { host: "pi", folder: "/b", since: 4000 }],
+  "a folder open in two windows is still one key"
+);
+
+// A local window is never unreachable, whatever the memo holds.
+assert.deepEqual(unreachableHosts([winIn(null, ["/local"])], unMemo), [], "local windows are never unreachable");
+
+// The kill switch means "no remote at all" — reporting hosts as down while
+// deliberately not fetching them would be the switch lying.
+process.env.STREAMDECK_NO_REMOTE = "1";
+assert.deepEqual(unreachableHosts([winIn("pi", ["/a"])], unMemo), [], "the kill switch reports no unreachable hosts");
+delete process.env.STREAMDECK_NO_REMOTE;
+
+// failingSince is stamped once, at the transition into failure, and cleared on
+// recovery — the key shows how long the host has been gone, not how long since
+// the last retry, and the retries are every few seconds.
+// `now` here has to be on the same clock as `lastAt`, which remoteSources
+// stamps with a real Date.now() on completion. Small fixture numbers make
+// every later call "not due" — no fetch runs, and the two assertions below
+// pass without exercising anything.
+const sinceMemo = new Map();
+const t0 = Date.now();
+await remoteSources([winIn("pi", ["/a"])], t0, sinceMemo, async () => null);
+const firstFail = sinceMemo.get("pi").failingSince;
+assert.ok(firstFail > 0, "the first failure stamps failingSince");
+assert.equal(sinceMemo.get("pi").failures, 1, "and counts one failure");
+
+await remoteSources([winIn("pi", ["/a"])], t0 + 60000, sinceMemo, async () => null);
+assert.equal(sinceMemo.get("pi").failures, 2, "the second fetch really ran");
+assert.equal(sinceMemo.get("pi").failingSince, firstFail, "a later failure does not restamp it");
+
+await remoteSources([winIn("pi", ["/a"])], t0 + 120000, sinceMemo, async () => ({ host: "pi" }));
+assert.equal(sinceMemo.get("pi").failures, 0, "the recovering fetch really ran");
+assert.equal(sinceMemo.get("pi").failingSince, null, "recovery clears it");
+
+console.log("remote-check: unreachable hosts OK");

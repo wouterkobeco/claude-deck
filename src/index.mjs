@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
 import { fetchSource } from "./remote-fs.mjs";
-import { cachedSources, remoteSources } from "./remote-hosts.mjs";
+import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
@@ -895,11 +895,42 @@ const configDeps = {
   },
 };
 
+/**
+ * One stand-in "session" per folder whose keys are missing because its host is
+ * unreachable, so the block says so instead of quietly going short.
+ *
+ * These are synthesised here and **nowhere else** — deliberately not in
+ * `liveSessions()`. They must not reach `publishSessions` (the restore command
+ * would try to `claude --resume` an id nothing can resume), `liveProjects` (the
+ * config page would list a project that isn't running), or `attentionQueue`
+ * (nothing here is blocked on you). `refresh` is the only consumer that needs
+ * them, so it is the only place they exist.
+ *
+ * They carry the real folder and host, which is what earns them the block's
+ * own slot and accent: `folderKeyFor` and `folderOrder` treat them exactly as
+ * the missing sessions were treated, so the key appears where it always was.
+ */
+function unreachableTiles(windows) {
+  return unreachableHosts(windows, remoteMemo).map(({ host, folder, since }) => ({
+    session_id: `unreachable:${host}:${folder}`,
+    folder,
+    host,
+    // Grey, not red: nothing here is blocked on you, and CLAUDE.md reserves the
+    // pulse for that. The word on the key is what disambiguates this from an
+    // idle session, since the colour can't.
+    state: "idle",
+    nested: false,
+    unreachable: true,
+    ts: since / 1000,
+  }));
+}
+
 async function refresh(deck, buttons, slots, nestedBySlot) {
   const sessions = await liveSessions();
-  assignSlots(sessions, slots, nestedBySlot);
+  const tiles = [...sessions, ...unreachableTiles(readWindowStates())];
+  assignSlots(tiles, slots, nestedBySlot);
   persistAccents();
-  const byId = new Map(sessions.map((s) => [s.session_id, s]));
+  const byId = new Map(tiles.map((s) => [s.session_id, s]));
 
   await Promise.all(
     buttons.map(async (btn, slot) => {
@@ -913,6 +944,37 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
           await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
           btn.drawn = null;
         }
+        return;
+      }
+      // A stand-in for a block whose host can't be reached. Handled before
+      // keyFields, which reads fields only a real session has — and drawn from
+      // the same renderKey with the same accent, so the block keeps its
+      // identity while it says what happened to it. No renderParams: pulse()
+      // has nothing to animate here, and leaving stale ones would let it
+      // redraw a key this branch owns.
+      if (session.unreachable) {
+        btn.renderParams = null;
+        const params = {
+          state: "idle",
+          // "offline", not the accurate "unreachable": renderKey fills lines
+          // by character, so an eleven-letter word breaks mid-word and the key
+          // read "pi unreac / hable 4m" — checked on the raster, not guessed.
+          // "pi offline" / "4m" wraps at the space at every duration. The
+          // stderr line keeps the precise word; a key across a room does not
+          // get to spend eleven characters distinguishing "host down" from
+          // "ssh down" when the thing you do about it is the same.
+          //
+          // The duration rides in the label because renderKey has no age slot:
+          // that sits on the accent bar and is fed by keyFields, which this
+          // branch skips.
+          label: `${session.host} offline ${formatAge(Date.now() / 1000 - session.ts)}`,
+          accent: accentFor(folderKeyFor(session)),
+          project: session.folder.split("/").filter(Boolean).pop() ?? "",
+        };
+        const drawn = `unreachable ${JSON.stringify(params)}`;
+        if (btn.drawn === drawn) return;
+        await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...params }), { format: "rgba" });
+        btn.drawn = drawn;
         return;
       }
       const { label, project } = keyFields(session);

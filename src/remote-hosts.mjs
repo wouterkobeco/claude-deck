@@ -51,6 +51,40 @@ export function cachedSources(windows, memo) {
 }
 
 /**
+ * The folders whose keys are missing because their host can't be reached, as
+ * `[{ host, folder, since }]` — one per folder, so each lands in the block slot
+ * it already held.
+ *
+ * A failed fetch leaves `source: null`, which `cachedSources` filters out, so
+ * the host's keys disappear exactly the way a closed window's do — the two are
+ * indistinguishable on a board whose entire job is saying what is true. What
+ * makes saying so possible is that a remote window's extension host runs
+ * *locally* (`extensionKind: ["ui"]`), so `readWindowStates()` still knows that
+ * host's windows and their folders while ssh is dead. The information was
+ * always there; it was being discarded.
+ *
+ * `failures` rather than `source == null`: a host that has never been fetched
+ * also has no source, and "not yet" is not "unreachable".
+ */
+export function unreachableHosts(windows, memo) {
+  // Reporting hosts as down while deliberately not fetching them would make
+  // the switch a lie, the same reasoning remoteSources applies to its sources.
+  if (process.env.STREAMDECK_NO_REMOTE === "1") return [];
+  const out = new Map();
+  for (const w of windows) {
+    if (!w.host) continue;
+    const entry = memo.get(w.host);
+    if (!entry?.failures) continue;
+    // Keyed so a folder open in two windows on one host is one key, not two
+    // stacked on the same slot.
+    for (const folder of w.folders ?? []) {
+      out.set(`${w.host}:${folder}`, { host: w.host, folder, since: entry.failingSince ?? entry.lastAt });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
  * Fetch what is due, keep what is not, and drop a host whose window has closed.
  *
  * A failing host's keys vanish the way a closed window's do, and the transition
@@ -95,10 +129,20 @@ export async function remoteSources(windows, now, memo, fetch) {
       const settledAt = Date.now();
       if (source) {
         if (previous.failures) console.error(`remote ${host}: reachable again`);
-        memo.set(host, { lastAt: settledAt, failures: 0, source, inFlight: false });
+        memo.set(host, { lastAt: settledAt, failures: 0, failingSince: null, source, inFlight: false });
       } else {
         if (!previous.failures) console.error(`remote ${host}: unreachable, keys dropped`);
-        memo.set(host, { lastAt: settledAt, failures: previous.failures + 1, source: null, inFlight: false });
+        memo.set(host, {
+          lastAt: settledAt,
+          failures: previous.failures + 1,
+          // Stamped once, at the transition into failure, and never restamped:
+          // the key reports how long the host has been gone, and retries are
+          // every few seconds. `lastAt` would answer "how long since the last
+          // attempt", which is always about zero and says nothing.
+          failingSince: previous.failingSince ?? settledAt,
+          source: null,
+          inFlight: false,
+        });
       }
     })
   );
