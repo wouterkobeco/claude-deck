@@ -17,6 +17,7 @@ npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run vscode-state-check   # which window's storage answers for a folder
 npm run extension-check      # whose window a focus request is for
+npm run remote-install-check # what remote:install decides before it writes
 npm run remote:install -- <host>  # status line on a remote host, for its gauge
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
@@ -497,6 +498,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   with an existing status line, or an existing `statusLine` key, is left alone
   and told what to add by hand. A status line is read on every turn, and
   replacing one to feed a gauge on a key is not a fair trade.
+  **"Exists" there means `-s`, not `-e`** — a zero-byte file is a placeholder, a
+  truncated write or a `touch`, not something anyone wrote, and refusing to
+  install over it protects nothing while blocking the only command that fixes
+  it. That is not hypothetical: an empty executable appeared on a host that had
+  none, with no `statusLine` key even referencing it, and the install refused
+  itself out of a file with nothing in it. The probe takes its directory from
+  `$CLAUDE_DIR` so `remote-install-check` can run it under a real shell against
+  fixtures — the decision is shell semantics, and a check asserting the command
+  *string* would have passed happily while `-e` was wrong.
   **The gauge's file is fetched through call 2's path list, not the tar.**
   `ctx/` accumulates one file per session a host has ever run and tar spends a
   512-byte header on each: measured, 118 files holding 1,775 bytes of content

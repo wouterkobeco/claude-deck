@@ -196,6 +196,7 @@ npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check    # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run vscode-state-check   # which window's storage answers for a folder
+npm run remote-install-check # what remote:install decides before it writes
 npm run extension-check      # whose window a focus request is for
 npm run remote-check    # remote source: host validation, tar/tail framing, matches a local source's output
 npm run board-shot      # re-render the screenshots above
