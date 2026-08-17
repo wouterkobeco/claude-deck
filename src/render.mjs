@@ -668,15 +668,20 @@ export async function renderCompacting({ width, height, accent, project, phase =
  * deck isn't stuck — which is why it's an arrow and a word rather than a
  * glyph alone.
  */
-export async function renderBack({ width, height }) {
+// One dark tile with a glyph over a caps label — the back key on the detail
+// and stats boards, and the stats board's config key. The defaults are what
+// this drew when it only ever drew the back key. `glyph` and `caps` are this
+// project's own literals, never anything read off disk, so they go into the
+// SVG as-is.
+export async function renderBack({ width, height, glyph = "←", caps = "BACK" }) {
   const capSize = Math.round(height * 0.11);
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="#1b1b1b" />
       <text x="50%" y="${height * 0.44}" font-family="sans-serif" font-size="${Math.round(height * 0.42)}"
-            fill="#ffffffdd" text-anchor="middle" dominant-baseline="middle">←</text>
+            fill="#ffffffdd" text-anchor="middle" dominant-baseline="middle">${glyph}</text>
       <text x="50%" y="${height * 0.78}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-            letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle" dominant-baseline="middle">BACK</text>
+            letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle" dominant-baseline="middle">${caps}</text>
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();

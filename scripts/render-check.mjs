@@ -365,4 +365,32 @@ await sharp(backBuf, { raw: { width, height, channels: 4 } })
   .png()
   .toFile(new URL("./render-check-back.png", import.meta.url).pathname);
 
+// The same function draws the config key on the stats board. Glyph coverage is
+// not assumed: "⚙" (U+2699) has to survive librsvg and whatever sans-serif
+// resolves to here, which is exactly the class of thing this project reads back
+// off the raster rather than trusting (see the CHAR_WIDTH case above). Ink in
+// the glyph band proves *something* drew; render-check-config.png is what tells
+// a human it isn't a tofu box, the same way the other PNGs here work.
+const configBuf = await renderBack({ width, height, glyph: "⚙", caps: "CONFIG" });
+const blankBuf = await renderBack({ width, height, glyph: " ", caps: "CONFIG" });
+// Rows 0 to 65% of the key: the glyph sits at y = height * 0.44 and the caps at
+// 0.78, so this band is the glyph's alone.
+const inkAbove = (buf) => {
+  let n = 0;
+  for (let y = 0; y < Math.round(height * 0.65); y++) {
+    for (let x = 0; x < width; x++) {
+      if (buf[(y * width + x) * 4] > 40) n++;
+    }
+  }
+  return n;
+};
+const glyphInk = inkAbove(configBuf) - inkAbove(blankBuf);
+if (glyphInk < 40) {
+  console.error(`FAILED (config key glyph): only ${glyphInk}px of ink above the caps — did ⚙ resolve?`);
+  process.exit(1);
+}
+await sharp(configBuf, { raw: { width, height, channels: 4 } })
+  .png()
+  .toFile(new URL("./render-check-config.png", import.meta.url).pathname);
+
 console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, back key, compacting spinner");
