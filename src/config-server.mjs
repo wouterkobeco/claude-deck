@@ -36,7 +36,16 @@ const STYLE = `
   h1 { font-size:15px; letter-spacing:.18em; text-transform:uppercase;
        color:#9e9e9e; font-weight:600; margin:0 0 24px }
   .row { margin:0 0 20px; max-width:520px }
-  .bar { padding:6px 10px; border-radius:4px 4px 0 0; color:#000000bb;
+  /* The drop line. A box-shadow rather than a border so the row doesn't
+     change height as it appears — a list that shifts under the pointer while
+     you aim at it is the one thing a drop indicator must not do. */
+  .row.above { box-shadow:0 -2px 0 #ffffff }
+  .row.below { box-shadow:0 2px 0 #ffffff }
+  .head { display:flex; align-items:stretch }
+  .handle { cursor:grab; color:#616161; padding:6px 10px 6px 0; font-size:15px;
+            line-height:1; user-select:none }
+  .handle:active { cursor:grabbing }
+  .bar { flex:1; padding:6px 10px; border-radius:4px 4px 0 0; color:#000000bb;
          font-size:12px; font-weight:700; letter-spacing:.12em;
          text-transform:uppercase }
   .key { background:#1b1b1b; padding:5px 10px; font-size:11px; color:#757575;
@@ -45,15 +54,19 @@ const STYLE = `
   button { width:44px; height:28px; border:2px solid transparent; border-radius:4px;
            cursor:pointer; padding:0 }
   button.on { border-color:#ffffff }
-  .empty { color:#757575 }`;
+  .empty, .hint { color:#757575 }
+  .hint { font-size:12px; margin:-14px 0 24px }`;
 
 function page(token, projects) {
   const rows = projects
     .map(
       (p) => `
-    <form class="row" method="post" action="/accent?t=${esc(token)}">
+    <form class="row" data-key="${esc(p.key)}" method="post" action="/accent?t=${esc(token)}">
       <input type="hidden" name="folder" value="${esc(p.key)}">
-      <div class="bar" style="background:${esc(p.accent)}">${esc(p.name)}</div>
+      <div class="head">
+        <span class="handle" draggable="true" title="drag to reorder">⠿</span>
+        <div class="bar" style="background:${esc(p.accent)}">${esc(p.name)}</div>
+      </div>
       <div class="key">${esc(p.key)}</div>
       <div class="swatches">${ACCENTS.map(
         (c) =>
@@ -65,10 +78,97 @@ function page(token, projects) {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
     <style>${STYLE}</style></head><body>
-    <h1>Project accents</h1>
+    <h1>Projects</h1>
+    <p class="hint">Topmost is the first block on the deck. Drag a handle to reorder.</p>
     ${rows || '<p class="empty">nothing on the board right now</p>'}
+    <script>${SCRIPT}</script>
     </body></html>`;
 }
+
+// The one piece of this project nothing can check: no lint, no import, no test
+// script can reach it. That was the known and accepted price of drag — the
+// spec says so — and it is why everything that can be decided on the server is
+// decided there. What lives here is the parts a browser has to do: which row
+// the pointer is over, and which side of its midpoint.
+//
+// Every listener is delegated from `document`, because a mutation replaces
+// document.body wholesale — bind to a row and the page stops responding after
+// the first change.
+//
+// A mutation POSTs and then renders whatever comes back. The 303 those POSTs
+// answer with is followed by fetch on its own, so the response body *is* the
+// re-rendered page: one renderer, on the server, for both interactions. That
+// is what keeps a drag and a colour pick behaving identically instead of the
+// page running two paradigms. The form is left a real form, so with JS off
+// colour picking still works exactly as it did before drag existed.
+const SCRIPT = `
+const rows = () => [...document.querySelectorAll(".row")];
+const clear = () => rows().forEach((r) => r.classList.remove("above", "below"));
+let dragged = null;
+
+async function send(path, params) {
+  const res = await fetch(path + location.search, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params),
+  });
+  const html = await res.text();
+  // replaceChildren over innerHTML: the source is this server's own output,
+  // already escaped by esc(), but parsing once and moving nodes keeps the
+  // string out of an HTML sink entirely. Scripts don't execute either way,
+  // which is why every listener here is delegated from document.
+  const fresh = new DOMParser().parseFromString(html, "text/html");
+  document.body.replaceChildren(...fresh.body.childNodes);
+}
+
+document.addEventListener("submit", (e) => {
+  e.preventDefault();
+  // e.submitter, not FormData: new FormData(form) omits the button that
+  // submitted it, and the swatch's value is the whole point of the click.
+  send("/accent", { folder: e.target.dataset.key, accent: e.submitter.value });
+});
+
+document.addEventListener("dragstart", (e) => {
+  if (!e.target.classList?.contains("handle")) return;
+  dragged = e.target.closest(".row");
+  e.dataTransfer.effectAllowed = "move";
+  // Some data has to be set or Safari refuses to start the drag at all.
+  e.dataTransfer.setData("text/plain", dragged.dataset.key);
+  e.dataTransfer.setDragImage(dragged, 12, 12);
+});
+
+document.addEventListener("dragover", (e) => {
+  if (!dragged) return;
+  e.preventDefault();
+  const row = e.target.closest?.(".row");
+  clear();
+  if (!row || row === dragged) return;
+  const box = row.getBoundingClientRect();
+  row.classList.add(e.clientY < box.top + box.height / 2 ? "above" : "below");
+});
+
+document.addEventListener("drop", (e) => {
+  if (!dragged) return;
+  e.preventDefault();
+  const target = rows().find((r) => r.classList.contains("above") || r.classList.contains("below"));
+  const from = dragged;
+  clear();
+  dragged = null;
+  if (!target) return;
+  // "before" is the key to land ahead of, so dropping below a row means the
+  // row after it — and the empty string means last. Computed from the DOM the
+  // server rendered, with the dragged row skipped: it is about to move, so it
+  // can never be its own anchor.
+  const after = rows().filter((r) => r !== from);
+  const i = after.indexOf(target) + (target.classList.contains("below") ? 1 : 0);
+  send("/order", { folder: from.dataset.key, before: after[i]?.dataset.key ?? "" });
+});
+
+document.addEventListener("dragend", () => {
+  dragged = null;
+  clear();
+});
+`;
 
 function send(res, status, body, type = "text/plain; charset=utf-8") {
   res.writeHead(status, { "content-type": type });
@@ -141,6 +241,27 @@ export async function createConfigServer(deps) {
         deps.setAccent(folder, accent);
         // A 400 above is a dead end by contrast — only a stale page or a
         // forged request gets one, and the way back for both is the config key.
+        res.writeHead(303, { Location: `/?t=${token}` });
+        return res.end();
+      }
+
+      if (req.method === "POST" && req.url && url.pathname === "/order") {
+        const raw = await readBody(req);
+        if (raw === null) return send(res, 400, "body too large");
+        const form = new URLSearchParams(raw);
+        const folder = form.get("folder");
+        // Empty means "last" — the row was dropped below everything. Absent
+        // means the same, so a request that omits the field isn't a 400.
+        const before = form.get("before") || null;
+        const live = deps.projects();
+        if (!live.some((p) => p.key === folder)) return send(res, 400, "unknown project");
+        // The anchor is validated too, and for a sharper reason than the
+        // folder: moveProject treats a key it can't find as "put it last", so
+        // an unvalidated stale anchor wouldn't error — it would quietly send
+        // the project to the bottom of the board instead of where you dropped
+        // it, and you'd blame the drag.
+        if (before !== null && !live.some((p) => p.key === before)) return send(res, 400, "unknown anchor");
+        deps.reorder(folder, before);
         res.writeHead(303, { Location: `/?t=${token}` });
         return res.end();
       }

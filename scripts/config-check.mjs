@@ -54,7 +54,10 @@ eq(page.headers.get("referrer-policy"), "no-referrer", "the token cannot travel 
 // Escaping: neither an element nor an attribute break-out survives. The quote
 // case is the one that matters — a tag-only escaper passes both <script>
 // assertions below while leaving the hidden field injectable.
-eq(html.includes("<script>"), false, "a folder named <script> does not reach the page as a tag");
+// Exactly one — the drag script the page ships. A second is a folder name that
+// reached the document as a tag. Counting beats "contains" now that the page
+// legitimately has one of its own.
+eq(html.split("<script>").length - 1, 1, "a folder named <script> does not reach the page as a second tag");
 eq(html.includes("&lt;script&gt;"), true, "it is escaped instead");
 eq(html.includes('value="/projects/<script>"x"'), false, "and the quote does not break out of the hidden field");
 eq(html.includes("&quot;"), true, "the quote is escaped too");
@@ -97,10 +100,50 @@ eq(ok.status, 303, "a valid POST redirects back to the page");
 eq(ok.headers.get("location"), `/?t=${token}`, "carrying the token, or the redirect would 403");
 eq(calls, [[ALPHA, ACCENTS[3]]], "and setAccent was called once with what was asked for");
 
+// Reordering. Every row carries the key the drag script reads back, and a
+// handle that is the only draggable thing on it — dragging from anywhere on
+// the row would fight the swatch buttons.
+eq(html.split('class="handle" draggable="true"').length - 1, 3, "every row has one drag handle");
+eq(html.includes(`data-key="${ALPHA}"`), true, "and the key the drop reads back off the DOM");
+eq(html.includes("draggable=\"true\"></div>"), false, "nothing else on the row is draggable");
+
+let moves = [];
+const withOrder = await createConfigServer({ projects, setAccent: () => {}, reorder: (...a) => moves.push(a) });
+const orderBase = new URL(withOrder.url).origin;
+const orderToken = new URL(withOrder.url).searchParams.get("t");
+const post2 = (body) =>
+  fetch(`${orderBase}/order?t=${orderToken}`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+eq((await post2(`folder=%2Fprojects%2Fgone&before=${encodeURIComponent(ALPHA)}`)).status, 400, "reordering an unlisted project is refused");
+eq(moves.length, 0, "and nothing moved");
+
+// The anchor is validated for a sharper reason than the folder: moveProject
+// treats an unknown key as "put it last", so a stale anchor would silently
+// send the project to the bottom rather than erroring.
+eq((await post2(`folder=${encodeURIComponent(ALPHA)}&before=%2Fprojects%2Fgone`)).status, 400, "a stale anchor is refused rather than meaning last");
+eq(moves.length, 0, "and nothing moved");
+
+const moved = await post2(`folder=${encodeURIComponent(ALPHA)}&before=${encodeURIComponent(REMOTE)}`);
+eq(moved.status, 303, "a valid move redirects back to the page");
+eq(moves, [[ALPHA, REMOTE]], "and reorder was called with the folder and its anchor");
+
+// The empty anchor is how the script says "dropped below everything", and an
+// absent field must mean the same rather than 400.
+moves = [];
+await post2(`folder=${encodeURIComponent(ALPHA)}&before=`);
+await post2(`folder=${encodeURIComponent(ALPHA)}`);
+eq(moves, [[ALPHA, null], [ALPHA, null]], "empty and absent anchors both mean last");
+withOrder.server.close();
+
 // An empty board says so rather than rendering an empty page.
 const { server: empty, url: emptyUrl } = await createConfigServer({ projects: () => [], setAccent: () => {} });
 eq((await (await fetch(emptyUrl)).text()).includes("nothing on the board"), true, "an empty board says so");
 empty.close();
 
 server.close();
-console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect");
+console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder");

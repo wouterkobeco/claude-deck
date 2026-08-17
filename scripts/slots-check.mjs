@@ -2,11 +2,11 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assignSlots, accentFor, loadAccents, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
-import { readAccents, writeAccents, applyAccentChoice } from "../src/accents.mjs";
+import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -191,10 +191,44 @@ eq(accentFor(rem(2)), settled, "and the loser's new colour sticks across polls")
 // swallows its error — a write that silently does nothing would look exactly
 // like a first run, forever.
 const accentDir = mkdtempSync(join(tmpdir(), "streamdeck-accents-"));
-writeAccents(new Map([["/projects/x", "#4fc3f7"], ["pi:/home/pi/x", "#ff8a65"]]), accentDir);
-eq([...readAccents(accentDir)], [["/projects/x", "#4fc3f7"], ["pi:/home/pi/x", "#ff8a65"]], "accents round-trip");
-eq([...readAccents(join(accentDir, "nope"))], [], "a missing file reads as nothing remembered");
+const roundAccents = new Map([["/projects/x", "#4fc3f7"], ["pi:/home/pi/x", "#ff8a65"]]);
+writeProjects(roundAccents, ["pi:/home/pi/x", "/projects/x"], accentDir);
+eq([...readProjects(accentDir).accents], [...roundAccents], "accents round-trip");
+eq(readProjects(accentDir).order, ["pi:/home/pi/x", "/projects/x"], "and so does the order, not the write order");
+eq([...readProjects(join(accentDir, "nope")).accents], [], "a missing file reads as nothing remembered");
+eq(readProjects(join(accentDir, "nope")).order, [], "and no order either");
+
+// The shape this file had before the config page could reorder. A plain string
+// value must still be read as that project's colour: the alternative is
+// silently dropping every colour already on disk the day this shipped.
+writeFileSync(join(accentDir, "streamdeck-accents.json"), '{"/projects/old":"#4db6ac"}');
+eq([...readProjects(accentDir).accents], [["/projects/old", "#4db6ac"]], "the old string-valued file still reads its colours");
+eq(readProjects(accentDir).order, [], "and reports no remembered order");
+
+// Positions are sorted, not trusted: they are only ever this module's own array
+// indices, but a hand-edited file can hold gaps or write them out of sequence.
+writeFileSync(
+  join(accentDir, "streamdeck-accents.json"),
+  '{"/a":{"accent":"#4fc3f7","order":9},"/b":{"accent":"#ff8a65","order":2}}'
+);
+eq(readProjects(accentDir).order, ["/b", "/a"], "order comes from the numbers, not the file's key order");
 rmSync(accentDir, { recursive: true, force: true });
+
+// Reordering. The splice removes before it locates the target, so dragging a
+// row downward past itself lands where you dropped it rather than one short —
+// which is the whole reason this is a function with a check rather than two
+// lines inline.
+const order = ["a", "b", "c", "d"];
+moveProject(order, "d", "b");
+eq(order, ["a", "d", "b", "c"], "moving up inserts before the target");
+moveProject(order, "a", "c");
+eq(order, ["d", "b", "a", "c"], "moving down past itself lands on the target, not after it");
+moveProject(order, "d", null);
+eq(order, ["b", "a", "c", "d"], "a null target means last");
+moveProject(order, "nope", "b");
+eq(order, ["b", "a", "c", "d"], "an unknown key changes nothing");
+moveProject(order, "b", "gone");
+eq(order, ["a", "c", "d", "b"], "an unknown target means last, not a lost project");
 
 // The swap the config UI performs, kept pure and kept in accents.mjs rather
 // than beside persistAccents: that writes the real ~/.claude file with no root
@@ -371,29 +405,28 @@ const cleared = detailLayout({
 });
 eq(cleared[0], { kind: "label", label: "", project: "kob-trace" }, "cleared session shows no title");
 
-// A session Claude Code hasn't titled yet still has a derived name
-// (`<cwd>-<hash>`) and a cwd that is just the project again. Neither says more
-// than the caps bar, so the body is blank — renderKey draws CLEAR — until a
-// real title exists.
-const untitled = {
-  ...dSession,
-  aiTitle: null,
-  name: "kob-trace-01",
-  nameSource: "derived",
-  cwd: "/projects/kob-trace",
-  folder: "/projects/kob-trace",
-};
+// Before Claude Code has generated an aiTitle — the first turn or two of every
+// session — the body is the last thing typed. The two rungs under it are a name
+// derived from the cwd (`kob-trace-01`) and the cwd itself, both of which say
+// less than the caps bar above them, so they're where the chain ends rather
+// than what it usually reaches. What it must never do is come out blank: a
+// working session reading CLEAR is the bug this rung fixed.
+const untitled = { ...dSession, aiTitle: null, name: "kob-trace-01", cwd: "/projects/kob-trace" };
 const layout = (session) => detailLayout({ session, tasks: [], nested: [], age: "", slotCount: DECK })[0];
-eq(layout(untitled), { kind: "label", label: "", project: "kob-trace" }, "a derived name is not a title");
 eq(
-  layout({ ...untitled, cwd: "/projects/kob-trace-wt/feat-x" }),
-  { kind: "label", label: "feat-x", project: "kob-trace" },
-  "but a worktree's own cwd still names its key"
+  layout({ ...untitled, lastPrompt: "process the backend change queue" }),
+  { kind: "label", label: "process the backend change queue", project: "kob-trace" },
+  "an untitled session reads as what you asked it"
 );
 eq(
-  layout({ ...untitled, name: "chosen name", nameSource: "user" }),
-  { kind: "label", label: "chosen name", project: "kob-trace" },
-  "and a name that isn't derived is drawn"
+  layout({ ...untitled, aiTitle: "Drain the change queue", lastPrompt: "process the backend change queue" }),
+  { kind: "label", label: "Drain the change queue", project: "kob-trace" },
+  "and hands over to the title once one exists"
+);
+eq(
+  layout(untitled),
+  { kind: "label", label: "kob-trace-01", project: "kob-trace" },
+  "with no prompt found at all it still says something, never CLEAR"
 );
 
 // A session with no context reported must not print "null%".

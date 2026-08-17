@@ -42,6 +42,13 @@ so no two projects on the board are ever the same colour. The page is served
 by the daemon on localhost, only while it's running, and only reachable with
 the token in the URL it just opened.
 
+The same page reorders the board. Drag a project by its **⠿** handle and drop
+it where you want; a line shows where it will land. Topmost is the first block
+on the deck — top-left key — and a project's sessions always stay together in
+one block, so you're only ever ordering projects. Anything you haven't dragged
+keeps arriving in the order it first appeared, and the order survives restarts
+alongside the colours.
+
 The daemon is read-only: it polls the files Claude Code already writes under
 `~/.claude/` every two seconds and redraws what changed. No hooks, no config
 file, nothing written back except its own notes to itself and to the VS Code

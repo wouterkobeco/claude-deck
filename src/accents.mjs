@@ -41,32 +41,78 @@ const fileIn = (root) => join(root, "streamdeck-accents.json");
 export const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#bcaaa4"];
 
 /**
- * Every remembered `folderKey -> accent` pair, as a Map.
+ * Everything remembered about each project: its accent, and where it sits.
  *
- * Keyed by `folderKeyFor`'s value, not a bare path, so the same path on two
- * hosts remembers two colours — the board already treats those as two
- * projects and the file has to agree.
+ * Returns `{ accents: Map<folderKey, hex>, order: folderKey[] }`. Keyed by
+ * `folderKeyFor`'s value, not a bare path, so the same path on two hosts
+ * remembers two of each — the board already treats those as two projects and
+ * the file has to agree.
+ *
+ * **A string value is the old shape**, from before the config page could
+ * reorder: `{"<key>": "#4fc3f7"}` rather than `{"<key>": {accent, order}}`.
+ * It is read as an accent with no position, so the colours already on disk
+ * when this shipped survive rather than being silently dropped and re-picked.
  *
  * `root` is a parameter rather than a constant so the check can point it at a
  * fixture, the shape sessions.mjs already uses for CLAUDE_DIR.
  */
-export function readAccents(root = CLAUDE_DIR) {
+export function readProjects(root = CLAUDE_DIR) {
+  const accents = new Map();
+  const positioned = [];
   try {
-    const parsed = JSON.parse(readFileSync(fileIn(root), "utf8"));
-    // A hand-edited or half-written file must not put a non-string into the
-    // SVG: render.mjs drops whatever it is straight into a fill attribute.
-    return new Map(Object.entries(parsed).filter(([, v]) => typeof v === "string"));
+    for (const [key, value] of Object.entries(JSON.parse(readFileSync(fileIn(root), "utf8")))) {
+      // A hand-edited or half-written file must not put a non-string into the
+      // SVG: render.mjs drops whatever it is straight into a fill attribute.
+      const accent = typeof value === "string" ? value : value?.accent;
+      if (typeof accent === "string") accents.set(key, accent);
+      if (typeof value?.order === "number") positioned.push([key, value.order]);
+    }
   } catch {
-    return new Map();
+    return { accents: new Map(), order: [] };
   }
+  // Sorted rather than trusted: the numbers are only ever this module's own
+  // array indices, but nothing stops a hand-edited file holding gaps, ties or
+  // negatives, and the array is what everything downstream reads.
+  return { accents, order: positioned.sort((a, b) => a[1] - b[1]).map(([key]) => key) };
 }
 
-export function writeAccents(accents, root = CLAUDE_DIR) {
+export function writeProjects(accents, order, root = CLAUDE_DIR) {
   try {
-    writeFileSync(fileIn(root), JSON.stringify(Object.fromEntries(accents), null, 2));
+    const at = new Map(order.map((key, i) => [key, i]));
+    const out = {};
+    // Union of both, so a project that has one and not the other still gets a
+    // record — a colour claimed on a poll where assignSlots hasn't run yet,
+    // or a position for something whose accent was evicted by a swap.
+    for (const key of new Set([...accents.keys(), ...order])) {
+      out[key] = { accent: accents.get(key), order: at.get(key) };
+    }
+    writeFileSync(fileIn(root), JSON.stringify(out, null, 2));
   } catch {
     // A restart that forgets, which is what every restart did before this.
   }
+}
+
+/**
+ * Move `folder` to sit immediately before `before`, or to the end when
+ * `before` is null. Mutates `order` in place, and is a no-op for a key it
+ * doesn't hold.
+ *
+ * Pure and here rather than in index.mjs for the same reason
+ * `applyAccentChoice` is: the persisting caller writes the real ~/.claude file
+ * with no root argument, so a check that drove it would clobber this machine's
+ * remembered order with fixture folders.
+ *
+ * The removal happens before the target is located, so dragging a row past
+ * itself can't land it one position off — the classic splice bug, and the one
+ * thing here that a check catches and a glance at the code does not.
+ */
+export function moveProject(order, folder, before) {
+  const from = order.indexOf(folder);
+  if (from === -1) return;
+  order.splice(from, 1);
+  const to = before === null || before === undefined ? -1 : order.indexOf(before);
+  if (to === -1) order.push(folder);
+  else order.splice(to, 0, folder);
 }
 
 /**

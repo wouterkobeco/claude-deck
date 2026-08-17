@@ -199,18 +199,40 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   stretch. Every other signal in that scan stops at its first hit going
   backwards, which a tail can only help; this is the one that has to know it
   saw the whole file.
-  **The third route to `CLEAR` needs no transcript at all: a body with nothing
-  in it that the caps bar doesn't already say.** Claude Code always has *a*
-  session name — until there's something worth summarising it derives one from
-  the cwd (`kob-portal2-01`, `nameSource: "derived"`) and swaps in a real one
-  later — so the `aiTitle ?? name ?? cwd` chain in `keyFields` always found
-  something and the two flags above were the only way a key ever went quiet.
-  A derived name is not a title, and a cwd basename equal to the project is the
-  caps bar twice; both are dropped, which leaves the blank the flags produce and
-  `renderKey` draws the same word. **The cwd rung is kept when it differs**:
-  a worktree's cwd is the only thing telling two of one project's keys apart
-  before either has a title. `nameSource` is carried through `sessions.mjs`
-  purely so the placeholder can be told from a name somebody chose.
+  **Those two flags are the only things allowed to blank a body, and nothing
+  below them may fill it.** The rungs under `aiTitle` all describe the session
+  rather than the conversation — `lastPrompt`, then a name Claude Code derived
+  from the cwd (`kob-portal2-01`), then the cwd — so `keyFields` reads as one
+  chain, but the two directions of error are not symmetrical: a session nobody
+  has spoken to *must* read CLEAR, and a session that is **working** must never
+  read it. Both halves have now been wrong on this machine's own deck within one
+  day, in opposite directions, from the same edit.
+  **`lastPrompt` is the rung that carries the early session**: `aiTitle` doesn't
+  exist for the first turn or two, and roughly one session in sixteen here never
+  gets one at all (measured: 41 of 693 transcripts in one project), so without
+  it a key spends that time showing a placeholder derived from the folder it is
+  already captioned with. It's the newest thing the *human* typed, off the same
+  tail scan, and almost no `type:"user"` line qualifies: a tool result rides on
+  the user turn (content is an array of blocks), and Claude Code injects its own
+  — skill bodies, command output, the local-command caveat — marked `isMeta`.
+  **`isMeta` doesn't catch all of them**: a `<task-notification>` for a finished
+  background agent is an unflagged string user line of pure markup, and it drew
+  its own tags on a live key, so anything opening with a tag that isn't a
+  command is treated as Claude Code talking to itself. That rejection has to
+  leave the search *unresolved* rather than answer null — otherwise one
+  notification hides the prompt sitting right behind it. A slash
+  command is stored as its own markup and is unwrapped to the command (plus its
+  args), because the tags would fill the key with angle brackets; `/clear` needs
+  no case of its own, since it *is* one of these lines and so stops the search
+  before it can reach the conversation that was thrown away.
+  **What it cannot do is reach past the tail.** A session that has been working
+  for twenty minutes has pushed its prompt out of the last 64KB, and if it also
+  never got an `aiTitle` its key falls all the way back to the derived name —
+  the one case this rung was added for that it does not fix. The prompt is at
+  the *head* of the file, and a source's contract is `tail`; reaching it means
+  either a local-only read (breaking "the same code either way") or heads in
+  `remote-fs.mjs`'s second call, whose framing has already been got wrong once.
+  Left undone deliberately.
 - **"idle" can mean "asked you for permission and is waiting."** Claude
   Code's session `status` reports a turn that ends right after an auto-mode
   permission denial exactly the same as any other completed turn: `idle`.
@@ -382,6 +404,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   hand-edited one would otherwise put whatever it holds straight into an SVG
   fill attribute. See the read-only invariant below for why the map it seeds is
   not what `claimAccent` treats as taken.
+  **The file holds a record per project, not a colour**: `{"<key>": {"accent":
+  "#4fc3f7", "order": 3}}`. A **string** value is the shape from before the
+  page could reorder and is still read as that project's accent — the
+  alternative was silently dropping every colour already on disk. Positions are
+  sorted rather than trusted on read: they are only ever `projectOrder`'s own
+  indices, but nothing stops a hand-edited file holding ties or gaps, and the
+  array is what the board reads. Order lives here rather than in a fourth file
+  because it is one more thing remembered about a project, and the bar for a
+  new file is a reader that can't get at this one.
   It also owns `ACCENTS` — moved here from `index.mjs` because
   `config-server.mjs` needs the palette and `index.mjs` needs `openConfig` from
   `config-server.mjs`, and one of those edges has to not exist. `index.mjs`
@@ -424,6 +455,25 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Over the body cap the reader discards and drains rather than calling
   `req.destroy()`: a killed socket reaches the browser as a network error
   rather than as the refusal it is. That cost a debugging round the first time.
+  **`SCRIPT` is the one piece of this project no check can reach** — no lint,
+  no import, no `scripts/*-check.mjs` can execute it. That was the known price
+  of drag-to-reorder, and it is why everything decidable on the server is
+  decided there: the client computes which row the pointer is over and which
+  side of its midpoint, and nothing else. Both mutations POST and then render
+  whatever comes back — `fetch` follows the 303 itself, so the response body
+  *is* the re-rendered page. One renderer, on the server, for both
+  interactions, which is what stops a drag and a colour pick behaving
+  differently. Every listener is delegated from `document`, because a mutation
+  replaces `document.body` wholesale; bind to a row and the page stops
+  responding after the first change. The form stays a real form, so with JS off
+  colour picking still works as it did before drag existed.
+  Verified by driving it in a real browser, since nothing else can: two drags
+  and a swatch click, each after a body swap, produced the right `reorder` and
+  `setAccent` calls. `POST /order` validates its **anchor** as well as its
+  folder, for a sharper reason than the folder: `moveProject` reads a key it
+  can't find as "put it last", so an unvalidated stale anchor would silently
+  drop a project to the bottom of the board instead of erroring, and you would
+  blame the drag.
 - `extension/` — the other half, plain CommonJS with no build step and no
   dependencies, installed by copying it into `~/.vscode/extensions` (a line
   count isn't pinned here for the same reason it isn't for `src/`: it goes
@@ -478,11 +528,31 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 
 ### Invariants worth knowing before changing things
 
-- **Ordering is first-seen, never activity.** `folderOrder` and `sessionOrder`
-  in `index.mjs` are append-only maps for the daemon's lifetime. Folders are
-  deliberately kept after their last session ends so a returning project
-  reclaims its slot and accent colour. Anything that re-sorts a settled board
-  breaks the point of the tool: muscle memory for where a button is.
+- **Ordering is first-seen, never activity.** `sessionOrder` in `index.mjs` is
+  an append-only map for the daemon's lifetime, and `projectOrder` is an
+  append-only array. Folders are deliberately kept after their last session
+  ends so a returning project reclaims its slot and accent colour. Anything
+  that re-sorts a settled board breaks the point of the tool: muscle memory for
+  where a button is.
+  **A project's position is an array index, not a counter.** It was
+  `folderOrder.set(key, folderOrder.size)` at first sight, which cannot express
+  "third, because you dragged it there"; `folderOrder` is now a derived index
+  rebuilt from `projectOrder` by `reindexProjects()` whenever the array moves.
+  An array also makes both invalid states unrepresentable — no project holds
+  two positions and no position holds two projects — which a Map of integers
+  did not.
+  **Dragging in the config page is the second exception, and it is the
+  opposite of the first.** The attention queue re-sorts because it is transient
+  triage you read and leave. A manual order is you *setting* the muscle memory
+  this rule protects, so it outranks first-seen rather than violating it: a
+  project nobody has dragged still lands on the end, exactly as the counter
+  did. `moveProject` is pure and in `accents.mjs` for the same reason
+  `applyAccentChoice` is — the persisting caller writes the real `~/.claude`
+  file, so a check that drove it would clobber this machine's order with
+  fixture folders. Its splice removes before it locates the anchor, so
+  dragging a row down past itself lands where you dropped it rather than one
+  short; that is the whole reason it is a function with a check rather than
+  two lines inline.
   **The attention queue is the one exception**, deliberately: `attentionQueue`
   ranks blocked ahead of waiting and longest-stuck first inside each group.
   It's transient triage — you read it, act, and leave — so there's no muscle

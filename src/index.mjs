@@ -11,7 +11,7 @@ import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { openConfig } from "./config-server.mjs";
-import { ACCENTS, applyAccentChoice, readAccents, writeAccents } from "./accents.mjs";
+import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
@@ -49,7 +49,19 @@ export { ACCENTS };
 // stripe always agree. Folders are kept after their last session ends: if the
 // project comes back it reclaims its old position and colour instead of
 // jumping to the end.
+//
+// The array is the truth and `folderOrder` is a derived index, rebuilt
+// whenever it changes: a project's position used to be a counter taken at
+// first sight, which cannot express "third, because you dragged it there".
+// An array can, and it makes the two invalid states unrepresentable — a
+// project can't hold two positions, and two can't hold one.
+const projectOrder = [];
 const folderOrder = new Map();
+function reindexProjects() {
+  folderOrder.clear();
+  projectOrder.forEach((key, i) => folderOrder.set(key, i));
+}
+
 const sessionOrder = new Map();
 const nestedOrder = new Map();
 let arrivals = 0;
@@ -149,15 +161,20 @@ function claimAccent(folder, liveFolders) {
 }
 
 /**
- * Seed the remembered accents. Called by run() with what readAccents() found.
+ * Seed the remembered accents and project order, from what readProjects()
+ * found. Called by run(); the order argument defaults to empty so a check that
+ * only cares about colours doesn't have to pass one.
  *
  * The read is deliberately not done at module scope: importing this file must
  * not touch the real ~/.claude, or every check inherits whatever palette this
  * machine happens to be wearing today. Exported for the same reason
  * assignSlots is — none of this is visible without a deck.
  */
-export function loadAccents(entries) {
+export function loadAccents(entries, order = []) {
   for (const [folder, accent] of entries) folderAccent.set(folder, accent);
+  projectOrder.length = 0;
+  projectOrder.push(...order);
+  reindexProjects();
 }
 
 /**
@@ -383,7 +400,12 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   const used = new Set();
   for (const s of real) {
     const key = folderKeyFor(s);
-    if (!folderOrder.has(key)) folderOrder.set(key, folderOrder.size);
+    // Still first-seen: a project nobody has dragged goes on the end, exactly
+    // as the counter this replaced did.
+    if (!folderOrder.has(key)) {
+      projectOrder.push(key);
+      folderOrder.set(key, projectOrder.length - 1);
+    }
     if (used.has(folderAccent.get(key))) folderAccent.delete(key);
     if (!folderAccent.has(key)) folderAccent.set(key, claimAccent(key, liveFolders));
     used.add(folderAccent.get(key));
@@ -458,33 +480,34 @@ export function nestedFor(session, nested, primary) {
 // two agents in one repo read KOB-TRACE twice and are told apart by their
 // body text, which is the thing that actually differs between them.
 function keyFields(session) {
-  const project = session.folder.split("/").filter(Boolean).pop() ?? "";
-  const cwdName = session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
-  // Claude Code always has *a* session name: until something worth summarising
-  // exists it derives one from the cwd (`kob-portal2-01`, `nameSource:
-  // "derived"`), and swaps in a real one later. Drawn as a body it reads as an
-  // answer while saying strictly less than the caps bar above it, so a derived
-  // name counts as no name — same for a cwd basename that only repeats the
-  // project. What's left is the honest "nothing yet", which renderKey draws as
-  // CLEAR. A worktree's cwd *does* differ from its project and is the only
-  // thing telling two of its keys apart, so that rung stays.
-  const name = session.nameSource === "derived" ? null : session.name;
   return {
     // Prefer the AI-generated title (the exact string VS Code's terminal list
-    // shows), then Claude Code's short session name, then the cwd's basename —
-    // each a fallback for when the one before it isn't available yet (e.g.
-    // aiTitle hasn't been generated this early in a session) or a future
-    // Claude Code version changes format.
+    // shows), then the last thing you typed, then Claude Code's short session
+    // name, then the cwd's basename — each a fallback for when the one before
+    // it isn't available yet or a future Claude Code version changes format.
+    //
+    // `lastPrompt` is the rung that matters early: aiTitle doesn't exist for
+    // the first turn or two of a session, and the two rungs under it are a
+    // placeholder Claude Code derived from the cwd (`kob-portal2-01`) and the
+    // cwd itself — both of which say strictly less than the caps bar right
+    // above them. What you asked for is the honest answer to "what is this
+    // key", and it's read from the same tail scan aiTitle comes out of.
     //
     // Two ways to have nothing to say, and both skip that whole chain.
     // clearedEmpty: /clear reuses the transcript file, so a title found there
     // would be the pre-clear one. startedEmpty: the session is open but has
     // never been typed into. Either way name/cwd would look like a real
     // answer when the honest one is "nothing yet" — renderKey draws CLEAR.
+    // Nothing below is allowed to fill that blank: a session that is *working*
+    // must never read CLEAR, and one that has never been spoken to must.
     label: session.clearedEmpty || session.startedEmpty
       ? ""
-      : session.aiTitle ?? name ?? (cwdName === project ? "" : cwdName),
-    project,
+      : session.aiTitle ??
+        session.lastPrompt ??
+        session.name ??
+        session.cwd.split("/").filter(Boolean).pop() ??
+        session.cwd,
+    project: session.folder.split("/").filter(Boolean).pop() ?? "",
     // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
     // updatedAt; formatAge would otherwise report the age of the epoch.
     age: session.ts ? formatAge(Date.now() / 1000 - session.ts) : "",
@@ -839,10 +862,10 @@ async function refreshAttention(deck, buttons, attentionButton) {
 // enough to be worth a frame, it is the wrong file.
 let lastAccentsWritten = null;
 function persistAccents() {
-  const snapshot = JSON.stringify([...folderAccent]);
+  const snapshot = JSON.stringify([[...folderAccent], projectOrder]);
   if (snapshot === lastAccentsWritten) return;
   lastAccentsWritten = snapshot;
-  writeAccents(folderAccent);
+  writeProjects(folderAccent, projectOrder);
 }
 
 // The config server's entire coupling to this daemon. Two functions, so the
@@ -863,6 +886,11 @@ const configDeps = {
     // Immediately rather than on the next poll, so a pick survives a daemon
     // killed a second later. persistAccents' snapshot makes that poll's own
     // call a no-op.
+    persistAccents();
+  },
+  reorder: (folder, before) => {
+    moveProject(projectOrder, folder, before);
+    reindexProjects();
     persistAccents();
   },
 };
@@ -1122,7 +1150,8 @@ async function run() {
   activeDeck = deck;
   // Read here rather than at module scope: importing this file must not touch
   // the real ~/.claude, or every check inherits this machine's live palette.
-  loadAccents(readAccents());
+  const remembered = readProjects();
+  loadAccents(remembered.accents, remembered.order);
   // Which build is driving the deck — worth stating, since a worktree and the
   // main checkout can each be started against the same device.
   console.log(`claude-streamdeck v${pkg.version} — connected to ${deck.PRODUCT_NAME}`);
