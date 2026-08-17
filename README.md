@@ -29,9 +29,23 @@ past 13 are dropped.
 - **Attention** (next to it) — how many sessions are blocked on you and how long
   the worst one has waited. Dark and quiet when there's nothing to do.
 
+Each project gets a colour bar naming it, and keeps that colour — across the
+session and across restarts. It's remembered in
+`~/.claude/streamdeck-accents.json`; delete that file and every project is
+simply assigned a fresh colour the next time it's seen.
+
+To choose the colours yourself, press the usage key for the stats board, then
+the **⚙ CONFIG** key next to the back arrow. A page opens in your browser
+listing every open project; pick one of the eight accents and the deck updates
+within two seconds. If another open project already wears it, the two swap —
+so no two projects on the board are ever the same colour. The page is served
+by the daemon on localhost, only while it's running, and only reachable with
+the token in the URL it just opened.
+
 The daemon is read-only: it polls the files Claude Code already writes under
 `~/.claude/` every two seconds and redraws what changed. No hooks, no config
-file, nothing written back.
+file, nothing written back except its own notes to itself and to the VS Code
+extension.
 
 ## The other three boards
 

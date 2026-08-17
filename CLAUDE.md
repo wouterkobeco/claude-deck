@@ -18,6 +18,7 @@ npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run vscode-state-check   # which window's storage answers for a folder
 npm run extension-check      # whose window a focus request is for
 npm run remote-install-check # what remote:install decides before it writes
+npm run config-check   # config server: token gate, validation, HTML escaping
 npm run remote:install -- <host>  # status line on a remote host, for its gauge
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
@@ -198,6 +199,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   stretch. Every other signal in that scan stops at its first hit going
   backwards, which a tail can only help; this is the one that has to know it
   saw the whole file.
+  **The third route to `CLEAR` needs no transcript at all: a body with nothing
+  in it that the caps bar doesn't already say.** Claude Code always has *a*
+  session name — until there's something worth summarising it derives one from
+  the cwd (`kob-portal2-01`, `nameSource: "derived"`) and swaps in a real one
+  later — so the `aiTitle ?? name ?? cwd` chain in `keyFields` always found
+  something and the two flags above were the only way a key ever went quiet.
+  A derived name is not a title, and a cwd basename equal to the project is the
+  caps bar twice; both are dropped, which leaves the blank the flags produce and
+  `renderKey` draws the same word. **The cwd rung is kept when it differs**:
+  a worktree's cwd is the only thing telling two of one project's keys apart
+  before either has a title. `nameSource` is carried through `sessions.mjs`
+  purely so the placeholder can be told from a name somebody chose.
 - **"idle" can mean "asked you for permission and is waiting."** Claude
   Code's session `status` reports a turn that ends right after an auto-mode
   permission denial exactly the same as any other completed turn: `idle`.
@@ -357,6 +370,60 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   something nobody opened. Published through `liveSessions()` in `index.mjs`,
   which wraps every `getLiveSessions` call site, so the file is written on every
   poll rather than only on the polls of whichever board happens to be up.
+- `src/accents.mjs` — the daemon's third write and its only piece of memory:
+  `~/.claude/streamdeck-accents.json`, a `folderKey -> #hex` map so a project
+  wears the same accent after a restart. Two functions, both best-effort — an
+  unreadable file is a first run, a failed write is a restart that forgets —
+  and both take `root` as a default parameter, the shape `sessions.mjs` uses,
+  so `slots-check` round-trips them through a tmp dir. The read is called from
+  `run()`, never at module scope: importing `index.mjs` must not touch the real
+  `~/.claude`, or every check inherits this machine's live palette. `readAccents`
+  drops non-string values rather than trusting the file — a half-written or
+  hand-edited one would otherwise put whatever it holds straight into an SVG
+  fill attribute. See the read-only invariant below for why the map it seeds is
+  not what `claimAccent` treats as taken.
+  It also owns `ACCENTS` — moved here from `index.mjs` because
+  `config-server.mjs` needs the palette and `index.mjs` needs `openConfig` from
+  `config-server.mjs`, and one of those edges has to not exist. `index.mjs`
+  re-exports it, so `colors-check` and `slots-check` import it from there
+  unchanged.
+  **`applyAccentChoice` is the config page's mutation, and it is pure and lives
+  here for the same reason `persistAccents` lives in `index.mjs`**: that
+  function writes the real `~/.claude` file with no root argument, so an
+  exported mutator that persisted would clobber this machine's accents with
+  fixture folders on every check run. It trades with a *live* owner and
+  **deletes** a closed one — handing a colour to something that isn't on the
+  board is invisible, and leaving the duplicate means the collision rule
+  resolves that folder's return by `readdir` order, silently taking a
+  deliberate choice back days later. Because of that delete, a manual pick can
+  never create the duplicate `assignSlots` exists to resolve.
+- `src/config-server.mjs` — the config page: a local web UI, served by the
+  daemon on loopback and opened from the stats board's config key, for setting
+  which accent each live project wears. **Server-rendered HTML with form POSTs,
+  not a JSON API**, and the deciding reason is this repo's quality model rather
+  than taste: a POST handler is checkable by a real server on port 0 and a real
+  `fetch`, while client JS inside a template literal is the one thing here that
+  nothing can lint, import or run. Its whole coupling to the daemon is a `deps`
+  object of `projects()` and `setAccent()`, so when drag-to-reorder needs real
+  interactivity the page renderer is rewritten without touching `index.mjs` —
+  and colour picking moves onto that same flow in the same pass, so the page
+  never runs two paradigms at once.
+  The trust boundary is not simplified: loopback bind, a per-server
+  `randomUUID` checked **before** routing (so an unknown path without a token
+  answers 403 rather than confirming the path is unknown), both fields
+  validated against closed sets — the palette by exact string match, not
+  "looks like hex", because `colors-check`'s floors cover those eight values
+  and nothing else — a 4KB body cap, and `Referrer-Policy: no-referrer` on
+  every response because the token is in the URL.
+  **`esc()` is the full five-entity escape, not tags only.** The hidden
+  `folder` field is *attribute* context, where a `"` breaks out with no `<`
+  involved, and a folder key is another machine's string for a remote project
+  — the same untrusted-input class as `isPathSafeId`. `config-check` covers
+  that case specifically, because a tag-only escaper passes both `<script>`
+  assertions and still fails it.
+  Over the body cap the reader discards and drains rather than calling
+  `req.destroy()`: a killed socket reaches the browser as a network error
+  rather than as the refusal it is. That cost a debugging round the first time.
 - `extension/` — the other half, plain CommonJS with no build step and no
   dependencies, installed by copying it into `~/.vscode/extensions` (a line
   count isn't pinned here for the same reason it isn't for `src/`: it goes
@@ -485,14 +552,41 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   repaints it for real regardless of what pulse left behind.
 - **Read-only, two install steps.** No hooks, no `settings.json` writes, no
   config file. The daemon reads from `~/.claude/`, VS Code's storage and the
-  usage endpoint, and writes two files into it: `~/.claude/streamdeck-focus.json`,
-  the terminal-focus request, and `~/.claude/streamdeck-sessions.json`, the live
-  session list the extension's restore command remembers (`publish-sessions.mjs`).
-  Both are the same shape of thing — one file, rewritten in place, no reader
-  addressing, every window reads it and keeps what is its own — and both are
-  best-effort in the same way: a window that finds neither behaves as it did
-  before either existed. It was one file until the restore command needed the
-  daemon's remote reach, which is the bar for a third.
+  usage endpoint, and writes three files into it. Two are messages to the
+  extension: `~/.claude/streamdeck-focus.json`, the terminal-focus request, and
+  `~/.claude/streamdeck-sessions.json`, the live session list the extension's
+  restore command remembers (`publish-sessions.mjs`). Both are the same shape of
+  thing — one file, rewritten in place, no reader addressing, every window reads
+  it and keeps what is its own — and both are best-effort in the same way: a
+  window that finds neither behaves as it did before either existed. It was one
+  file until the restore command needed the daemon's remote reach, which is the
+  bar for a third.
+  **The third is the daemon's own memory, read by nothing but the next run of
+  the daemon**: `~/.claude/streamdeck-accents.json` (`accents.mjs`), which
+  folder wore which accent. `folderOrder` rebuilds first-seen on every start, so
+  a project reclaims its slot after a restart — but its *colour* was re-picked
+  from scratch in `readdir` order, so half the board's identity survived a
+  restart and half didn't. It is still not a config file: nothing in it is
+  meant to be hand-edited, and a value nobody typed can always be thrown away,
+  which is why every failure path reads as a first run.
+  **What is remembered is not what is enforced.** `claimAccent`'s `taken` set
+  is *live* folders only, never the file — with eight accents, honouring every
+  remembered colour would leave every ninth project ever seen on the modulo
+  fallback, and twenty projects sharing eight accents works precisely because
+  only the ones on the board at once have to differ. The cost is a case that
+  could not happen before: two folders that were never live together can each
+  have remembered the same colour, and `assignSlots` resolves that the moment
+  they meet — first one processed keeps it, the later one re-claims and the
+  re-claim is written back, so the loser settles rather than flipping every
+  poll.
+  **The daemon also listens, but only after you ask it to.** Pressing the
+  stats board's config key starts a loopback HTTP server (`config-server.mjs`)
+  that lives for the daemon's remaining life — the one thing here that accepts
+  a connection rather than reading a file. It still writes only its three
+  files: the page's one mutation goes through `applyAccentChoice` and
+  `persistAccents`, into the accents file that already existed. The port does
+  not exist until the press, which is why there is no off switch for it the
+  way `STREAMDECK_NO_REMOTE=1` is one for ssh.
   There is another file in this feature and the daemon does **not** write it:
   `~/.claude/streamdeck-windows/<pid>.json` is published by the extension and
   only read here. Keep it that way — a daemon that deletes files it did not

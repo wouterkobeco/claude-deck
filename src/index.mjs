@@ -10,6 +10,7 @@ import { cachedSources, remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
+import { openConfig } from "./config-server.mjs";
 import { ACCENTS, applyAccentChoice, readAccents, writeAccents } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
@@ -85,12 +86,37 @@ function allSources() {
   return [localSource(), ...cachedSources(windows, remoteMemo)];
 }
 
+// Every folder with a live session: what the config page lists, and what the
+// accent swap searches for a colour's current owner.
+//
+// Rebuilt in liveSessions() rather than in assignSlots, which runs only from
+// refresh() — i.e. only on sessions-board polls. A config page left open while
+// you toggle to the stats or detail board would otherwise be picking against a
+// frozen set, and a project that appeared since would be invisible to the
+// owner search, minting exactly the live-live duplicate the swap exists to
+// prevent.
+//
+// All live folders, not the visible 13: a project past the slot cap has no key
+// yet but will, and it must not be invisible to that search. attentionQueue is
+// passed the whole session list for the same reason.
+const liveProjects = new Map();
+
 // The single session read, so that publishing the list for the extension's
 // restore command happens on every poll rather than on the polls of whichever
 // board happens to be up. Every branch of the loop reads sessions; only this
 // one writes them out.
 async function liveSessions() {
   const sessions = await getLiveSessions(allSources());
+  liveProjects.clear();
+  for (const s of sessions) {
+    if (s.nested) continue;
+    const key = folderKeyFor(s);
+    // The same basename the key's caps bar shows: a project is named by its
+    // window's folder, never by a session's cwd.
+    if (!liveProjects.has(key)) {
+      liveProjects.set(key, { name: s.folder.split("/").filter(Boolean).pop() ?? "", host: s.host ?? null });
+    }
+  }
   // Not awaited: the file is for a window that has not restarted yet, so it is
   // never worth a frame. void-and-catch for the same reason as above — an
   // unwatched rejection would take the daemon down, and this one can only be a
@@ -348,6 +374,12 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   // later one re-claims, first-seen like everything else here. The re-claim is
   // written back into the map rather than applied per poll, so the loser
   // settles on its new colour instead of flipping every 2s.
+  //
+  // A manual pick from the config page cannot reach this: `applyAccentChoice`
+  // trades with a live owner and deletes a closed one, so the duplicate never
+  // enters the map. What is left here is two remembered claims that were never
+  // live together, where an arbitrary winner is fine — which is not true of a
+  // deliberate choice, hence that delete.
   const used = new Set();
   for (const s of real) {
     const key = folderKeyFor(s);
@@ -470,6 +502,13 @@ function keyFields(session) {
 // starts at 10. The detail board takes over the whole deck — usage and
 // attention keys included — so it owes you an unambiguous way out.
 export const DETAIL_BACK_INDEX = 10;
+
+// The stats board's way in to the config page, beside the back key on the
+// bottom-left row — the tile list reaches index 9, so 11 and 12 are the two
+// buttons it never fills. Assigned by index rather than spliced, for the same
+// reason the back key is: an unreadable stats cache makes the list short, and
+// the way in must not move.
+export const CONFIG_INDEX = 11;
 
 /**
  * Does this press mean "tell me more" about the session it lands on?
@@ -734,9 +773,12 @@ async function refreshStats(deck, buttons, stats) {
       // as every other refresh*.
       const drawn = `stat ${JSON.stringify(stat)}`;
       if (btn.drawn === drawn) return;
-      // One tile in the list isn't a stat: the back key, spliced in at
-      // DETAIL_BACK_INDEX by the caller the same way the detail board does it.
-      const render = stat.kind === "back" ? renderBack : renderStat;
+      // Two tiles in the list aren't stats: the back key and the config key,
+      // both assigned at fixed indices by the caller the same way the detail
+      // board does it. They carry their own glyph/caps, which `...stat` hands
+      // straight to renderBack — and which JSON.stringify(stat) above already
+      // signs, so neither needs a branch of its own here.
+      const render = stat.kind === "back" || stat.kind === "config" ? renderBack : renderStat;
       await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...stat, big: true }), { format: "rgba" });
       btn.drawn = drawn;
     })
@@ -788,8 +830,11 @@ async function refreshAttention(deck, buttons, attentionButton) {
 
 // Written from here rather than from assignSlots, which is exported and called
 // by slots-check — a check that assigned an accent would write this machine's
-// real file. Only on change, which in practice means the poll a new project
-// first appears on: the map is otherwise the same every 2s. Synchronous
+// real file. The same reason keeps the config page's swap pure and over in
+// accents.mjs: `applyAccentChoice` is exported and checked, this is neither.
+// Only on change, which means the poll a new project first appears on plus
+// every manual pick from that page; the map is otherwise the same every 2s.
+// Synchronous
 // because it is a few hundred bytes that rarely move; if this ever grows
 // enough to be worth a frame, it is the wrong file.
 let lastAccentsWritten = null;
@@ -799,6 +844,28 @@ function persistAccents() {
   lastAccentsWritten = snapshot;
   writeAccents(folderAccent);
 }
+
+// The config server's entire coupling to this daemon. Two functions, so the
+// page can be rewritten — drag-to-reorder, when it lands — without touching
+// anything here, and so config-check can drive the real server with fakes.
+const configDeps = {
+  projects: () =>
+    [...liveProjects]
+      .map(([key, p]) => ({ key, name: p.name, host: p.host, accent: accentFor(key) }))
+      // ?? Infinity, not a bare subtraction: assignSlots is what fills
+      // folderOrder and it runs only on sessions-board polls, so a project
+      // that appeared while the stats board was up has no position yet.
+      // undefined - undefined is NaN, and a comparator returning NaN sorts
+      // arbitrarily rather than failing.
+      .sort((a, b) => (folderOrder.get(a.key) ?? Infinity) - (folderOrder.get(b.key) ?? Infinity)),
+  setAccent: (folder, accent) => {
+    applyAccentChoice(folderAccent, new Set(liveProjects.keys()), folder, accent);
+    // Immediately rather than on the next poll, so a pick survives a daemon
+    // killed a second later. persistAccents' snapshot makes that poll's own
+    // call a no-op.
+    persistAccents();
+  },
+};
 
 async function refresh(deck, buttons, slots, nestedBySlot) {
   const sessions = await liveSessions();
@@ -1185,9 +1252,19 @@ async function run() {
       return;
     }
     if (view.kind === "stats") {
-      // Stat tiles aren't clickable; the back key is, same as on the detail
-      // board. (The usage key still toggles the board off, handled above.)
+      // Stat tiles aren't clickable; the back key and the config key are.
+      // (The usage key still toggles the board off, handled above.)
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
+      if (control.index === CONFIG_INDEX) {
+        // Not awaited, and it cannot throw: a press is a synchronous handler,
+        // and openConfig swallows everything the way every other risky path
+        // here does.
+        void openConfig(configDeps);
+        // Back to the sessions board on the way out. The browser takes focus
+        // anyway, and watching the accents change on the real keys is the only
+        // place the choice actually reads.
+        setView({ kind: "sessions" });
+      }
       lastPress = null;
       return;
     }
@@ -1229,6 +1306,7 @@ async function run() {
         // index rather than spliced: with an unreadable stats cache the list
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
+        statTiles[CONFIG_INDEX] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
         await refreshStats(deck, buttons, statTiles);
         attentionCount = await drawAttention(deck, attentionButton, await liveSessions(), false);
       } else if (view.kind === "attention") {
