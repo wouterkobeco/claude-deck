@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { validHost } from "../src/window-state.mjs";
 import { sshArgs } from "../src/remote-fs.mjs";
 
@@ -48,8 +49,49 @@ fi
 printf '%s' "$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')"
 `;
 
-const host = validHost(process.argv[2]);
-if (!host) {
+/**
+ * Everything this needs to know about a host, in one round trip, before
+ * anything is written.
+ *
+ * Takes its directory from `$CLAUDE_DIR` so the check can point it at a fixture
+ * and run it under a real shell. What this makes is a *shell* decision, and a
+ * check that asserted the string instead would have passed just as happily
+ * while the semantics were wrong.
+ *
+ * **`-s`, not `-e`.** A zero-byte `statusline-command.sh` is not a status line
+ * anyone wrote — it is a placeholder, a truncated write, or a `touch` — and
+ * refusing to install over it protects nothing while blocking the one command
+ * that would fix it. Seen for real: an empty executable appeared on a host that
+ * had none, with no `statusLine` key even referencing it, and the install
+ * refused itself out of a file with nothing in it.
+ */
+export const STATE_PROBE =
+  ': "${CLAUDE_DIR:=$HOME/.claude}"; ' +
+  'printf "jq=%s\\n" "$(command -v jq || echo NONE)"; ' +
+  'printf "script=%s\\n" "$([ -s "$CLAUDE_DIR/statusline-command.sh" ] && echo YES || echo NO)"; ' +
+  'printf "key=%s\\n" "$(jq -r \'if has("statusLine") then "YES" else "NO" end\' "$CLAUDE_DIR/settings.json" 2>/dev/null || echo UNKNOWN)"';
+
+// Split on the first `=` only: a value can contain one (jq's path, say).
+export function parseState(stdout) {
+  return Object.fromEntries(
+    stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        const at = l.indexOf("=");
+        return [l.slice(0, at), l.slice(at + 1)];
+      })
+  );
+}
+
+// Only when run as a command, never on import — the check imports STATE_PROBE
+// and parseState, and a module that exits on import cannot be checked. Same
+// guard `index.mjs` uses to stop an import starting a daemon.
+const isCommand = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+
+const host = isCommand ? validHost(process.argv[2]) : null;
+if (isCommand && !host) {
   console.error("usage: npm run remote:install -- <host>");
   console.error("       <host> is an ssh target, the same one the deck shows for that window.");
   if (process.argv[2]) console.error(`\nrefused ${JSON.stringify(process.argv[2])}: not a plain hostname.`);
@@ -65,19 +107,15 @@ const ssh = (command, input) =>
 async function main() {
   // Everything this needs to know about the host, in one round trip, before
   // anything is written.
-  const { stdout } = await ssh(
-    'printf "jq=%s\\n" "$(command -v jq || echo NONE)"; ' +
-      'printf "script=%s\\n" "$([ -e ~/.claude/statusline-command.sh ] && echo YES || echo NO)"; ' +
-      'printf "key=%s\\n" "$(jq -r \'if has("statusLine") then "YES" else "NO" end\' ~/.claude/settings.json 2>/dev/null || echo UNKNOWN)"'
-  );
-  const state = Object.fromEntries(stdout.trim().split("\n").map((l) => l.split("=")));
+  const { stdout } = await ssh(STATE_PROBE);
+  const state = parseState(stdout);
 
   if (state.jq === "NONE") {
     console.error(`${host}: no jq. The status line block parses Claude Code's JSON with it; install jq and re-run.`);
     process.exit(1);
   }
   if (state.script === "YES") {
-    console.error(`${host}: ~/.claude/statusline-command.sh already exists — not overwriting it.`);
+    console.error(`${host}: ~/.claude/statusline-command.sh already has content — not overwriting it.`);
     console.error("Add the block from README.md's context-gauge section to it by hand instead.");
     process.exit(1);
   }
@@ -127,7 +165,9 @@ async function main() {
   console.log("Its context gauge appears once that host writes its first ctx file — a session there has to take a turn.");
 }
 
-main().catch((err) => {
-  console.error(`${host}: install failed:`, err.stderr?.trim() || err.message);
-  process.exit(1);
-});
+if (isCommand) {
+  main().catch((err) => {
+    console.error(`${host}: install failed:`, err.stderr?.trim() || err.message);
+    process.exit(1);
+  });
+}

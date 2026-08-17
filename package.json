@@ -24,7 +24,8 @@
     "board-shot": "node scripts/board-shot.mjs",
     "vscode-state-check": "node scripts/vscode-state-check.mjs",
     "extension-check": "node scripts/extension-check.mjs",
-    "remote:install": "node scripts/remote-install.mjs"
+    "remote:install": "node scripts/remote-install.mjs",
+    "remote-install-check": "node scripts/remote-install-check.mjs"
   },
   "keywords": [
     "claude-code",
