@@ -32,22 +32,29 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ENTITIES[c]);
 const STYLE = `
   :root { color-scheme: dark }
   body { background:#121212; color:#e0e0e0; font-family:-apple-system,sans-serif;
-         margin:0; padding:32px }
+         margin:0; padding:32px; box-sizing:border-box; min-height:100vh; display:flex }
+  /* margin:auto on the flex item, not justify/align-content on the container:
+     both centre, but the container versions clip the overflowing edge once the
+     list is taller than the window, and the top rows become unreachable. */
+  main { width:100%; max-width:520px; margin:auto }
   h1 { font-size:15px; letter-spacing:.18em; text-transform:uppercase;
        color:#9e9e9e; font-weight:600; margin:0 0 24px }
-  .row { margin:0 0 20px; max-width:520px }
+  .row { margin:0 0 20px }
   /* The drop line. A box-shadow rather than a border so the row doesn't
      change height as it appears — a list that shifts under the pointer while
      you aim at it is the one thing a drop indicator must not do. */
   .row.above { box-shadow:0 -2px 0 #ffffff }
   .row.below { box-shadow:0 2px 0 #ffffff }
-  .head { display:flex; align-items:stretch }
-  .handle { cursor:grab; color:#616161; padding:6px 10px 6px 0; font-size:15px;
-            line-height:1; user-select:none }
+  .bar { display:flex; align-items:center; gap:8px; padding:6px 10px;
+         border-radius:4px 4px 0 0; color:#000000bb; font-size:12px;
+         font-weight:700; letter-spacing:.12em; text-transform:uppercase }
+  /* Inside the bar, so it wears the project's own colour rather than sitting
+     in the page's grey — dark on the accent like the caps beside it, since
+     every accent is light by construction. letter-spacing is reset because the
+     bar's tracking is for caps text and just pushes the glyph off centre. */
+  .handle { cursor:grab; color:#00000088; font-size:15px; line-height:1;
+            letter-spacing:0; user-select:none }
   .handle:active { cursor:grabbing }
-  .bar { flex:1; padding:6px 10px; border-radius:4px 4px 0 0; color:#000000bb;
-         font-size:12px; font-weight:700; letter-spacing:.12em;
-         text-transform:uppercase }
   .key { background:#1b1b1b; padding:5px 10px; font-size:11px; color:#757575;
          font-family:ui-monospace,monospace; word-break:break-all }
   .swatches { display:flex; gap:6px; margin-top:8px }
@@ -63,9 +70,9 @@ function page(token, projects) {
       (p) => `
     <form class="row" data-key="${esc(p.key)}" method="post" action="/accent?t=${esc(token)}">
       <input type="hidden" name="folder" value="${esc(p.key)}">
-      <div class="head">
+      <div class="bar" style="background:${esc(p.accent)}">
         <span class="handle" draggable="true" title="drag to reorder">⠿</span>
-        <div class="bar" style="background:${esc(p.accent)}">${esc(p.name)}</div>
+        <span>${esc(p.name)}</span>
       </div>
       <div class="key">${esc(p.key)}</div>
       <div class="swatches">${ACCENTS.map(
@@ -78,9 +85,11 @@ function page(token, projects) {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
     <style>${STYLE}</style></head><body>
-    <h1>Projects</h1>
-    <p class="hint">Topmost is the first block on the deck. Drag a handle to reorder.</p>
-    ${rows || '<p class="empty">nothing on the board right now</p>'}
+    <main>
+      <h1>Projects</h1>
+      <p class="hint">Topmost is the first block on the deck. Drag a handle to reorder.</p>
+      ${rows || '<p class="empty">nothing on the board right now</p>'}
+    </main>
     <script>${SCRIPT}</script>
     </body></html>`;
 }
