@@ -62,7 +62,68 @@ const STYLE = `
            cursor:pointer; padding:0 }
   button.on { border-color:#ffffff }
   .empty, .hint { color:#757575 }
-  .hint { font-size:12px; margin:-14px 0 24px }`;
+  .hint { font-size:12px; margin:-14px 0 24px }
+  nav { margin:0 0 24px; font-size:12px }
+  nav a { color:#4fc3f7; text-decoration:none; margin-right:16px }
+  nav a.on { color:#e0e0e0; font-weight:700 }
+  table { border-collapse:collapse; width:100%; font-size:13px }
+  th { text-align:left; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+       color:#757575; font-weight:600; padding:0 12px 8px 0 }
+  td { padding:7px 12px 7px 0; border-top:1px solid #262626;
+       font-variant-numeric:tabular-nums }
+  td.project { font-weight:600 }
+  /* The column the page exists for: time this project spent blocked on you.
+     Applied per cell rather than per column, so an em dash for "none today"
+     stays grey — colouring a zero draws the eye to the wrong row. */
+  td.blocked { color:#ff8a65 }
+  h2 { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#757575;
+       font-weight:600; margin:28px 0 10px }`;
+
+const nav = (token, here) =>
+  `<nav>${[
+    ["/", "Accents"],
+    ["/history", "Time"],
+  ]
+    .map(([href, name]) =>
+      href === here
+        ? `<a class="on" href="${href}?t=${esc(token)}">${name}</a>`
+        : `<a href="${href}?t=${esc(token)}">${name}</a>`
+    )
+    .join("")}</nav>`;
+
+// Rows arrive with their durations already formatted. index.mjs owns the
+// summarising and the clock; this file owns the markup, and keeping the split
+// there is what lets config-check drive the page with three fixed strings
+// instead of reconstructing a day of history.
+function historyPage(token, rows) {
+  const table = (period) => `
+    <table>
+      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th></tr>
+      ${rows
+        .map(
+          (r) => `<tr>
+        <td class="project">${esc(r.name)}</td>
+        <td>${esc(r[period].busy)}</td>
+        <td>${esc(r[period].waiting)}</td>
+        <td${r[period].blocked === "—" ? "" : ' class="blocked"'}>${esc(r[period].blocked)}</td>
+      </tr>`
+        )
+        .join("")}
+    </table>`;
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
+    <style>${STYLE}</style></head><body>
+    <main>
+      <h1>Where the time goes</h1>
+      ${nav(token, "/history")}
+      ${
+        rows.length === 0
+          ? '<p class="empty">no history recorded yet</p>'
+          : `<h2>Today</h2>${table("today")}<h2>Last 7 days</h2>${table("week")}`
+      }
+    </main>
+    </body></html>`;
+}
 
 function page(token, projects) {
   const rows = projects
@@ -87,6 +148,7 @@ function page(token, projects) {
     <style>${STYLE}</style></head><body>
     <main>
       <h1>Projects</h1>
+      ${nav(token, "/")}
       <p class="hint">Topmost is the first block on the deck. Drag a handle to reorder.</p>
       ${rows || '<p class="empty">nothing on the board right now</p>'}
     </main>
@@ -242,6 +304,10 @@ export async function createConfigServer(deps) {
 
       if (req.method === "GET" && url.pathname === "/") {
         return send(res, 200, page(token, deps.projects()), "text/html; charset=utf-8");
+      }
+
+      if (req.method === "GET" && url.pathname === "/history") {
+        return send(res, 200, historyPage(token, deps.history()), "text/html; charset=utf-8");
       }
 
       if (req.method === "POST" && url.pathname === "/accent") {

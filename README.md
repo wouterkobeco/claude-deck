@@ -42,6 +42,13 @@ so no two projects on the board are ever the same colour. The page is served
 by the daemon on localhost, only while it's running, and only reachable with
 the token in the URL it just opened.
 
+The page's **Time** tab answers where the day went: time each project spent
+working, waiting, and blocked on you, for today and the last 7 days. The
+daemon has always watched every session's state every two seconds — this just
+stops throwing it away. It's kept in `~/.claude/streamdeck-history.jsonl` for
+30 days; delete it and the tables start again from empty. Today's total
+blocked time also gets a tile on the stats board.
+
 The same page reorders the board. Drag a project by its **⠿** handle and drop
 it where you want; a line shows where it will land. Topmost is the first block
 on the deck — top-left key — and a project's sessions always stay together in

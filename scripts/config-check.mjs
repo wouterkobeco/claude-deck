@@ -163,10 +163,47 @@ eq((await drop(ALPHA, ALPHA, "below")).status, 303, "dropping a row on itself is
 eq(moves.length, 0, "and moves nothing");
 withOrder.server.close();
 
+// The history page. Rows arrive already formatted — index.mjs owns the
+// summarising and the clock, this file owns the markup — so the check renders
+// a table from fixed strings rather than reconstructing a day of transitions.
+const historyRows = [
+  { key: ALPHA, name: "alpha", today: { busy: "3h12m", waiting: "41m", blocked: "18m" }, week: { busy: "9h", waiting: "2h", blocked: "51m" } },
+  { key: NASTY, name: '<script>"x', today: { busy: "—", waiting: "—", blocked: "—" }, week: { busy: "4m", waiting: "—", blocked: "—" } },
+];
+const withHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, history: () => historyRows });
+const hBase = new URL(withHistory.url).origin;
+const hToken = new URL(withHistory.url).searchParams.get("t");
+
+eq((await fetch(`${hBase}/history`)).status, 403, "the history page is behind the same token");
+const hPage = await fetch(`${hBase}/history?t=${hToken}`);
+eq(hPage.status, 200, "and is served with it");
+const hHtml = await hPage.text();
+eq(hHtml.includes("3h12m"), true, "today's numbers reach the table");
+eq(hHtml.includes("9h"), true, "and the week's");
+// Both tables render the same rows, so every row appears twice.
+eq(hHtml.split('class="project"').length - 1, 4, "two rows in each of the two tables");
+// A project name is untrusted here for exactly the reason it is on the other
+// page, and this table is a second place it reaches the document.
+eq(hHtml.split("<script>").length - 1, 0, "a folder named <script> does not reach the history page as a tag");
+eq(hHtml.includes("&lt;script&gt;"), true, "it is escaped there too");
+// The blocked column is coloured to draw the eye to real blocked time, so a
+// row with none must not wear it. Four blocked cells across the two tables:
+// alpha has a value in both, the second row is an em dash in both.
+eq(hHtml.split('class="blocked"').length - 1, 2, "an em dash in the blocked column is not coloured");
+
+const emptyHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, history: () => [] });
+eq(
+  (await (await fetch(new URL(emptyHistory.url).origin + "/history?t=" + new URL(emptyHistory.url).searchParams.get("t"))).text()).includes("no history recorded yet"),
+  true,
+  "no history says so rather than rendering an empty table"
+);
+emptyHistory.server.close();
+withHistory.server.close();
+
 // An empty board says so rather than rendering an empty page.
 const { server: empty, url: emptyUrl } = await createConfigServer({ projects: () => [], setAccent: () => {} });
 eq((await (await fetch(emptyUrl)).text()).includes("nothing on the board"), true, "an empty board says so");
 empty.close();
 
 server.close();
-console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder");
+console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, history page");

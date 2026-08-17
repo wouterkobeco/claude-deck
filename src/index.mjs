@@ -11,6 +11,7 @@ import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { openConfig } from "./config-server.mjs";
+import { readHistory, recordStates, startOfDay, summarise, trimHistory } from "./history.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
@@ -134,7 +135,27 @@ async function liveSessions() {
   // unwatched rejection would take the daemon down, and this one can only be a
   // filesystem that isn't answering.
   void publishSessions(sessions).catch(() => {});
+  recordHistory(sessions);
   return sessions;
+}
+
+// State-history capture, hung off the one session read so it happens on every
+// poll rather than on the polls of whichever board is up — the same reasoning
+// publishSessions is here for. Only writes when something changed.
+const lastStates = new Map();
+let historyDay = 0;
+function recordHistory(sessions) {
+  const now = Date.now();
+  recordStates(sessions, lastStates, now);
+  // Trimming is a whole-file rewrite, so it runs at startup (historyDay starts
+  // at 0) and then once per local day — not on a timer, and never on a poll
+  // that isn't already crossing a boundary the summary computes anyway.
+  const today = startOfDay(now);
+  if (today !== historyDay) {
+    historyDay = today;
+    const dropped = trimHistory(now);
+    if (dropped) console.error(`history: dropped ${dropped} records past the retention window`);
+  }
 }
 
 // Colour is picked from what no other live folder is using, not from
@@ -533,6 +554,25 @@ export const DETAIL_BACK_INDEX = 10;
 // the way in must not move.
 export const CONFIG_INDEX = 11;
 
+// The stats board's last free slot. With this, all 13 are spoken for — an
+// eighth stats tile would now land under the config key rather than merely
+// under the back key.
+export const BLOCKED_TODAY_INDEX = 12;
+
+/**
+ * Today's total time blocked on you, across every project, as a stat value.
+ *
+ * Read per stats-board poll rather than kept live: the board refreshes every
+ * 2s and the file is a few hundred KB at most, against a 30-day cap. If that
+ * stops being true it wants a cache, not a different source.
+ */
+function blockedToday() {
+  const now = Date.now();
+  const totals = summarise(readHistory(), now, startOfDay(now));
+  const ms = Object.values(totals).reduce((sum, states) => sum + (states.requires_action ?? 0), 0);
+  return ms < 60000 ? "0m" : formatAge(ms / 1000);
+}
+
 /**
  * Does this press mean "tell me more" about the session it lands on?
  *
@@ -892,6 +932,36 @@ const configDeps = {
     moveProject(projectOrder, folder, before);
     reindexProjects();
     persistAccents();
+  },
+  // Formatted here rather than in the page: config-server.mjs owns markup and
+  // nothing else, which is what lets config-check render the table from three
+  // fixed strings instead of reconstructing a day of history.
+  //
+  // Every project the history knows, not just the live ones — the question is
+  // where the week went, and a project you closed an hour ago is exactly the
+  // kind of answer that would go missing. Ordered by today's blocked time,
+  // because that is the column the page exists for.
+  history: () => {
+    const now = Date.now();
+    const records = readHistory();
+    const today = summarise(records, now, startOfDay(now));
+    const week = summarise(records, now, now - 7 * 86400000);
+    const dur = (ms) => (!ms || ms < 60000 ? "—" : formatAge(ms / 1000));
+    const cell = (states = {}) => ({
+      busy: dur((states.busy ?? 0) + (states.shell ?? 0)),
+      waiting: dur(states.waiting),
+      blocked: dur(states.requires_action),
+    });
+    return [...new Set([...Object.keys(today), ...Object.keys(week)])]
+      .filter(Boolean)
+      .map((key) => ({
+        key,
+        name: liveProjects.get(key)?.name ?? key.split("/").filter(Boolean).pop() ?? key,
+        today: cell(today[key]),
+        week: cell(week[key]),
+        blockedMs: today[key]?.requires_action ?? 0,
+      }))
+      .sort((a, b) => b.blockedMs - a.blockedMs);
   },
 };
 
@@ -1398,6 +1468,10 @@ async function run() {
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         statTiles[CONFIG_INDEX] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
+        // The last free slot. Today's blocked total is the one history number
+        // worth a glance — the rest is a table, and a table belongs on the
+        // config page.
+        statTiles[BLOCKED_TODAY_INDEX] = { label: "Blocked today", value: blockedToday() };
         await refreshStats(deck, buttons, statTiles);
         attentionCount = await drawAttention(deck, attentionButton, await liveSessions(), false);
       } else if (view.kind === "attention") {

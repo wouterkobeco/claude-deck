@@ -26,7 +26,8 @@
     "extension-check": "node scripts/extension-check.mjs",
     "remote:install": "node scripts/remote-install.mjs",
     "remote-install-check": "node scripts/remote-install-check.mjs",
-    "config-check": "node scripts/config-check.mjs"
+    "config-check": "node scripts/config-check.mjs",
+    "history-check": "node scripts/history-check.mjs"
   },
   "keywords": [
     "claude-code",

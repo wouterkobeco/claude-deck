@@ -19,6 +19,7 @@ npm run vscode-state-check   # which window's storage answers for a folder
 npm run extension-check      # whose window a focus request is for
 npm run remote-install-check # what remote:install decides before it writes
 npm run config-check   # config server: token gate, validation, HTML escaping
+npm run history-check  # state log: change-only records, durations, retention
 npm run remote:install -- <host>  # status line on a remote host, for its gauge
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
@@ -459,6 +460,32 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   resolves that folder's return by `readdir` order, silently taking a
   deliberate choice back days later. Because of that delete, a manual pick can
   never create the duplicate `assignSlots` exists to resolve.
+- `src/history.mjs` — where the time goes: an append-only log of every session
+  state change, and the per-project totals read back out of it. The daemon has
+  watched every session's state every 2s since it was written and persisted
+  none of it — nothing else on this machine has that view (`stats.mjs`'
+  all-time numbers are another tool's cache), so "which project ate an hour of
+  waiting for me to approve things" was unanswerable from data passing through
+  here thirty times a minute.
+  **A fourth file** (`~/.claude/streamdeck-history.jsonl`) rather than another
+  key in the accents record: an append log with its own retention and its own
+  reader is exactly the bar the read-only invariant sets for adding one.
+  `recordStates` writes **only on change**, so a session busy for an hour is
+  one record rather than 1,800, and it emits a `gone` record when a session
+  disappears — without that, the final state of every session that ever ran
+  counts up to `now` forever. Nested sessions are skipped: a subagent's time
+  already reaches its project through its parent's own state, and counting both
+  double-counts every minute a parent spent waiting on one.
+  `summarise` takes `now` as an argument rather than reading the clock, because
+  the last record of a live session is an **open interval** that runs to now —
+  the one place this would silently start lying (get it wrong and every current
+  session contributes zero, which reads as "nothing happened today"), and the
+  reason it has to be reproducible for a check. Intervals are clipped to the
+  window, so a session busy since yesterday owes today only today's share, and
+  everything is attributed **by folder**: session ids are ephemeral and the
+  question is about projects. Trimming is a whole-file rewrite, so it runs at
+  startup and then once per local day, off the day boundary the summary already
+  computes.
 - `src/config-server.mjs` — the config page: a local web UI, served by the
   daemon on loopback and opened from the stats board's config key, for setting
   which accent each live project wears. **Server-rendered HTML with form POSTs,
@@ -670,7 +697,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   repaints it for real regardless of what pulse left behind.
 - **Read-only, two install steps.** No hooks, no `settings.json` writes, no
   config file. The daemon reads from `~/.claude/`, VS Code's storage and the
-  usage endpoint, and writes three files into it. Two are messages to the
+  usage endpoint, and writes four files into it. Two are messages to the
   extension: `~/.claude/streamdeck-focus.json`, the terminal-focus request, and
   `~/.claude/streamdeck-sessions.json`, the live session list the extension's
   restore command remembers (`publish-sessions.mjs`). Both are the same shape of
@@ -700,11 +727,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **The daemon also listens, but only after you ask it to.** Pressing the
   stats board's config key starts a loopback HTTP server (`config-server.mjs`)
   that lives for the daemon's remaining life — the one thing here that accepts
-  a connection rather than reading a file. It still writes only its three
-  files: the page's one mutation goes through `applyAccentChoice` and
+  a connection rather than reading a file. It writes nothing new of its own:
+  the page's mutations go through `applyAccentChoice`/`moveProject` and
   `persistAccents`, into the accents file that already existed. The port does
   not exist until the press, which is why there is no off switch for it the
   way `STREAMDECK_NO_REMOTE=1` is one for ssh.
+  **The fourth file is the first the daemon appends to on its own schedule**:
+  `~/.claude/streamdeck-history.jsonl` (`history.mjs`), written whenever a
+  session changes state rather than when you do something. Everything above it
+  is rewritten in place and says what is true now; this one accumulates and
+  says what was true, which is why it is the only one with a retention policy.
   There is another file in this feature and the daemon does **not** write it:
   `~/.claude/streamdeck-windows/<pid>.json` is published by the extension and
   only read here. Keep it that way — a daemon that deletes files it did not
