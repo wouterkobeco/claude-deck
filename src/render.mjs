@@ -250,14 +250,22 @@ export async function renderKey({ width, height, state, label, accent, project, 
   // is where time-in-state is legible.
   const caps = project ? fitCaps(project, width, capSize) : "";
   // Title zone: 3px of plain accent-coloured pad, an 8px row for the caps
-  // text, a 2px dark border on the bottom edge only — 13px fixed, not derived
+  // text, a dark border on the bottom edge only — 14px fixed, not derived
   // from capSize. The gauge, when known, eats that border rather than adding
   // its own height.
   const titleTopPad = 1;
   const titleBorder = 2;
   const titleTextRow = 8;
+  // The bottom border is the gauge's slot, and it is one pixel deeper than the
+  // border above the caps: the gauge is the smallest thing on the board that
+  // has to be read across a room, so the pixel buys more there than it does as
+  // the 4th body line's bottom margin. That's the whole trade — the header is
+  // 14 rather than 13 and the body starts a pixel lower, on every key rather
+  // than only the ones reporting context, or bodies would sit at two different
+  // heights across the board.
+  const gaugeTrack = titleBorder + 1;
   const titleHeight = project
-    ? titleTopPad + titleBorder + titleTextRow + titleBorder
+    ? titleTopPad + titleBorder + titleTextRow + gaugeTrack
     : Math.round(height * 0.12);
   const barHeight = accent ? titleHeight : 0;
   const fontSize = Math.round(height * 0.19);
@@ -365,10 +373,10 @@ export async function renderKey({ width, height, state, label, accent, project, 
         // would push a 4-line body off the bottom of the key.
         project
           ? typeof context === "number"
-            ? `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000cc" />
-               <rect y="${titleHeight - titleBorder + 1}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
+            ? `<rect y="${titleHeight - gaugeTrack}" width="${width}" height="${gaugeTrack}" fill="#000000cc" />
+               <rect y="${titleHeight - gaugeTrack + 1}" width="${(width * Math.min(100, Math.max(0, context))) / 100}"
                      height="${GAUGE_HEIGHT}" fill="${gaugeColor(context, contextPhase)}" />`
-            : `<rect y="${titleHeight - titleBorder}" width="${width}" height="${titleBorder}" fill="#000000aa" />`
+            : `<rect y="${titleHeight - gaugeTrack}" width="${width}" height="${gaugeTrack}" fill="#000000aa" />`
           : ""
       }
       ${
@@ -456,13 +464,16 @@ export function gaugeColor(pct, phase = 0) {
   return phase < 0.5 ? base : CONTEXT_FLASH;
 }
 
-// One thickness at every level. Red used to draw at 4px, because colour alone
+// One thickness at every level, and one pixel of it hangs below the header's
+// dark track onto the key's own background — the track is the row above the
+// fill, so the fill's last row has never had one behind it.
+// Red used to draw at 4px, because colour alone
 // is a weak signal at 72px across a room and height was the channel that read
 // peripherally — but motion reads from further away than either, and the
 // breath now carries "nearly spent" on its own. Two signals for one fact left
 // the red gauge spilling 2px past the header's dark border onto the key's
 // background, which is a lot of key for a thing the breath already says.
-const GAUGE_HEIGHT = 2;
+const GAUGE_HEIGHT = 3;
 
 /**
  * Usage key: the two rate-limit windows Claude Code's /usage reports, stacked.

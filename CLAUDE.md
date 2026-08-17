@@ -289,13 +289,13 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   on you *now*, the compaction ring turns once every ~5s, and a red context
   gauge flips red/white every other tick (`tick % 4`, so ~0.8s a colour) —
   half the requires_action beat, so the two don't read as one alarm.
-  `gaugeColor` flashes red *brighter*, never dimmer: the gauge is 2px on a
+  `gaugeColor` flashes red *brighter*, never dimmer: the gauge is 3px on a
   near-black track held to a contrast floor, and dropping below that floor for
   half of every cycle is a gauge that keeps vanishing. Phase 0 is exactly
   `usageColor`, so every board that doesn't pulse draws what it always did.
   **Two gradual versions shipped before this one and neither was visible on
   the deck** — a pink cosine over 14s, then a white one over 7s, both passing
-  `colors-check`. 2px of line is too little to carry a gradient: most of a fade
+  `colors-check`. 3px of line is too little to carry a gradient: most of a fade
   is spent in the middle, looking like one steady colour. Hence a square wave,
   and hence the ΔE floor there is 40 rather than 20 — "obvious side by side"
   isn't the bar for a line this thin seen across a room.
@@ -321,7 +321,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `STATE_COLORS` fill a whole key and stay dark (L\* 36–47), `ACCENTS` are the
   light identity bar (57–94), `MARKER_COLORS` and the usage gauge are a few
   bright pixels drawn on top. Everything small is light-on-dark; that one rule
-  is why white body text, 3×6px markers and a 1px gauge all stay readable on
+  is why white body text, 3×6px markers and a 3px gauge all stay readable on
   fifteen keys in four states. `colors-check` asserts the floors, so a hex
   nudged to taste can't quietly make one marker invisible on one key in one
   state — which is otherwise only findable by looking at that key, in that
