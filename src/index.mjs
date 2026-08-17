@@ -10,6 +10,7 @@ import { cachedSources, remoteSources } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
+import { ACCENTS, applyAccentChoice, readAccents, writeAccents } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
@@ -37,17 +38,11 @@ const REQUIRES_ACTION_FLASH_MS = 4000;
 const ATTENTION_BLINK_MS = 5000;
 const ANCHOR_CANDIDATES = ["package.json", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore"];
 
-// Accent colours identifying which VS Code window a session belongs to.
-// Assigned in first-seen order rather than by hashing the path: hashing is
-// stable across restarts but can hand two windows the same colour, and
-// telling windows apart is the whole point. Sorting would instead reshuffle
-// existing colours whenever a new window appears.
-// All eight are light (L* 57–94): the accent bar carries dark caps text, and it
-// has to separate from the state colour filling the rest of the key. The last
-// slot is a light warm grey rather than the brown 300 it was — brown sat only
-// 25 ΔE from the idle grey background, the closest any accent came to a state,
-// and it was the accent doing the least to say which project this is.
-export const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "#f06292", "#aed581", "#bcaaa4"];
+// Defined in accents.mjs, not here: config-server.mjs needs the palette, and
+// this file needs openConfig from config-server.mjs — one of those two edges
+// has to not exist. Re-exported so colors-check and slots-check keep importing
+// it from here.
+export { ACCENTS };
 
 // First-seen order for both grouping and colour, so a project's block and its
 // stripe always agree. Folders are kept after their last session ends: if the
@@ -111,14 +106,32 @@ async function liveSessions() {
 // projects sharing one defeats the entire purpose of the accent.
 //
 // Assigned once, at first sight of a folder, and kept — a project that goes
-// away and comes back reclaims its colour, as it reclaims its slot. The
-// remaining collision is a folder returning after its colour was handed to
-// someone else; rarer than the modulo wrap, and not worth recolouring a
-// settled board to prevent.
+// away and comes back reclaims its colour, as it reclaims its slot. Since
+// accents.mjs, "comes back" includes coming back after a restart: the map is
+// seeded from disk by run() and written whenever it changes, so a project's
+// colour is as durable as its position in the block.
+//
+// `taken` is still only what *live* folders are wearing, never what the file
+// remembers. Remembering every folder ever seen would exhaust eight colours
+// after eight projects and leave every ninth on the modulo fallback; the whole
+// reason twenty projects share eight accents is that only the ones on the
+// board at once have to differ.
 const folderAccent = new Map();
 function claimAccent(folder, liveFolders) {
   const taken = new Set([...liveFolders].filter((f) => f !== folder).map((f) => folderAccent.get(f)));
   return ACCENTS.find((c) => !taken.has(c)) ?? ACCENTS[folderAccent.size % ACCENTS.length];
+}
+
+/**
+ * Seed the remembered accents. Called by run() with what readAccents() found.
+ *
+ * The read is deliberately not done at module scope: importing this file must
+ * not touch the real ~/.claude, or every check inherits whatever palette this
+ * machine happens to be wearing today. Exported for the same reason
+ * assignSlots is — none of this is visible without a deck.
+ */
+export function loadAccents(entries) {
+  for (const [folder, accent] of entries) folderAccent.set(folder, accent);
 }
 
 /**
@@ -328,10 +341,20 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   const nested = sessions.filter((s) => s.nested);
 
   const liveFolders = new Set(real.map(folderKeyFor));
+  // Two folders can arrive remembering the same colour: they were never live
+  // at the same time, so neither claim ever saw the other, and the file kept
+  // both. On the board that reads as one project, which is the one thing the
+  // accent exists to prevent — so the first folder processed keeps it and the
+  // later one re-claims, first-seen like everything else here. The re-claim is
+  // written back into the map rather than applied per poll, so the loser
+  // settles on its new colour instead of flipping every 2s.
+  const used = new Set();
   for (const s of real) {
     const key = folderKeyFor(s);
     if (!folderOrder.has(key)) folderOrder.set(key, folderOrder.size);
+    if (used.has(folderAccent.get(key))) folderAccent.delete(key);
     if (!folderAccent.has(key)) folderAccent.set(key, claimAccent(key, liveFolders));
+    used.add(folderAccent.get(key));
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
   for (const s of nested) {
@@ -403,6 +426,17 @@ export function nestedFor(session, nested, primary) {
 // two agents in one repo read KOB-TRACE twice and are told apart by their
 // body text, which is the thing that actually differs between them.
 function keyFields(session) {
+  const project = session.folder.split("/").filter(Boolean).pop() ?? "";
+  const cwdName = session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
+  // Claude Code always has *a* session name: until something worth summarising
+  // exists it derives one from the cwd (`kob-portal2-01`, `nameSource:
+  // "derived"`), and swaps in a real one later. Drawn as a body it reads as an
+  // answer while saying strictly less than the caps bar above it, so a derived
+  // name counts as no name — same for a cwd basename that only repeats the
+  // project. What's left is the honest "nothing yet", which renderKey draws as
+  // CLEAR. A worktree's cwd *does* differ from its project and is the only
+  // thing telling two of its keys apart, so that rung stays.
+  const name = session.nameSource === "derived" ? null : session.name;
   return {
     // Prefer the AI-generated title (the exact string VS Code's terminal list
     // shows), then Claude Code's short session name, then the cwd's basename —
@@ -417,8 +451,8 @@ function keyFields(session) {
     // answer when the honest one is "nothing yet" — renderKey draws CLEAR.
     label: session.clearedEmpty || session.startedEmpty
       ? ""
-      : session.aiTitle ?? session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd,
-    project: session.folder.split("/").filter(Boolean).pop() ?? "",
+      : session.aiTitle ?? name ?? (cwdName === project ? "" : cwdName),
+    project,
     // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
     // updatedAt; formatAge would otherwise report the age of the epoch.
     age: session.ts ? formatAge(Date.now() / 1000 - session.ts) : "",
@@ -752,9 +786,24 @@ async function refreshAttention(deck, buttons, attentionButton) {
   return count;
 }
 
+// Written from here rather than from assignSlots, which is exported and called
+// by slots-check — a check that assigned an accent would write this machine's
+// real file. Only on change, which in practice means the poll a new project
+// first appears on: the map is otherwise the same every 2s. Synchronous
+// because it is a few hundred bytes that rarely move; if this ever grows
+// enough to be worth a frame, it is the wrong file.
+let lastAccentsWritten = null;
+function persistAccents() {
+  const snapshot = JSON.stringify([...folderAccent]);
+  if (snapshot === lastAccentsWritten) return;
+  lastAccentsWritten = snapshot;
+  writeAccents(folderAccent);
+}
+
 async function refresh(deck, buttons, slots, nestedBySlot) {
   const sessions = await liveSessions();
   assignSlots(sessions, slots, nestedBySlot);
+  persistAccents();
   const byId = new Map(sessions.map((s) => [s.session_id, s]));
 
   await Promise.all(
@@ -1004,6 +1053,9 @@ async function run() {
   }
   const deck = await openStreamDeck(devices[0].path);
   activeDeck = deck;
+  // Read here rather than at module scope: importing this file must not touch
+  // the real ~/.claude, or every check inherits this machine's live palette.
+  loadAccents(readAccents());
   // Which build is driving the deck — worth stating, since a worktree and the
   // main checkout can each be started against the same device.
   console.log(`claude-streamdeck v${pkg.version} — connected to ${deck.PRODUCT_NAME}`);

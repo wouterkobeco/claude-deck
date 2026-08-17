@@ -2,7 +2,11 @@
 // contiguous block, project order and within-project order are both pinned to
 // first-seen, and nothing re-sorts by activity.
 // Run: node scripts/slots-check.mjs
-import { assignSlots, accentFor, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor } from "../src/index.mjs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assignSlots, accentFor, loadAccents, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { readAccents, writeAccents, applyAccentChoice } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -159,6 +163,75 @@ assignSlots([s("acc0", acc(0)), s("acc8", acc(8))], wide);
 eq(accentFor(acc(8)) !== first, true, "a new folder does not reuse a live folder's colour after the list wraps");
 eq(accentFor(acc(0)), first, "and the long-lived folder still keeps its own");
 
+// Remembered accents. loadAccents() is what run() calls at startup with
+// whatever readAccents() found; from assignSlots' point of view a remembered
+// folder is indistinguishable from one it assigned itself, which is the whole
+// point — it keeps its colour without ever having been on this board.
+const rem = (i) => `/projects/rem${i}`;
+loadAccents([[rem(0), ACCENTS[3]]]);
+assignSlots([s("rem0", rem(0))], wide);
+eq(accentFor(rem(0)), ACCENTS[3], "a remembered folder keeps its colour");
+
+// Two folders can remember the same colour: they were never live at the same
+// time, so neither claim ever saw the other. The day they are both on the
+// board, one has to yield or the accent stops telling the two apart — the one
+// processed first keeps it, like every other first-seen rule here.
+loadAccents([[rem(1), ACCENTS[5]], [rem(2), ACCENTS[5]]]);
+assignSlots([s("rem1", rem(1)), s("rem2", rem(2))], wide);
+eq(accentFor(rem(1)), ACCENTS[5], "the first of two colliding folders keeps the remembered colour");
+eq(accentFor(rem(2)) !== ACCENTS[5], true, "and the second re-claims a free one");
+
+// The eviction is not a one-poll repair that flips back on the next poll: the
+// re-claim is written into the map, so the loser stays put.
+const settled = accentFor(rem(2));
+assignSlots([s("rem1", rem(1)), s("rem2", rem(2))], wide);
+eq(accentFor(rem(2)), settled, "and the loser's new colour sticks across polls");
+
+// Round-trip through a real file, since every failure path in accents.mjs
+// swallows its error — a write that silently does nothing would look exactly
+// like a first run, forever.
+const accentDir = mkdtempSync(join(tmpdir(), "streamdeck-accents-"));
+writeAccents(new Map([["/projects/x", "#4fc3f7"], ["pi:/home/pi/x", "#ff8a65"]]), accentDir);
+eq([...readAccents(accentDir)], [["/projects/x", "#4fc3f7"], ["pi:/home/pi/x", "#ff8a65"]], "accents round-trip");
+eq([...readAccents(join(accentDir, "nope"))], [], "a missing file reads as nothing remembered");
+rmSync(accentDir, { recursive: true, force: true });
+
+// The swap the config UI performs, kept pure and kept in accents.mjs rather
+// than beside persistAccents: that writes the real ~/.claude file with no root
+// argument, so an exported mutator that persisted would clobber this machine's
+// accents with fixture folders every time the checks run.
+const P = "/projects/pick";
+const Q = "/projects/quill";
+const R = "/projects/closed";
+
+// Both live, Q holds what P wants: they trade, so no colour is ever duplicated
+// among live folders and assignSlots' collision rule has nothing to resolve.
+const swapped = new Map([[P, ACCENTS[0]], [Q, ACCENTS[1]]]);
+applyAccentChoice(swapped, new Set([P, Q]), P, ACCENTS[1]);
+eq([...swapped], [[P, ACCENTS[1]], [Q, ACCENTS[0]]], "a swap trades both ways");
+
+// Nobody holds it: nobody else changes.
+const free = new Map([[P, ACCENTS[0]], [Q, ACCENTS[1]]]);
+applyAccentChoice(free, new Set([P, Q]), P, ACCENTS[4]);
+eq([...free], [[P, ACCENTS[4]], [Q, ACCENTS[1]]], "picking a free colour changes nobody else");
+
+// A remembered-but-closed folder holds it. Trading with something that isn't
+// on the board would be invisible, and leaving the duplicate in the file means
+// the collision rule picks a winner by readdir order when it reopens — half
+// the time taking back a colour you deliberately assigned. Drop its entry: it
+// re-claims like any new arrival.
+const closed = new Map([[P, ACCENTS[0]], [R, ACCENTS[2]]]);
+applyAccentChoice(closed, new Set([P]), P, ACCENTS[2]);
+eq([...closed], [[P, ACCENTS[2]]], "a closed owner's entry is dropped, not duplicated");
+
+// ...and the pick then survives that folder coming back: with no duplicate in
+// the map, assignSlots claims a free colour for the returning folder and
+// leaves the hand-picked one alone.
+loadAccents([...closed]);
+assignSlots([s("pick", P), s("back", R)], wide);
+eq(accentFor(P), ACCENTS[2], "a manual pick survives the closed folder reopening");
+eq(accentFor(R) !== ACCENTS[2], true, "and the returning folder takes something else");
+
 // The attention queue is the one board that sorts by activity: blocked ahead
 // of waiting, longest-stuck first inside each group. Nested sessions are
 // included — they have no key of their own, so this is the only view that can
@@ -210,6 +283,7 @@ eq(
 const dSession = {
   session_id: "d1",
   folder: "/projects/kob-trace",
+  cwd: "/projects/kob-trace",
   state: "busy",
   context: 41,
   model: "claude-opus-5",
@@ -296,6 +370,31 @@ const cleared = detailLayout({
   slotCount: DECK,
 });
 eq(cleared[0], { kind: "label", label: "", project: "kob-trace" }, "cleared session shows no title");
+
+// A session Claude Code hasn't titled yet still has a derived name
+// (`<cwd>-<hash>`) and a cwd that is just the project again. Neither says more
+// than the caps bar, so the body is blank — renderKey draws CLEAR — until a
+// real title exists.
+const untitled = {
+  ...dSession,
+  aiTitle: null,
+  name: "kob-trace-01",
+  nameSource: "derived",
+  cwd: "/projects/kob-trace",
+  folder: "/projects/kob-trace",
+};
+const layout = (session) => detailLayout({ session, tasks: [], nested: [], age: "", slotCount: DECK })[0];
+eq(layout(untitled), { kind: "label", label: "", project: "kob-trace" }, "a derived name is not a title");
+eq(
+  layout({ ...untitled, cwd: "/projects/kob-trace-wt/feat-x" }),
+  { kind: "label", label: "feat-x", project: "kob-trace" },
+  "but a worktree's own cwd still names its key"
+);
+eq(
+  layout({ ...untitled, name: "chosen name", nameSource: "user" }),
+  { kind: "label", label: "chosen name", project: "kob-trace" },
+  "and a name that isn't derived is drawn"
+);
 
 // A session with no context reported must not print "null%".
 const noCtx = detailLayout({ session: { ...dSession, context: null }, tasks: [], nested: [], age: "", slotCount: DECK });
