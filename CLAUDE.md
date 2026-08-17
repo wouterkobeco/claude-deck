@@ -469,11 +469,28 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   colour picking still works as it did before drag existed.
   Verified by driving it in a real browser, since nothing else can: two drags
   and a swatch click, each after a body swap, produced the right `reorder` and
-  `setAccent` calls. `POST /order` validates its **anchor** as well as its
-  folder, for a sharper reason than the folder: `moveProject` reads a key it
-  can't find as "put it last", so an unvalidated stale anchor would silently
-  drop a project to the bottom of the board instead of erroring, and you would
-  blame the drag.
+  `setAccent` calls.
+  **`POST /order` takes what the pointer was over, not where the row should
+  go** — `target` plus `side` (`above`/`below`), never a computed anchor. That
+  split was learned the hard way: the arithmetic started in the browser, where
+  `drop` read the side off a class `clear()` had already removed, so *every*
+  drop resolved as "above". Every side/target pair but one still produces a
+  plausible anchor, so the only visible symptom was that dropping below the
+  last row landed a project second-to-last — and nothing could see it, because
+  the code was in the one place no check reaches. Moved to the server it is
+  four lines under `config-check`, including the null-anchor case that was
+  wrong. **The rule this is an instance of: if a piece of the client is doing
+  arithmetic rather than reporting what the pointer did, it is in the wrong
+  file.**
+  `target` is validated as well as `folder`, for a sharper reason than
+  `folder`: `moveProject` reads a key it can't find as "put it last", so a
+  stale one would quietly drop a project to the bottom rather than erroring,
+  and you would blame the drag. Dropping a row on itself is a no-op rather
+  than a 400 — the client won't send it, but the arithmetic must not depend on
+  that.
+  Dragging into the empty space **below** the list marks the last row, because
+  that is the natural way to ask for "last" and doing nothing there made the
+  one gesture people reach for feel broken.
 - `extension/` — the other half, plain CommonJS with no build step and no
   dependencies, installed by copying it into `~/.vscode/extensions` (a line
   count isn't pinned here for the same reason it isn't for `src/`: it goes

@@ -149,11 +149,21 @@ document.addEventListener("dragstart", (e) => {
 document.addEventListener("dragover", (e) => {
   if (!dragged) return;
   e.preventDefault();
-  const row = e.target.closest?.(".row");
   clear();
-  if (!row || row === dragged) return;
-  const box = row.getBoundingClientRect();
-  row.classList.add(e.clientY < box.top + box.height / 2 ? "above" : "below");
+  const row = e.target.closest?.(".row");
+  if (row && row !== dragged) {
+    const box = row.getBoundingClientRect();
+    row.classList.add(e.clientY < box.top + box.height / 2 ? "above" : "below");
+    return;
+  }
+  // Nothing under the pointer: dragging into the empty space below the list is
+  // the natural way to ask for "last", and doing nothing there made the one
+  // gesture people reach for feel broken.
+  if (row) return;
+  const last = rows().at(-1);
+  if (last && last !== dragged && e.clientY > last.getBoundingClientRect().bottom) {
+    last.classList.add("below");
+  }
 });
 
 document.addEventListener("drop", (e) => {
@@ -161,16 +171,16 @@ document.addEventListener("drop", (e) => {
   e.preventDefault();
   const target = rows().find((r) => r.classList.contains("above") || r.classList.contains("below"));
   const from = dragged;
+  // Read the side *before* clearing. This was the bug: clear() strips the very
+  // class the side is read from, so every drop resolved as "above" and a drop
+  // below the last row landed second-to-last.
+  const side = target?.classList.contains("below") ? "below" : "above";
   clear();
   dragged = null;
   if (!target) return;
-  // "before" is the key to land ahead of, so dropping below a row means the
-  // row after it — and the empty string means last. Computed from the DOM the
-  // server rendered, with the dragged row skipped: it is about to move, so it
-  // can never be its own anchor.
-  const after = rows().filter((r) => r !== from);
-  const i = after.indexOf(target) + (target.classList.contains("below") ? 1 : 0);
-  send("/order", { folder: from.dataset.key, before: after[i]?.dataset.key ?? "" });
+  // What was under the pointer and which half of it, nothing more. Working out
+  // the resulting position is the server's job, where a check can see it.
+  send("/order", { folder: from.dataset.key, target: target.dataset.key, side });
 });
 
 document.addEventListener("dragend", () => {
@@ -254,23 +264,38 @@ export async function createConfigServer(deps) {
         return res.end();
       }
 
-      if (req.method === "POST" && req.url && url.pathname === "/order") {
+      if (req.method === "POST" && url.pathname === "/order") {
         const raw = await readBody(req);
         if (raw === null) return send(res, 400, "body too large");
         const form = new URLSearchParams(raw);
         const folder = form.get("folder");
-        // Empty means "last" — the row was dropped below everything. Absent
-        // means the same, so a request that omits the field isn't a 400.
-        const before = form.get("before") || null;
-        const live = deps.projects();
-        if (!live.some((p) => p.key === folder)) return send(res, 400, "unknown project");
-        // The anchor is validated too, and for a sharper reason than the
-        // folder: moveProject treats a key it can't find as "put it last", so
-        // an unvalidated stale anchor wouldn't error — it would quietly send
-        // the project to the bottom of the board instead of where you dropped
-        // it, and you'd blame the drag.
-        if (before !== null && !live.some((p) => p.key === before)) return send(res, 400, "unknown anchor");
-        deps.reorder(folder, before);
+        // What the pointer was over, and which side of its midpoint — not the
+        // resulting position. Turning those into an anchor is index
+        // arithmetic, and it lived in the browser until a drop below the last
+        // row put a project second-to-last instead: the client read the side
+        // off a class it had already cleared, so every drop resolved as
+        // "above". Here it is covered by config-check, which is the whole
+        // reason for the split — the client reports what it saw, the server
+        // decides what it means.
+        const target = form.get("target");
+        const side = form.get("side");
+        const live = deps.projects().map((p) => p.key);
+        if (!live.includes(folder)) return send(res, 400, "unknown project");
+        // The anchor is validated for a sharper reason than the folder:
+        // moveProject reads a key it can't find as "put it last", so a stale
+        // one would quietly send a project to the bottom of the board rather
+        // than erroring, and you would blame the drag.
+        if (!live.includes(target)) return send(res, 400, "unknown anchor");
+        if (side !== "above" && side !== "below") return send(res, 400, "unknown side");
+        if (target !== folder) {
+          // The dragged project is removed first: it is about to move, so it
+          // can never be its own anchor, and leaving it in shifts every index
+          // past it by one. Running off the end is the "drop it last" case,
+          // which is null rather than an error.
+          const rest = live.filter((key) => key !== folder);
+          const at = rest.indexOf(target) + (side === "below" ? 1 : 0);
+          deps.reorder(folder, rest[at] ?? null);
+        }
         res.writeHead(303, { Location: `/?t=${token}` });
         return res.end();
       }

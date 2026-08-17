@@ -119,25 +119,48 @@ const post2 = (body) =>
     body,
   });
 
-eq((await post2(`folder=%2Fprojects%2Fgone&before=${encodeURIComponent(ALPHA)}`)).status, 400, "reordering an unlisted project is refused");
+// The page order is ALPHA, REMOTE, NASTY. A request says what the pointer was
+// over and which half of it; turning that into an anchor is the server's job,
+// which is what these cases exist to pin. It lived in the browser until a drop
+// below the last row put a project second-to-last instead of last, where
+// nothing could see it.
+const drop = (folder, target, side) =>
+  post2(`folder=${encodeURIComponent(folder)}&target=${encodeURIComponent(target)}&side=${side}`);
+
+eq((await drop("/projects/gone", ALPHA, "above")).status, 400, "reordering an unlisted project is refused");
+eq(moves.length, 0, "and nothing moved");
+eq((await drop(ALPHA, "/projects/gone", "above")).status, 400, "a stale anchor is refused rather than meaning last");
+eq(moves.length, 0, "and nothing moved");
+eq((await drop(ALPHA, REMOTE, "sideways")).status, 400, "a side that isn't above or below is refused");
 eq(moves.length, 0, "and nothing moved");
 
-// The anchor is validated for a sharper reason than the folder: moveProject
-// treats an unknown key as "put it last", so a stale anchor would silently
-// send the project to the bottom rather than erroring.
-eq((await post2(`folder=${encodeURIComponent(ALPHA)}&before=%2Fprojects%2Fgone`)).status, 400, "a stale anchor is refused rather than meaning last");
-eq(moves.length, 0, "and nothing moved");
-
-const moved = await post2(`folder=${encodeURIComponent(ALPHA)}&before=${encodeURIComponent(REMOTE)}`);
-eq(moved.status, 303, "a valid move redirects back to the page");
-eq(moves, [[ALPHA, REMOTE]], "and reorder was called with the folder and its anchor");
-
-// The empty anchor is how the script says "dropped below everything", and an
-// absent field must mean the same rather than 400.
 moves = [];
-await post2(`folder=${encodeURIComponent(ALPHA)}&before=`);
-await post2(`folder=${encodeURIComponent(ALPHA)}`);
-eq(moves, [[ALPHA, null], [ALPHA, null]], "empty and absent anchors both mean last");
+const moved = await drop(ALPHA, REMOTE, "above");
+eq(moved.status, 303, "a valid move redirects back to the page");
+eq(moves, [[ALPHA, REMOTE]], "dropping above a row anchors on that row");
+
+// The regression this file was extended for. Dropping below the LAST row is
+// the only case whose anchor is null, and it is the one the client used to get
+// wrong — every other side/target pair produces a real key, so "below" being
+// silently read as "above" stayed invisible everywhere else.
+moves = [];
+await drop(ALPHA, NASTY, "below");
+eq(moves, [[ALPHA, null]], "dropping below the last row means last");
+
+// Below a middle row is the row after it — and the dragged project is removed
+// before the index is taken, or everything past it shifts by one.
+moves = [];
+await drop(ALPHA, REMOTE, "below");
+eq(moves, [[ALPHA, NASTY]], "dropping below a middle row anchors on the next one");
+moves = [];
+await drop(NASTY, ALPHA, "below");
+eq(moves, [[NASTY, REMOTE]], "the dragged project is not its own successor");
+
+// Dropping a row on itself is a no-op, not an error: the client already
+// refuses to mark the dragged row, but the arithmetic must not depend on that.
+moves = [];
+eq((await drop(ALPHA, ALPHA, "below")).status, 303, "dropping a row on itself is accepted");
+eq(moves.length, 0, "and moves nothing");
 withOrder.server.close();
 
 // An empty board says so rather than rendering an empty page.
