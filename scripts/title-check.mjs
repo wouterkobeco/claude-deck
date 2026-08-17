@@ -35,6 +35,7 @@ const signals = (lines) => write(lines).then(() => readTranscriptSignals(path));
 
 assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   aiTitle: "Fix login bug",
+  lastPrompt: null,
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
@@ -45,6 +46,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
 
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine("Add rate limiting")]), {
   aiTitle: "Add rate limiting",
+  lastPrompt: "/clear",
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
@@ -56,6 +58,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
 // An old title must not survive a /clear with nothing said since.
 assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   aiTitle: null,
+  lastPrompt: "/clear",
   clearedEmpty: true,
   startedEmpty: false,
   blockedOnDenial: false,
@@ -66,6 +69,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
 
 assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   aiTitle: null,
+  lastPrompt: null,
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
@@ -116,6 +120,80 @@ assert.equal((await signals([quotingLine("<command-name>/compact</command-name>"
 
 console.log("OK: aiTitle / clearedEmpty / startedEmpty");
 
+// `lastPrompt` — what the key reads while Claude Code hasn't generated an
+// aiTitle yet, which is the first turn or two of every session. The rungs it
+// replaced were a name derived from the cwd (`kob-portal2-01`) and the cwd
+// itself, both of which say less than the caps bar above them. It must never
+// blank a key: a working session reading CLEAR is the bug this fixed.
+const prompt = (lines) => signals(lines).then((s) => s.lastPrompt);
+assert.equal(await prompt([modeLine, humanReplyLine]), "ok go ahead", "the human's own line is the body");
+// The newest user line is almost never the human: a tool result rides on the
+// user turn, so the scan has to keep going back past every one of them.
+assert.equal(
+  await prompt([humanReplyLine, quotingLine("a 40KB file listing")]),
+  "ok go ahead",
+  "a tool result is not a prompt"
+);
+// Claude Code injects its own user lines — a skill's body, a command's stdout,
+// the local-command caveat — and marks them `isMeta`. They're strings, so
+// nothing but that flag tells them from something typed.
+const metaLine = JSON.stringify({
+  type: "user",
+  isMeta: true,
+  message: { role: "user", content: "Base directory for this skill: /projects/kob-portal2/.claude/skills/x" },
+});
+assert.equal(await prompt([humanReplyLine, metaLine]), "ok go ahead", "an injected line is not a prompt");
+// ...and not every injection is flagged. A finished background agent arrives as
+// an unflagged string user line of pure markup, which drew its tags on a live
+// key. Anything opening with a tag that isn't a command is Claude Code talking
+// to itself on the user's turn.
+const notificationLine = JSON.stringify({
+  type: "user",
+  message: { role: "user", content: "<task-notification>\n<task-id>b2hhx98pp</task-id>\n</task-notification>" },
+});
+assert.equal(await prompt([humanReplyLine, notificationLine]), "ok go ahead", "unflagged markup is not a prompt");
+assert.equal(
+  await prompt([humanReplyLine, JSON.stringify({ type: "user", message: { content: "<local-command-stdout></local-command-stdout>" } })]),
+  "ok go ahead",
+  "nor is command output"
+);
+// A slash command is stored as its own markup, in either tag order, and reads
+// as the command — the raw tags would fill the key with angle brackets.
+const commandLine = (name, args = "") =>
+  JSON.stringify({
+    type: "user",
+    message: {
+      role: "user",
+      content: `<command-message>${name.slice(1)}</command-message>\n<command-name>${name}</command-name>\n<command-args>${args}</command-args>`,
+    },
+  });
+assert.equal(await prompt([commandLine("/process-backend-change")]), "/process-backend-change", "command by name");
+assert.equal(await prompt([commandLine("/loop", "5m /babysit-prs")]), "/loop 5m /babysit-prs", "args included");
+// Markup is only unwrapped when the content *is* that markup. A sentence
+// quoting a tag is a sentence — the same rule that stops it counting as a
+// /clear.
+const quotesTag = JSON.stringify({
+  type: "user",
+  message: { role: "user", content: "why does <command-name>/clear</command-name> reuse the file?" },
+});
+assert.equal(
+  await prompt([quotesTag]),
+  "why does <command-name>/clear</command-name> reuse the file?",
+  "a quoted tag stays in the prose"
+);
+assert.equal((await signals([quotesTag])).clearedEmpty, false, "and still isn't a /clear");
+// Flattened and capped: the key wraps to three or four lines and ellipsizes on
+// its own, so this bound is only about what a diffing signature has to hold.
+const long = JSON.stringify({ type: "user", message: { role: "user", content: "fix\n\n  the   bug " + "x".repeat(300) } });
+const flat = await prompt([long]);
+assert.equal(flat.length, 120, "capped");
+assert.ok(flat.startsWith("fix the bug xxx"), `newlines and runs of spaces collapse, got ${flat.slice(0, 20)}`);
+// Whitespace-only isn't a prompt — null, so the chain falls through to the
+// session name rather than drawing an empty body on a working key.
+assert.equal(await prompt([JSON.stringify({ type: "user", message: { role: "user", content: "  \n " } })]), null);
+
+console.log("OK: lastPrompt");
+
 // The case this exists for: a denial with nothing newer from the human.
 assert.equal((await signals([denialLine])).blockedOnDenial, true);
 // The assistant's own explanation after the denial doesn't count as a reply.
@@ -131,6 +209,7 @@ const userTurnLine = JSON.stringify({ type: "user", message: { content: [] } });
 
 assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLine, modelLine("claude-opus-5", "high")]), {
   aiTitle: null,
+  lastPrompt: null,
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
@@ -142,6 +221,7 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
 // A transcript with no assistant line yet reports null rather than guessing.
 assert.deepEqual(await signals([userTurnLine]), {
   aiTitle: null,
+  lastPrompt: null,
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,

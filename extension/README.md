@@ -13,3 +13,4 @@ No commands, no settings, nothing to configure. It polls
 names a terminal this window owns.
 
 Design: `../docs/superpowers/specs/2026-08-15-terminal-focus-extension-design.md`
+

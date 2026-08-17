@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, wrapLabel, ellipsize, measureText } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, wrapLabel, wrapWords, ellipsize, measureText } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -41,6 +41,19 @@ eq(wrap("abcdefg hijk"), "abcdefg|hijk", "still breaks mid-word");
 eq(wrap("   "), "", "spaces only");
 // A glyph wider than the whole line still gets a line rather than looping.
 eq(wrapLabel("mmm", 2, 14).join("|"), "m|m|m", "narrower than one character");
+
+// Stat tiles break at spaces instead: a value is two or three short words, and
+// a tile with room for both of "opus-5 high" drew "opus-5 hi" / "gh". Full tile
+// width (72px) and renderStat's own value size (round(72 * 0.19) = 14), no
+// letter-spacing.
+const words = (s) => wrapWords(s, 72, 14).join("|");
+eq(words("opus-5 high"), "opus-5|high", "the model and its effort are two facts");
+eq(words("Sonnet 4.5"), "Sonnet|4.5", "and so are a name and its version");
+eq(words("busy 40m"), "busy 40m", "what already fits is left on one line");
+// One word wider than the tile has nowhere to go but mid-word — ellipsizing
+// would drop the half that says which state this is.
+eq(words("requires_action 2h14m"), "requires_|action|2h14m", "an oversized word still breaks");
+eq(words("  "), "", "spaces only");
 eq(ellipsize("abcdefghijklmnopq", 58, 14, 0.1), "abcde…", "truncation measures the ellipsis too");
 
 // The table above is only worth having while it still describes the font
@@ -302,7 +315,11 @@ for (const status of ["completed", "in_progress", "pending"]) {
 // The CONTEXT tile draws a ring instead of the text when `pie` is a number —
 // 100 is the case worth looking at, being the widest number in the smallest
 // hole and the only one that closes the ring completely.
-for (const [name, label, value, pie] of [
+// The stats board draws the same tiles at `big: true` (a larger value size, so
+// a word that fits the detail board's tile can overflow this one) — its
+// favourite-model tile is the case worth seeing, being the other place a model
+// name is drawn.
+for (const [name, label, value, pie, big] of [
   ["state-busy", "STATE", "busy 40m"],
   ["state-blocked-longest", "STATE", "requires_action 2h14m"],
   ["context", "CONTEXT", "41%", 41],
@@ -310,8 +327,9 @@ for (const [name, label, value, pie] of [
   ["context-unknown", "CONTEXT", "—"],
   ["model", "MODEL", "opus-5 high"],
   ["model-unknown", "MODEL", "—"],
+  ["stats-model", "Favorite model", "Sonnet 4.5", null, true],
 ]) {
-  const buf = await renderStat({ width, height, label, value, pie });
+  const buf = await renderStat({ width, height, label, value, pie, big });
   if (buf.length !== expected) {
     console.error(`FAILED (stat ${name}): expected ${expected} bytes, got ${buf.length}`);
     process.exit(1);

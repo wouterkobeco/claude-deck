@@ -134,6 +134,43 @@ const CLEAR_MARKER = "<command-name>/clear</command-name>";
 // tool_use/tool_result payload mentioning "user" inside its content.
 const USER_LINE_MARKER = '"type":"user"';
 
+// How much of a prompt is worth carrying. renderKey wraps and ellipsizes on its
+// own, so this isn't the display limit — it's so a key's diffing signature (and
+// the published session list) doesn't hold a pasted stack trace.
+const PROMPT_MAX = 120;
+
+/**
+ * The human's typed prompt, as a key body.
+ *
+ * A slash command is stored as its own markup rather than what you typed
+ * (`<command-message>foo</command-message><command-name>/foo</command-name>`),
+ * so the command name is pulled out and everything else dropped — the tags
+ * would otherwise fill the key with angle brackets. Anything else is taken as
+ * written, with newlines flattened: a body is 3-4 wrapped lines and a pasted
+ * paragraph's own line breaks say nothing at that size.
+ *
+ * Not exported; `readTranscriptSignals`'s own return is what title-check reads,
+ * so there's one surface to check rather than two.
+ */
+function promptText(content) {
+  // The tags come in either order (`<command-message>` first for a project
+  // command, `<command-name>` first for a builtin), so the name is matched
+  // anywhere — but only inside content that *is* this markup, never content
+  // that merely quotes a tag somewhere in a sentence.
+  if (content.startsWith("<")) {
+    const command = content.match(/<command-name>([^<]*)<\/command-name>/);
+    // Every other kind of markup here is Claude Code talking to itself on the
+    // user's turn and is not always flagged `isMeta` — a `<task-notification>`
+    // for a finished background agent isn't, and put its tags on a key. Null
+    // rather than a guess: the scan keeps walking back to something typed.
+    if (!command) return null;
+    const args = content.match(/<command-args>([^<]*)<\/command-args>/)?.[1];
+    return [command[1], args].filter(Boolean).join(" ").replace(/\s+/g, " ").trim().slice(0, PROMPT_MAX) || null;
+  }
+  const flat = content.replace(/\s+/g, " ").trim();
+  return flat ? flat.slice(0, PROMPT_MAX) : null;
+}
+
 /**
  * Two things read from the same tail scan of a session's transcript, since
  * reading the whole file to find either doesn't scale:
@@ -174,6 +211,8 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       titleResolved = false;
     let blockedOnDenial = false,
       denialResolved = false;
+    let lastPrompt = null,
+      promptResolved = false;
     let model = null,
       effort = null,
       modelResolved = false;
@@ -189,7 +228,11 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
     // writes nothing either, so busy sessions kept false-firing.
     let compactRequestedAt = null;
 
-    for (let i = lines.length - 1; i >= 0 && (!titleResolved || !denialResolved || !modelResolved); i--) {
+    for (
+      let i = lines.length - 1;
+      i >= 0 && (!titleResolved || !denialResolved || !modelResolved || !promptResolved);
+      i--
+    ) {
       const line = lines[i];
       // Every marker below is a substring *pre-filter* only — cheap enough to
       // run down a megabyte of tail — and nothing is believed until this
@@ -242,17 +285,36 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
         }
       }
 
-      if (!denialResolved && line.includes(USER_LINE_MARKER) && typeIs("user")) {
-        // A top-level field of this line, not a string somewhere in it.
-        blockedOnDenial = parse().toolDenialKind !== undefined;
-        // The same newest-user-line decides compacting: /compact writes its
-        // command line immediately and then goes quiet, so the line is the
-        // start marker.
-        if (isCommand("/compact")) {
-          const t = Date.parse(parse().timestamp);
-          if (Number.isFinite(t)) compactRequestedAt = t;
+      if ((!denialResolved || !promptResolved) && line.includes(USER_LINE_MARKER) && typeIs("user")) {
+        if (!denialResolved) {
+          // A top-level field of this line, not a string somewhere in it.
+          blockedOnDenial = parse().toolDenialKind !== undefined;
+          // The same newest-user-line decides compacting: /compact writes its
+          // command line immediately and then goes quiet, so the line is the
+          // start marker.
+          if (isCommand("/compact")) {
+            const t = Date.parse(parse().timestamp);
+            if (Number.isFinite(t)) compactRequestedAt = t;
+          }
+          denialResolved = true;
         }
-        denialResolved = true;
+        // Most user lines are not the human: a tool result rides on the user
+        // turn (its content is an array of blocks), and Claude Code injects its
+        // own — skill bodies, command output, the local-command caveat — marked
+        // `isMeta`. What the human typed is a plain *string* content on a line
+        // that isn't meta, which is also true of a slash command, whose tags
+        // promptText unwraps. Newest wins, so this stops at the first one going
+        // backwards — which is also why a `/clear` needs no special case: the
+        // /clear line is itself one of these, so the search can never reach
+        // past it into the conversation it threw away.
+        if (!promptResolved) {
+          const content = parse().message?.content;
+          // Resolved only on a line that yielded something: promptText returns
+          // null for markup and for whitespace, and those must let an older
+          // prompt through rather than ending the search on nothing.
+          if (typeof content === "string" && !parse().isMeta) lastPrompt = promptText(content);
+          if (lastPrompt) promptResolved = true;
+        }
       }
 
       // Model and effort ride on assistant lines; the newest one is what the
@@ -278,10 +340,11 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
     // nothing else to draw.
     const startedEmpty = whole && !denialResolved && !aiTitle && !clearedEmpty;
 
-    return { aiTitle, clearedEmpty, startedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
+    return { aiTitle, lastPrompt, clearedEmpty, startedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
   } catch {
     return {
       aiTitle: null,
+      lastPrompt: null,
       clearedEmpty: false,
       startedEmpty: false,
       blockedOnDenial: false,

@@ -137,6 +137,37 @@ export function wrapLabel(label, width, fontSize, letterSpacing = 0) {
   return lines;
 }
 
+/**
+ * The same fit, broken at spaces instead of mid-word.
+ *
+ * A stat tile's value is two or three short words ("opus-5 high", "busy 40m") —
+ * two whole words stacked read as two facts, while `wrapLabel` splitting the
+ * second one into "hi" / "gh" reads as neither. A word wider than the tile on
+ * its own still breaks mid-word (`requires_action` is one word and 15
+ * characters): there is nothing else to do with it, and ellipsizing would throw
+ * away the half that says what state the session is in.
+ *
+ * Not used for key bodies, which are sentences: a title wrapped on spaces
+ * leaves a ragged right edge on a 72px key, where the point is filling every
+ * line.
+ */
+export function wrapWords(text, width, fontSize, letterSpacing = 0) {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && measureText(`${last} ${word}`, fontSize, letterSpacing) <= width) {
+      lines[lines.length - 1] = `${last} ${word}`;
+    } else if (measureText(word, fontSize, letterSpacing) <= width) {
+      lines.push(word);
+    } else {
+      // Doesn't fit any line whole — hand this one word back to the character
+      // fit, which is what it was written for.
+      lines.push(...wrapLabel(word, width, fontSize, letterSpacing));
+    }
+  }
+  return lines;
+}
+
 // Shared by each text's `letter-spacing` attribute and by the width budget
 // wrapLabel/fitCaps spend against it — the fit is only exact while they agree.
 const BODY_LETTER_SPACING = 0.1;
@@ -553,7 +584,11 @@ export async function renderStat({ width, height, label, value, big = false, pie
 
   const valueSize = Math.round(height * (big ? 0.24 : 0.19));
 
-  let lines = wrapLabel(value, width, valueSize);
+  // Words, not characters: every stat value here is short words — "opus-5 high"
+  // on the detail board, "Sonnet 5" on the stats board's favourite-model tile —
+  // and breaking one across two lines makes a tile that has room for both words
+  // read as gibberish.
+  let lines = wrapWords(value, width, valueSize);
   if (lines.length > 2) {
     lines = lines.slice(0, 2);
     lines[1] = ellipsize(lines[1], width, valueSize);
