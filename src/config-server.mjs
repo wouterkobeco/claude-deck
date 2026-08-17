@@ -32,11 +32,13 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ENTITIES[c]);
 const STYLE = `
   :root { color-scheme: dark }
   body { background:#121212; color:#e0e0e0; font-family:-apple-system,sans-serif;
-         margin:0; padding:32px; box-sizing:border-box; min-height:100vh; display:flex }
-  /* margin:auto on the flex item, not justify/align-content on the container:
-     both centre, but the container versions clip the overflowing edge once the
-     list is taller than the window, and the top rows become unreachable. */
-  main { width:100%; max-width:520px; margin:auto }
+         margin:0; padding:32px; box-sizing:border-box }
+  /* Horizontally centred, vertically pinned to the top. Centring both ways
+     looked better on one page and wrong across two: Accents and Time are
+     different heights, so the heading and the tabs jumped every time you
+     switched. A nav that moves when you use it is worse than empty space
+     below the content. */
+  main { width:100%; max-width:520px; margin:0 auto }
   h1 { font-size:15px; letter-spacing:.18em; text-transform:uppercase;
        color:#9e9e9e; font-weight:600; margin:0 0 24px }
   .row { margin:0 0 20px }
