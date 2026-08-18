@@ -30,7 +30,7 @@ async function window(name, folderUri, resources) {
   await writeFile(join(dir, "workspace.json"), JSON.stringify({ folder: folderUri }));
   const state = {
     "editorpart.state": {
-      serializedGrid: { root: { type: "leaf", data: { editors: resources.map(editor), mru: [0] } } },
+      serializedGrid: { root: { type: "leaf", data: { editors: resources.map(editor), mru: resources.map((_, i) => i) } } },
     },
   };
   // `openFileIn` shells out to sqlite3, so the fixture has to be a real
@@ -43,11 +43,29 @@ insert into ItemTable values ('memento/workbench.parts.editor', '${JSON.stringif
   return dir;
 }
 
-const LOCAL = "/Users/wouterd/projects/thing";
+// The local folder is a real directory with a real file in it: the local
+// branch stats what it is about to hand `open -a`, so a fixture path that
+// exists only in the database would be skipped as a dangling entry.
+const LOCAL = join(root, "projects", "thing");
 const REMOTE = "/home/pi/domotica/dom-setup";
 const HOST = "192.168.2.6";
 
+await mkdir(LOCAL, { recursive: true });
+await writeFile(join(LOCAL, "README.md"), "# thing\n");
+
 await window("local", `file://${LOCAL}`, [{ path: `${LOCAL}/README.md` }]);
+
+// A deleted file is still in VS Code's MRU list — `canvas.json` under a
+// scratch directory that has since been removed, which is exactly what took
+// `open -a Code <missing>` down and lost the whole press. The dangling entry
+// is skipped and the next MRU one answers, rather than the caller falling all
+// the way back to its static anchor file.
+await mkdir(join(root, "gone"), { recursive: true });
+await writeFile(join(root, "gone", "index.js"), "");
+await window("stale", `file://${join(root, "gone")}`, [
+  { path: join(root, "gone", "scratch-design", "canvas.json") },
+  { path: join(root, "gone", "index.js") },
+]);
 await window("remote", `vscode-remote://ssh-remote%2B${HOST}${REMOTE}`, [
   {
     path: `${REMOTE}/README.md`,
@@ -75,6 +93,12 @@ assert.equal(
 // folder keys exist to prevent one layer up.
 assert.equal(await openFileIn(REMOTE, null, root), null, "a remote folder is not found as a local one");
 assert.equal(await openFileIn(LOCAL, HOST, root), null, "a local folder is not found as a remote one");
+
+assert.equal(
+  await openFileIn(join(root, "gone"), null, root),
+  join(root, "gone", "index.js"),
+  "a deleted editor entry is skipped for the next one, not handed to `open`"
+);
 
 // A window on a different host must never answer, even at the same path. This
 // is the check that stops one host's storage raising another host's window.
