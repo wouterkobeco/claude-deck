@@ -1144,7 +1144,9 @@ async function refreshDetail(deck, buttons, view) {
   // per project you can be looking at. They're short-lived, so one may well
   // vanish between two polls.
   const nested = nestedFor(session, sessions.filter((s) => s.nested), true);
-  const tasks = await readTaskList(session.session_id, session.root);
+  // Same null-for-remote rule as the progress bar: readLedgerTasks reads a
+  // path on this machine, and a remote session's cwd isn't one.
+  const tasks = await readTaskList(session.session_id, session.root, session.host ? null : session.cwd);
   const { age } = keyFields(session);
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;

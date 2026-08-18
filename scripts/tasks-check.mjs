@@ -1,7 +1,12 @@
 // Verifies "task X of Y": subject numbering wins over list position when
 // present, position is used otherwise, and the pair never mixes schemes.
 // Run: node scripts/tasks-check.mjs
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { taskCounter, taskWindow } from "../src/sessions.mjs";
+import { ledgerTasks, readLedgerTasks } from "../src/sdd-ledger.mjs";
 
 const t = (subject, status = "pending") => ({ subject, status });
 const eq = (got, want, label) => {
@@ -94,4 +99,78 @@ same(taskWindow(list(20), 3), ["Task 1", "Task 2", "Task 3"], "no active task st
 
 same(taskWindow([], 5), [], "empty list");
 
-console.log("OK: task counter");
+// A session driving superpowers' SDD keeps its tasks in a ledger in the
+// project rather than in ~/.claude/tasks, so the progress bar and the detail
+// board saw nothing through a day of six-task work. The two things read are
+// the ones the skill itself depends on: the workspace path and the
+// `Task <N>: complete` line it resumes from.
+const LEDGER = `# SDD ledger — plan: docs/superpowers/plans/2026-08-18-open-ended-goals.md
+
+## Pre-flight conflict scan
+
+| A | B | Shared | Finding |
+|---|---|--------|---------|
+| 1 | 2 | src/db/values.ts | clean |
+
+Before dispatching Task 1, scan the plan once for conflicts.
+
+## Progress
+
+Task 1: complete (implementer aab72b71). Commit 6afca52b.
+Task 2: dispatched (implementer bbc11d22, sonnet).
+`;
+
+const briefs = new Map([
+  [1, "Task 1: Schema, migration and seed"],
+  [2, "Task 2: Carry the goal to every reader"],
+  [3, "Task 3: Wording"],
+]);
+
+const statuses = ledgerTasks(LEDGER, briefs);
+assert.deepEqual(
+  statuses.map((t) => t.status),
+  ["completed", "in_progress", "pending"],
+  "the first task without a complete line is the one in flight"
+);
+same(statuses, [...briefs.values()], "subjects come from the brief filenames");
+eq(taskCounter(statuses), "2/3", "and the counter reads it like any other task list");
+
+// Neither the conflict table's `| 1 | 2 |` rows nor "Before dispatching Task 1"
+// mid-sentence is a status line, so neither may invent or finish a task.
+assert.equal(ledgerTasks(LEDGER, new Map()).length, 2, "only line-anchored Task <N>: lines count");
+
+// Anything without the identity line the skill mandates is some other
+// progress.md, and none of these rules apply to it.
+assert.deepEqual(ledgerTasks("# Sprint progress\n\nTask 1: complete\n", briefs), [], "not an SDD ledger");
+assert.deepEqual(ledgerTasks("# SDD ledger — plan: x.md\n\nnothing yet\n"), [], "a ledger with no tasks yet");
+
+// Through the real filesystem, since every failure path in the reader returns
+// [] and a walk that silently found nothing would look exactly like a session
+// that isn't using one.
+{
+  const root = await mkdtemp(join(tmpdir(), "streamdeck-ledger-check-"));
+  const workspace = join(root, ".superpowers/sdd/2026-08-18-plan");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(join(workspace, "progress.md"), LEDGER);
+  for (const [n, subject] of briefs) await writeFile(join(workspace, `task-${n}-brief.md`), `### ${subject}\n\nbody\n`);
+
+  same(await readLedgerTasks(root), [...briefs.values()], "found at the repo root");
+  // The workspace sits at the git root and a session's cwd is often below it.
+  const deep = join(root, "src/app/admin");
+  await mkdir(deep, { recursive: true });
+  assert.deepEqual(
+    (await readLedgerTasks(deep)).map((t) => t.status),
+    ["completed", "in_progress", "pending"],
+    "and from a subdirectory"
+  );
+
+  assert.deepEqual(await readLedgerTasks(join(root, "..")), [], "not from above it");
+  assert.deepEqual(await readLedgerTasks(null), [], "and never for a remote session, whose cwd is another machine's");
+
+  // A finished plan deletes its workspace, so a ledger nobody has touched for
+  // a day is abandoned — and would otherwise show its last count on a key
+  // forever.
+  assert.deepEqual(await readLedgerTasks(root, Date.now() + 25 * 60 * 60 * 1000), [], "a stale ledger is not progress");
+}
+
+console.log("OK: task counter, sdd ledger");

@@ -1,6 +1,7 @@
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readLedgerTasks } from "./sdd-ledger.mjs";
 import { ancestorChain } from "./terminal-focus.mjs";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -459,14 +460,28 @@ export function taskCounter(tasks) {
  * numeric id, so they're sorted numerically — "10" after "2", not before it.
  * Returns [] for a session that isn't using tasks, and skips any file caught
  * mid-write rather than throwing.
+ *
+ * **`localCwd` is the fallback for a session Claude Code isn't tracking.** A
+ * session driving superpowers' subagent-driven development keeps its task list
+ * in a ledger in the project instead, and `~/.claude/tasks/<id>/` stays empty
+ * — which showed up as a blank progress bar and an empty detail board through
+ * a day of six-task work. The fallback lives *here*, at the one function both
+ * the progress bar and the detail board already route through, so neither can
+ * have it without the other.
+ *
+ * Claude Code's own tasks win when there are any: the ledger is another tool's
+ * file read on a guess, and this one is the session telling us directly.
+ *
+ * Null for a remote session — see `readLedgerTasks`, whose `cwd` has to be a
+ * path on *this* machine.
  */
-export async function readTaskList(sessionId, root = CLAUDE_DIR) {
+export async function readTaskList(sessionId, root = CLAUDE_DIR, localCwd = null) {
   const dir = join(root, "tasks", sessionId);
   let names;
   try {
     names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
   } catch {
-    return [];
+    return readLedgerTasks(localCwd);
   }
   names.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
@@ -478,7 +493,7 @@ export async function readTaskList(sessionId, root = CLAUDE_DIR) {
       // mid-write — skip
     }
   }
-  return tasks;
+  return tasks.length ? tasks : readLedgerTasks(localCwd);
 }
 
 /**
@@ -486,8 +501,8 @@ export async function readTaskList(sessionId, root = CLAUDE_DIR) {
  * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
  * tasks at all, so the button can stay clean rather than showing "0/0".
  */
-async function readTaskProgress(sessionId, root) {
-  const tasks = await readTaskList(sessionId, root);
+async function readTaskProgress(sessionId, root, localCwd) {
+  const tasks = await readTaskList(sessionId, root, localCwd);
   if (tasks.length === 0) return null;
   return { ...taskCounter(tasks), active: tasks.find((t) => t.status === "in_progress")?.subject ?? null };
 }
@@ -691,7 +706,9 @@ async function sessionsFrom(source) {
         ...s,
         ...signals,
         state: compacting ? "compacting" : s.state === "idle" && blockedOnDenial ? "requires_action" : s.state,
-        progress: await readTaskProgress(s.session_id, source.root),
+        // `source.host && null`: a remote session's cwd is a path on the other
+        // machine, and only ~/.claude is fetched from it.
+        progress: await readTaskProgress(s.session_id, source.root, source.host ? null : s.cwd),
         context: await readContext(s.session_id, source.root),
       };
     })

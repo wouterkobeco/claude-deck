@@ -202,6 +202,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
 | `~/.claude/projects/<cwd>/<id>.jsonl` | the session title VS Code's terminal list shows, plus its model and reasoning effort |
 | `~/.claude/tasks/<id>/*.json` | one file per task → `done/total` on the board, the full list on the detail board |
+| `<repo>/.superpowers/sdd/<plan>/` | fallback for a session whose tasks Claude Code isn't tracking: superpowers' SDD ledger, read only when the above is empty and only for a local session |
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
@@ -244,7 +245,7 @@ mismatch.
 ```
 npm run render-check    # SVG -> key image pipeline, text fitting, sample PNGs
 npm run slots-check     # project grouping / slot assignment / detail layout
-npm run tasks-check     # "task X of Y" numbering
+npm run tasks-check     # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check     # rate-limit parse (--live prints the raw API response)
 npm run stats-check     # stats board formatting (--live prints the real tiles)
 npm run title-check     # title / cleared / blocked-on-denial / model / effort

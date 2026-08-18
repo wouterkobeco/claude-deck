@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm start              # run the daemon (needs the Stream Deck plugged in)
 npm run render-check   # SVG -> RGBA pipeline; writes scripts/render-check-output.png
 npm run slots-check    # project grouping / slot assignment
-npm run tasks-check    # "task X of Y" numbering
+npm run tasks-check    # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
@@ -551,6 +551,40 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Dragging into the empty space **below** the list marks the last row, because
   that is the natural way to ask for "last" and doing nothing there made the
   one gesture people reach for feel broken.
+- `src/sdd-ledger.mjs` — tasks Claude Code doesn't know about. The progress
+  bar and the detail board both come from `~/.claude/tasks/<session id>/`,
+  which is filled only when a session uses Claude Code's *own* task tool — a
+  session driving superpowers' subagent-driven development instead keeps six
+  tasks in a ledger inside the project, dispatches an implementer subagent per
+  task, and narrates the rest. Measured: that session showed a blank progress
+  bar and an empty detail board through a day of work, and every
+  `~/.claude/tasks/<id>/` on this machine holds nothing but a `.lock` and a
+  `.highwatermark`. **This is the first thing the daemon reads outside
+  `~/.claude` and VS Code's storage** — the read-only invariant is about the
+  four files it *writes*, none of which are here, but it is a new direction and
+  gets its own file for that reason. It returns the *same shape*
+  `~/.claude/tasks` produces (`{subject, status}`), so `taskCounter`,
+  `taskWindow`, the bar and the detail tiles all work on it unchanged and there
+  is one task list in this project rather than two.
+  **It parses another tool's file, and only the two parts that tool depends on
+  itself**: `scripts/sdd-workspace` fixes the directory at
+  `<repo root>/.superpowers/sdd/<plan basename>/`, and SKILL.md's own recovery
+  rule is "tasks with a `Task <N>: complete` line are DONE — resume at the
+  first task without one". A controller that misreads either re-runs finished
+  work, so they are as stable as another tool's format gets; the prose and the
+  fix-round lines between them are deliberately not read. Titles come from the
+  `task-<N>-brief.md` filenames, so a cleaned-up workspace still counts and
+  just reads "Task 3". Two guards earn their place: the `# SDD ledger` identity
+  line the skill mandates, without which this is somebody else's progress.md,
+  and a 24h mtime cap — a finished plan deletes its own workspace, so an
+  abandoned one would otherwise show "3 of 6" on a key forever.
+  **The fallback lives in `readTaskList`**, the one function the bar and the
+  detail board already both route through, so neither can have it without the
+  other; Claude Code's own tasks win whenever there are any. It is the one
+  reader that is **local-only** — `readLedgerTasks(cwd)` needs a path on *this*
+  machine and `remote-fs.mjs` fetches `~/.claude` and nothing else, so both
+  call sites pass null for a remote session rather than reading a stranger's
+  directory.
 - `src/statusline.mjs` — the context gauge's one install step, as a pure
   decision: the block, the whole minimal script, `insertBlock` and `decide`.
   Nothing here writes; the two things that do are commands
