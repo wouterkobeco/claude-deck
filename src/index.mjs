@@ -1535,19 +1535,26 @@ async function run() {
         const withExt = windowStates.length;
         const total = countVsCodeWindows(undefined, windowStates);
         const coverage = `${withExt}/${total}`;
+        // `lastCoverage` moves on every change, not just the ones that print:
+        // it is the "has this already been said" guard, and skipping the
+        // update on a covered poll would leave it stale, so going covered and
+        // back to short again would say nothing the second time.
         if (coverage !== lastCoverage) {
           lastCoverage = coverage;
-          console.log(
-            // >=, not ===: `total` only counts windows running the Claude Code
-            // extension (the IDE locks), `withExt` counts windows running
-            // *this* extension. A window with Claude Code disabled but this
-            // extension still active makes withExt > total, and `===` would
-            // then take the reload-the-rest branch forever, on a machine
-            // that's already fully covered.
-            withExt >= total
-              ? `vscode terminal focus: ${coverage} windows have the extension`
-              : `vscode terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`
-          );
+          // Only when a window is actually missing it. Full coverage is the
+          // normal case and there is nothing to do about it, so saying so is a
+          // line that scrolls past on every start and trains you to ignore the
+          // one that matters.
+          //
+          // `<`, not `!==`: `total` only counts windows running the Claude
+          // Code extension (the IDE locks), `withExt` counts windows running
+          // *this* extension. A window with Claude Code disabled but this
+          // extension still active makes withExt > total, and `!==` would then
+          // take the reload-the-rest branch forever, on a machine that's
+          // already fully covered.
+          if (withExt < total) {
+            console.log(`vscode terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`);
+          }
         }
       }
       if (view.kind !== "detail") await drawUsage(deck, usageButton);
