@@ -19,6 +19,8 @@ npm run vscode-state-check   # which window's storage answers for a folder
 npm run extension-check      # whose window a focus request is for
 npm run remote-install-check # what remote:install decides before it writes
 npm run config-check   # config server: token gate, validation, HTML escaping
+npm run statusline-check     # what `npm start` decides your status line needs
+npm run statusline:install   # add the context-gauge block here, no question
 npm run history-check  # state log: change-only records, durations, retention
 npm run remote:install -- <host>  # status line on a remote host, for its gauge
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
@@ -549,6 +551,13 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Dragging into the empty space **below** the list marks the last row, because
   that is the natural way to ask for "last" and doing nothing there made the
   one gesture people reach for feel broken.
+- `src/statusline.mjs` — the context gauge's one install step, as a pure
+  decision: the block, the whole minimal script, `insertBlock` and `decide`.
+  Nothing here writes; the two things that do are commands
+  (`scripts/statusline-prompt.mjs` for this machine, `scripts/remote-install.mjs`
+  for a host), which is what keeps `statusline-check` able to run it. See the
+  status-line invariant below for what the five answers mean and why `manual`
+  is one of them.
 - `extension/` — the other half, plain CommonJS with no build step and no
   dependencies, installed by copying it into `~/.vscode/extensions` (a line
   count isn't pinned here for the same reason it isn't for `src/`: it goes
@@ -766,15 +775,40 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   into place by rename rather than letting `tar -xf` merge it — see
   `remote-fs.mjs` above — for the same reason the daemon never merges anything
   else it's handed: a merged tree keeps what the remote host deleted.
-- **One install step, in the status line.** Context usage is the exception to
-  the above: Claude Code hands a session's context percentage to the status
-  line and nowhere else, so `~/.claude/statusline-command.sh` writes it to
+- **One install step, in the status line, and `npm start` now offers it.**
+  Context usage is the exception to the above: Claude Code hands a session's
+  context percentage to the status line and nowhere else, so
+  `~/.claude/statusline-command.sh` writes it to
   `~/.claude/ctx/<session id>.json` for the daemon to read. That block is
   quoted in `README.md`. If a machine has no status line, or the block is
   dropped, the gauge simply doesn't draw — never make a missing file an error.
   Don't be tempted by the transcript's `usage` totals instead: the percentage
   needs the model's window size (1M on some, 200k on others), which the
   transcript doesn't record.
+  **It was the one part of setup that could only be done by hand**, and its
+  failure mode is silence: no ctx file looks exactly like a healthy machine
+  mid-first-turn. `scripts/statusline-prompt.mjs` is the second `prestart`,
+  beside `ext-prompt.mjs` and with the same contract — silent when there is
+  nothing to do, one line when there is nobody to ask, every path exits 0.
+  **The decision is pure and lives in `src/statusline.mjs`** (`decide`,
+  `insertBlock`, `CTX_BLOCK`, `MINIMAL`) for the reason `applyAccentChoice`
+  does: the script around it writes the real `~/.claude`, so a check that drove
+  *that* would edit whatever status line this machine happens to have.
+  `statusline-check` drives the pure half against fixtures and then runs
+  `MINIMAL` under a real `bash` — it is shell, and a template literal that
+  looks like shell is not the same as one that parses.
+  Its five answers are the whole feature: `ok` (silent), `nojq`, `install`
+  (the only one that touches `settings.json`), `append`, `manual`. **`manual`
+  is not a failure path**, it is the refusal `remote:install` already makes —
+  a status line is read on every turn, and a `statusLine` key pointing at
+  something else, or a script that reads stdin some other way, is described
+  rather than guessed at. The block goes *after* `input=$(cat)` rather than
+  appended, because it reads `$input` and a script ending in an `exit` would
+  swallow it silently; `insertBlock` returning null **is** the test for
+  "appendable", so `decide` calls it rather than matching the anchor twice.
+  `MINIMAL` is shared with `remote-install.mjs` rather than copied — two
+  versions of a shell block is two things to keep in step, and only one of them
+  would ever be the one that was tested.
   **A remote host needs the same step, and `npm run remote:install -- <host>` is
   the only thing here that writes to another machine.** It is a command you run,
   never `postinstall` — `npm install` reaching across ssh to edit a config is
@@ -831,11 +865,28 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   never fails the daemon it precedes: no VS Code on the machine, no TTY to ask
   in, or EOF at the prompt all print a line and exit 0. What that
   cannot do is reload the editor: windows already open when it lands keep
-  running the *old* code until `Developer: Reload Window`. That is why
-  `ext:install` ends in an `echo` saying so. An automatic upgrade nobody
+  running the *old* code until `Developer: Reload Window`. That is why the
+  install ends by saying so. An automatic upgrade nobody
   notices is worse than a manual one they do — the copy is silent, the
   mismatch is silent, and the only symptom is a fixed bug that appears not to
-  be fixed. The `mkdir -p` in that script is not decoration either: without it,
+  be fixed.
+  **But the question it asks is content, never the version**, and that
+  distinction is the whole reason the prompt is worth reading. The two
+  package.json versions move together on every release (below), while the
+  extension itself changed in 9 commits out of 181 — so a stamp-only bump used
+  to name a drift, ask to fix it, and tell you to reload every open window over
+  code that was byte-identical. v1.1.29 is exactly that commit. `signature()`
+  hashes what VS Code actually loads, with `version` stripped from the manifest
+  (it tracks the *daemon*) and `.md` files left out (nothing loads them); equal
+  signatures mean the slot is re-stamped **silently** and nobody is asked
+  anything. A reload prompt that is usually noise is a reload prompt nobody
+  reads, which costs exactly the reloads that matter.
+  `ext:install` is that same script under `--yes` — one decision, one copy, and
+  the reload line only where it is earned — which is also what keeps
+  `postinstall` from printing it on every `npm install`. `--yes` skips the
+  is-VS-Code-here gate, because `npm install` has always installed the slot
+  unconditionally and failing over a missing `~/.vscode` is the one outcome to
+  avoid there. The `mkdir -p` in that script is not decoration either: without it,
   a machine that has never run VS Code fails `npm install` outright over a
   missing directory.
   **A worktree's `npm install` overwrites the installed extension with that

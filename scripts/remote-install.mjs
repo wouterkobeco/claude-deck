@@ -22,34 +22,16 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { validHost } from "../src/window-state.mjs";
 import { sshArgs } from "../src/remote-fs.mjs";
+// The block and the whole minimal script live in src/statusline.mjs, shared
+// with the local installer: two copies of a shell block is two things to keep
+// in step, and only one of them would ever be the one you tested.
+import { MINIMAL, SCRIPT_NAME } from "../src/statusline.mjs";
 
 // Nothing here should take anywhere near this long — the probe is one round
 // trip and the writes are a few hundred bytes. It exists so a command that
 // reads stdin can never wait forever, which is precisely how this failed once.
 const TIMEOUT_MS = 30_000;
-const LOCAL_STATUSLINE = join(homedir(), ".claude", "statusline-command.sh");
-
-// The block the README documents, on its own, for a host where there is no
-// local status line to copy. Deliberately minimal: it exists to feed the gauge,
-// not to decide what someone's status line should say.
-const MINIMAL = `#!/usr/bin/env bash
-# Claude Code status line, installed by claude-streamdeck's remote:install.
-input=$(cat)
-
-# Side-channel for the claude-streamdeck daemon: it has no other way to learn a
-# session's context usage, and the percentage here is measured against the real
-# window size (1M on some models, 200k on others) rather than a guess.
-# Written via a temp file so the daemon never reads a half-written one.
-ctx_dir="$HOME/.claude/ctx"
-sid=$(echo "$input" | jq -r '.session_id // empty')
-if [ -n "$sid" ]; then
-  mkdir -p "$ctx_dir"
-  echo "$input" | jq -c '{context: .context_window.used_percentage}' > "$ctx_dir/$sid.json.tmp" &&
-    mv "$ctx_dir/$sid.json.tmp" "$ctx_dir/$sid.json"
-fi
-
-printf '%s' "$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')"
-`;
+const LOCAL_STATUSLINE = join(homedir(), ".claude", SCRIPT_NAME);
 
 /**
  * Everything this needs to know about a host, in one round trip, before

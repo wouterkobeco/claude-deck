@@ -4,7 +4,7 @@
 // matches against.
 // Run: node scripts/terminal-focus-check.mjs
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -218,18 +218,29 @@ assert.equal(
   "extension/package.json version must match the daemon's — bump both together"
 );
 
-// `npm start`'s prestart offer, run for real against a fake HOME — the three
-// answers it can give without a person in front of it. Spawned rather than
-// imported because the whole thing *is* its side effects; stdin is a pipe
-// here, which is also the "nobody to ask" case.
+// `npm start`'s prestart offer, run for real against a fake HOME — every answer
+// it can give without a person in front of it. Spawned rather than imported
+// because the whole thing *is* its side effects; stdin is a pipe here, which is
+// also the "nobody to ask" case.
 {
-  const run = (home) =>
-    spawnSync(process.execPath, [new URL("./ext-prompt.mjs", import.meta.url).pathname], {
+  const run = (home, ...args) =>
+    spawnSync(process.execPath, [new URL("./ext-prompt.mjs", import.meta.url).pathname, ...args], {
       env: { ...process.env, HOME: home },
       encoding: "utf8",
     }).stdout;
 
   const fake = await mkdtemp(join(tmpdir(), "streamdeck-ext-check-"));
+  const copy = join(fake, ".vscode/extensions/claude-streamdeck-terminal-focus");
+  const source = new URL("../extension", import.meta.url).pathname;
+  const stampedVersion = () => JSON.parse(readFileSync(join(copy, "package.json"), "utf8")).version;
+  // A real copy, then whatever this case wants changed about it. The old
+  // fixture was a lone package.json holding a version, which stopped being a
+  // fixture the moment the decision became "does the code differ".
+  const installCopy = () => {
+    rmSync(copy, { recursive: true, force: true });
+    cpSync(source, copy, { recursive: true });
+  };
+
   // No ~/.vscode. On a machine with the app installed this still finds VS
   // Code — /Applications isn't fakeable — so only assert the branch that
   // machine can reach.
@@ -241,16 +252,33 @@ assert.equal(
   await mkdir(join(fake, ".vscode/extensions"), { recursive: true });
   assert.match(run(fake), /not installed/, "vscode present, extension missing: offers to install");
 
-  // An installed copy from another checkout — the worktree case, where one
-  // extensions slot is shared by every branch. Silent would be wrong: which
-  // version is in there is the fact worth seeing.
-  const copy = join(fake, ".vscode/extensions/claude-streamdeck-terminal-focus");
-  await mkdir(copy, { recursive: true });
-  await writeFile(join(copy, "package.json"), JSON.stringify({ version: "0.0.1" }));
-  assert.match(run(fake), /installed is v0\.0\.1/, "version drift is named, not just fixed");
-
-  await writeFile(join(copy, "package.json"), JSON.stringify({ version: versionOf("../extension/package.json") }));
+  installCopy();
   assert.equal(run(fake), "", "installed and current: says nothing");
+
+  // The case this was rewritten for. A release bumps both package.json
+  // versions, and 172 of 181 commits leave the extension's code alone — so a
+  // stamp-only difference must not name a drift and must not ask fifteen
+  // windows to reload. It is still copied, because that number on disk is the
+  // by-eye "which version is in the slot" check.
+  await writeFile(
+    join(copy, "package.json"),
+    readFileSync(join(source, "package.json"), "utf8").replace(/"version": "[^"]*"/, '"version": "0.0.1"')
+  );
+  assert.equal(run(fake), "", "a version-only bump is silent");
+  assert.equal(stampedVersion(), versionOf("../extension/package.json"), "and re-stamps the slot anyway");
+
+  // Code that really differs — the worktree case, where one extensions slot is
+  // shared by every branch. Silent would be wrong here: which version is in
+  // there is the fact worth seeing, and a reload really is needed.
+  installCopy();
+  await writeFile(join(copy, "routing.js"), `${readFileSync(join(copy, "routing.js"), "utf8")}\n// another branch\n`);
+  assert.match(run(fake), /installed is v/, "changed code names the drift");
+  assert.match(run(fake, "--yes"), /Reload Window/, "and --yes installs it and asks for the reload");
+  assert.equal(run(fake), "", "which settles it");
+
+  // A doc-only change must not ask for a reload: nothing loads a .md.
+  await writeFile(join(copy, "README.md"), "different\n");
+  assert.equal(run(fake), "", "a .md change is not a reload");
   await rm(fake, { recursive: true, force: true });
 }
 

@@ -1,13 +1,13 @@
 {
   "name": "claude-streamdeck",
-  "version": "1.1.29",
+  "version": "1.1.30",
   "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
   "main": "src/index.mjs",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "prestart": "node scripts/ext-prompt.mjs",
+    "prestart": "node scripts/ext-prompt.mjs && node scripts/statusline-prompt.mjs",
     "start": "node src/index.mjs",
     "render-check": "node scripts/render-check.mjs",
     "slots-check": "node scripts/slots-check.mjs",
@@ -19,11 +19,13 @@
     "colors-check": "node scripts/colors-check.mjs",
     "terminal-focus-check": "node scripts/terminal-focus-check.mjs",
     "remote-check": "node scripts/remote-check.mjs",
-    "ext:install": "rm -rf \"$HOME/.vscode/extensions/claude-streamdeck-terminal-focus\" && mkdir -p \"$HOME/.vscode/extensions\" && cp -R extension \"$HOME/.vscode/extensions/claude-streamdeck-terminal-focus\" && echo \"extension installed — run 'Developer: Reload Window' in VS Code windows already open\"",
+    "ext:install": "node scripts/ext-prompt.mjs --yes",
     "postinstall": "npm run ext:install",
     "board-shot": "node scripts/board-shot.mjs",
     "vscode-state-check": "node scripts/vscode-state-check.mjs",
     "extension-check": "node scripts/extension-check.mjs",
+    "statusline:install": "node scripts/statusline-prompt.mjs --yes",
+    "statusline-check": "node scripts/statusline-check.mjs",
     "remote:install": "node scripts/remote-install.mjs",
     "remote-install-check": "node scripts/remote-install-check.mjs",
     "config-check": "node scripts/config-check.mjs",

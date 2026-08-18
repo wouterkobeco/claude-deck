@@ -125,10 +125,16 @@ npm install
 npm start
 ```
 
-That's everything except the context gauge, which needs one block in your status
-line: Claude Code reports a session's context percentage there and nowhere else.
-Add this near the top of `~/.claude/statusline-command.sh` (assumes the usual
-`input=$(cat)` first line):
+That's everything. The context gauge needs one block in your status line —
+Claude Code reports a session's context percentage there and nowhere else — and
+`npm start` checks for it and offers to add it, defaulting to yes. It writes a
+whole status line if you have none, inserts the block after `input=$(cat)` if
+you do (keeping a `.bak`), and describes the block instead of touching anything
+if your status line is something it can't reason about. `npm run
+statusline:install` does the same without the question.
+
+The block, if you'd rather add it by hand — near the top of
+`~/.claude/statusline-command.sh`, after the usual `input=$(cat)` first line:
 
 ```bash
 ctx_dir="$HOME/.claude/ctx"
