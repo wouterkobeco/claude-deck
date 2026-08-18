@@ -125,6 +125,11 @@ npm install
 npm start
 ```
 
+`.npmrc` sets `loglevel=silent`, so `npm start` prints the daemon's own line
+and nothing else. Everything this project prints still comes through, errors
+included — the one thing it hides is npm's own reporting, so if an install
+looks wrong, run `npm install --loglevel=warn` to see why.
+
 That's everything. The context gauge needs one block in your status line —
 Claude Code reports a session's context percentage there and nowhere else — and
 `npm start` checks for it and offers to add it, defaulting to yes. It writes a
