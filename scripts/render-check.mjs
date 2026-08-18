@@ -103,6 +103,25 @@ eq(ellipsize("abcdefghijklmnopq", 58, 14, 0.1), "abcde…", "truncation measures
   eq(idle.filter((s) => s.state === "active").length, 0, "nothing active means no ongoing square");
 }
 
+// A long task list drops the gap rather than growing a second rendering mode:
+// at 20 tasks a 1px gap is a third of each square and the row reads as
+// hatching, so the squares butt together into a plain two-tone bar. The switch
+// is on the geometry, not the count — 13 tasks is the last row whose squares
+// still clear 4px with the gaps in, so a wider key would keep them longer.
+{
+  const gapOf = (n) => {
+    const sq = taskSquares({ current: 1, total: n, active: "x" }, 72);
+    return +(sq[1].x - (sq[0].x + sq[0].width)).toFixed(3);
+  };
+  eq(gapOf(13), 1, "13 tasks still fit gapped squares");
+  eq(gapOf(14), 0, "14 tasks collapse the gap");
+  const wide = taskSquares({ current: 1, total: 20, active: "x" }, 72);
+  eq(wide.length, 20, "one square per task, gap or no gap");
+  eq(wide[0].x, 3, "gapless row keeps the left margin");
+  eq(Math.round(wide[19].x + wide[19].width), 69, "gapless row keeps the right margin");
+  eq(wide[0].state, "active", "gapless row still marks the ongoing task");
+}
+
 const width = 72;
 const height = 72;
 const buf = await renderKey({

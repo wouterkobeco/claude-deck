@@ -191,8 +191,9 @@ export function ellipsize(line, width, fontSize, letterSpacing = 0) {
 
 /**
  * The foot counter as data: one square per task across the key width, 1px
- * gaps, green once completed. `current` counts the in-progress task, so it
- * only reads as done when nothing is active (`active` null means the counter
+ * gaps that collapse once the squares get thin, green once completed.
+ * `current` counts the in-progress task, so it only reads as done when
+ * nothing is active (`active` null means the counter
  * has moved on to the furthest-along *completed* task).
  *
  * The row is inset by FOOT_MARGIN so the first and last squares don't run into
@@ -204,9 +205,16 @@ const FOOT_MARGIN = 3;
 export function taskSquares(progress, width) {
   const n = Math.max(1, progress.total);
   const done = progress.current - (progress.active ? 1 : 0);
-  const w = (width - 2 * FOOT_MARGIN - (n - 1)) / n;
+  const room = width - 2 * FOOT_MARGIN;
+  // Past ~16 tasks the 1px gap is a third of each square and the row reads as
+  // hatching rather than a fill level. Below 4px the gap is dropped and the
+  // same squares butt together into a plain two-tone bar — one boundary, still
+  // exactly where it was. No second rendering mode, no threshold on the task
+  // count: the geometry decides, so a wider key keeps its squares longer.
+  const gap = (room - (n - 1)) / n >= 4 ? 1 : 0;
+  const w = (room - (n - 1) * gap) / n;
   return Array.from({ length: n }, (_, i) => ({
-    x: FOOT_MARGIN + i * (w + 1),
+    x: FOOT_MARGIN + i * (w + gap),
     width: w,
     // The square right after the done run *is* the running one — that's how
     // `done` was derived — so which task is ongoing costs no extra data.
