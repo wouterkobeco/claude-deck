@@ -187,6 +187,15 @@ const settled = accentFor(rem(2));
 assignSlots([s("rem1", rem(1)), s("rem2", rem(2))], wide);
 eq(accentFor(rem(2)), settled, "and the loser's new colour sticks across polls");
 
+// The collision rule is about folders, but the loop is over sessions: a
+// project's second session used to see its own colour already claimed, evict
+// it and re-take the lowest free accent every poll — so a manual pick from the
+// config page vanished for any project with two sessions open, which is most
+// of them.
+loadAccents([[rem(3), ACCENTS[5]]]);
+assignSlots([s("rem3a", rem(3)), s("rem3b", rem(3))], wide);
+eq(accentFor(rem(3)), ACCENTS[5], "a project with two sessions keeps its colour");
+
 // Round-trip through a real file, since every failure path in accents.mjs
 // swallows its error — a write that silently does nothing would look exactly
 // like a first run, forever.

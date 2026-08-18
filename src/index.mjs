@@ -419,6 +419,12 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   // live together, where an arbitrary winner is fine — which is not true of a
   // deliberate choice, hence that delete.
   const used = new Set();
+  // This loop is over *sessions*, and the collision rule is about *folders*:
+  // a project's second session would otherwise find its own colour already in
+  // `used`, evict it, and re-claim the lowest free accent — every poll, so a
+  // manual pick from the config page was silently thrown away for any project
+  // with two sessions open. Resolved once per folder instead.
+  const resolved = new Set();
   for (const s of real) {
     const key = folderKeyFor(s);
     // Still first-seen: a project nobody has dragged goes on the end, exactly
@@ -427,9 +433,12 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
       projectOrder.push(key);
       folderOrder.set(key, projectOrder.length - 1);
     }
-    if (used.has(folderAccent.get(key))) folderAccent.delete(key);
-    if (!folderAccent.has(key)) folderAccent.set(key, claimAccent(key, liveFolders));
-    used.add(folderAccent.get(key));
+    if (!resolved.has(key)) {
+      resolved.add(key);
+      if (used.has(folderAccent.get(key))) folderAccent.delete(key);
+      if (!folderAccent.has(key)) folderAccent.set(key, claimAccent(key, liveFolders));
+      used.add(folderAccent.get(key));
+    }
     if (!sessionOrder.has(s.session_id)) sessionOrder.set(s.session_id, arrivals++);
   }
   for (const s of nested) {
