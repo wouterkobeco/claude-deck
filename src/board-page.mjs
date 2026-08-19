@@ -24,9 +24,28 @@ import { esc, colour } from "./html.mjs";
 // and importing the markup without the rules that make it a header is how the
 // two drift apart.
 export const HEADER_CSS = `
+  /* Saved to an iPhone's home screen the page runs standalone under
+     viewport-fit=cover, so it owns the whole screen — status bar, notch and
+     home indicator included — and the header sat underneath the clock. These
+     four are the insets iOS reports for that; they are 0 in a browser tab and
+     0 on every other platform, so nothing else moves.
+     Held as variables rather than used inline because env() cannot be set from
+     a devtools console or a test, and a layout nobody can drive is a layout
+     that gets this wrong twice. */
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    /* What the sheet, the panel and the scrim start below. */
+    --head: calc(56px + var(--safe-top));
+  }
   .head { position: sticky; top: 0; z-index: 11; background: var(--page-bg, #0b0b0b);
-          flex: none; height: 56px; display: flex; align-items: center; gap: 10px;
-          padding: 0 14px; border-bottom: 1px solid #1e1e1e }
+          flex: none; height: var(--head); padding-top: var(--safe-top);
+          display: flex; align-items: center; gap: 10px; box-sizing: border-box;
+          padding-left: calc(14px + var(--safe-left));
+          padding-right: calc(14px + var(--safe-right));
+          border-bottom: 1px solid #1e1e1e }
   .head h1 { font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
              color: #9e9e9e; font-weight: 600; margin: 0; white-space: nowrap }
   .head .spacer { flex: 1 }
@@ -82,7 +101,6 @@ const STYLE = `
   :root {
     color-scheme: dark;
     --page-bg: #0b0b0b;
-    --head: 56px;
     --cols: 5; --rows: 3; --fs: 9; --gap: 8px; --lines: 3;
     /* One place, because two things need it in step: the line box the browser
        lays out, and the max-height that enforces the clamp below. */
@@ -109,7 +127,9 @@ const STYLE = `
 
   /* A size container, so the grid below can measure itself against both of
      its own axes rather than against the window. */
-  main { flex: 1; min-height: 0; padding: var(--gap); container-type: size;
+  main { flex: 1; min-height: 0; container-type: size;
+         padding: var(--gap) calc(var(--gap) + var(--safe-right))
+                  calc(var(--gap) + var(--safe-bottom)) calc(var(--gap) + var(--safe-left));
          overflow-y: auto; overscroll-behavior: contain }
   /* Rows set a key *height*, not a count: past the fold the board keeps going
      and scrolls, because the 12-slot cap is a fact about the deck.
@@ -202,7 +222,8 @@ const STYLE = `
 
   .sheet { position: fixed; inset: var(--head) 0 0 auto; width: min(380px, 88vw);
            background: #141414; border-left: 1px solid #262626; z-index: 10;
-           padding: 18px 20px; overflow-y: auto;
+           padding: 18px calc(20px + var(--safe-right)) calc(18px + var(--safe-bottom)) 20px;
+           overflow-y: auto;
            transform: translateX(100%); transition: transform .18s ease;
            display: flex; flex-direction: column; gap: 22px }
   .sheet.on { transform: none }
@@ -243,7 +264,7 @@ const STYLE = `
            overflow-y: auto; transform: translateX(100%); transition: transform .18s ease;
            display: flex; flex-direction: column }
   .panel.on { transform: none }
-  .phead { position: relative; padding: 16px 20px 18px; border-bottom: 1px solid #262626 }
+  .phead { position: relative; padding: 16px calc(20px + var(--safe-right)) 18px 20px; border-bottom: 1px solid #262626 }
   .phead .accent { position: absolute; inset: 0 auto 0 0; width: 5px }
   .phead .proj { font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
                  font-weight: 700; color: #9e9e9e; margin: 0 0 6px }
@@ -256,7 +277,7 @@ const STYLE = `
   .pill { display: inline-block; margin: 12px 8px 0 0; padding: 4px 10px; border-radius: 999px;
           font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
           color: #fff }
-  .pbody { padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 22px }
+  .pbody { padding: 18px calc(20px + var(--safe-right)) calc(28px + var(--safe-bottom)) 20px; display: flex; flex-direction: column; gap: 22px }
   .pbody h3 { font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
               color: #757575; font-weight: 600; margin: 0 0 10px }
   .facts { display: grid; grid-template-columns: 78px 1fr; gap: 9px 14px; font-size: 13px;
@@ -287,12 +308,12 @@ const STYLE = `
 
   /* One grip, two numbers: drag left/right for columns, up/down for rows —
      what a window grip already means, in the corner it resizes toward. */
-  .handle { position: fixed; right: 6px; bottom: 6px; width: 44px; height: 44px;
+  .handle { position: fixed; right: calc(6px + var(--safe-right)); bottom: calc(6px + var(--safe-bottom)); width: 44px; height: 44px;
             border-radius: 10px; background: #1b1b1bdd; border: 1px solid #2e2e2e;
             display: grid; place-items: center; color: #757575; font-size: 17px;
             cursor: nwse-resize; touch-action: none; z-index: 5 }
   .handle.on { background: #2a2a2add; color: #e0e0e0 }
-  .readout { position: fixed; right: 58px; bottom: 14px; font-size: 12px; color: #9e9e9e;
+  .readout { position: fixed; right: calc(58px + var(--safe-right)); bottom: calc(14px + var(--safe-bottom)); font-size: 12px; color: #9e9e9e;
              background: #1b1b1bdd; padding: 5px 9px; border-radius: 6px;
              font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s;
              pointer-events: none; z-index: 5 }
@@ -490,12 +511,16 @@ export function boardPage(token, { keys, projects, palette }) {
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Deck">
+  <!-- What iOS fills the "Add to Home Screen" name field with, and what ends
+       up under the icon. Android takes the same name from the manifest's
+       short_name; the two are kept identical on purpose, or the same app is
+       called two things depending on the phone it is on. -->
+  <meta name="apple-mobile-web-app-title" content="Claude Deck">
   <meta name="theme-color" content="#0b0b0b">
   <link rel="manifest" href="/manifest.webmanifest?t=${esc(token)}">
   <link rel="apple-touch-icon" href="/icon-180.png?t=${esc(token)}">
   <link rel="icon" href="/icon-192.png?t=${esc(token)}">
-  <title>deck</title><style>${HEADER_CSS}${STYLE}</style></head><body>
+  <title>Claude Deck</title><style>${HEADER_CSS}${STYLE}</style></head><body>
   ${iconHeader(token, "board")}
 
   <main><div class="grid" id="grid">${boardGrid(keys)}</div></main>

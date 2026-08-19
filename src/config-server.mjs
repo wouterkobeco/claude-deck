@@ -34,7 +34,8 @@ const STYLE = `
          margin:0; padding:0; box-sizing:border-box }
   /* border-box, or max-width plus this padding is wider than the window it is
      capped to and the page scrolls sideways. */
-  main { padding:28px clamp(12px,2.2vw,32px) 48px; box-sizing:border-box }
+  main { padding:28px calc(clamp(12px,2.2vw,32px) + var(--safe-right)) calc(48px + var(--safe-bottom))
+                calc(clamp(12px,2.2vw,32px) + var(--safe-left)); box-sizing:border-box }
   /* Horizontally centred, vertically pinned to the top. Centring both ways
      looked better on one page and wrong across two: Accents and Time are
      different heights, so the heading and the tabs jumped every time you
@@ -228,7 +229,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
      <div class="pie-total">${esc(pie.total)} of session time</div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <style>${HEADER_CSS}${STYLE}</style></head><body>
     ${iconHeader(token, "activity", "Activity")}
     <main class="wide">
@@ -279,7 +280,7 @@ function page(token, projects) {
     .join("");
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <style>${HEADER_CSS}${STYLE}</style></head><body>
     ${iconHeader(token, "accents", "Projects")}
     <main>
@@ -457,8 +458,11 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
           res,
           200,
           JSON.stringify({
-            name: "Claude deck",
-            short_name: "Deck",
+            name: "Claude Deck",
+            // Identical to the page's apple-mobile-web-app-title: this is the
+            // name under the icon, and the same app must not be called two
+            // things depending on which phone it landed on.
+            short_name: "Claude Deck",
             start_url: `/board?t=${token}`,
             display: "standalone",
             orientation: "any",

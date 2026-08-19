@@ -832,6 +832,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   than covering the whole viewport as they did: with the header buried under
   the scrim there was no way to close the sheet with the control that opened
   it, and the activity icon was unreachable from a board with a panel up.
+  **Saved to a home screen it runs standalone under `viewport-fit=cover`**, so
+  the page owns the whole screen — status bar, notch and home indicator
+  included — and the header sat under the clock. The four `env(safe-area-inset-*)`
+  values fix that, and they are held as **variables** rather than used inline
+  for a reason worth keeping: `env()` cannot be set from a console or a test,
+  so a layout built directly on it is one nobody can drive, and this is exactly
+  the sort of thing to get wrong twice. `--head` is `56px` plus the top inset,
+  so everything already measuring from it follows; the grip, the grid and both
+  overlays take the bottom and side ones. All four are 0 in a browser tab and
+  on every other platform, so nothing else moves.
 - `src/html.mjs` — `esc` and `colour`, in one place because two files now render
   markup and the alternative was an import cycle between them.
 - `src/sdd-ledger.mjs` — tasks Claude Code doesn't know about. The progress
