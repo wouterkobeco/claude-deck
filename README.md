@@ -211,6 +211,11 @@ the name **Claude Deck**.
 - **The bar-chart icon** is the Activity page — tokens per hour, the same split
   by model, sessions in parallel, and where the time went, sized to be read
   from a tablet rather than squinted at.
+- **The ⓘ icon**, or tapping the usage tile, is the status page: both rate-limit
+  windows as meters with when each one turns over, today's blocked time, the
+  all-time totals and the version. The deck spends two whole keys saying
+  "Session reset 3h" because 72px can't hold a percentage and its window at
+  once; a page can put them next to each other.
 - **It says when it can't see the daemon.** Three missed polls and the board
   greys out rather than leaving a plausible frozen picture up.
 

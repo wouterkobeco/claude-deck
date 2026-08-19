@@ -764,6 +764,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   on a tablet and 11% on a phone (whose key is half the size and so needs a
   bigger share of it), which fits five lines and four — and it is a slider,
   because how far away the thing is sitting is not something this can know.
+  **`statusPage` is the stats board with the constraint taken off.** Same
+  numbers the deck draws — the two rate-limit windows, the all-time totals,
+  today's blocked time, the version — but the deck has to spend two separate
+  keys on "Session reset 3h" and "Week reset 5d", because a 72px key cannot
+  hold a percentage and the window it is a percentage *of* at the same time,
+  and 81% twenty minutes before a reset means something quite different from
+  81% on day one of seven. Here they are one meter each. Reached from the
+  header's own icon and from the usage tile, which is a plain anchor rather
+  than a click handler: it is a navigation, so it needs nothing from `SCRIPT`
+  and the poll's markup diffing treats it like any other tile. It deliberately
+  does **not** poll — everything on it is cached upstream for minutes
+  (`getUsage` 5m, `getStats` 30s, blocked-today 30s) and moves at the speed of
+  an hour, so a 2s refresh would be traffic in exchange for nothing.
   **A saved icon has to open a board, not a 403.** The page ships a manifest
   and PNG icons (`renderIcon`, in `render.mjs` with the rest of the SVG→sharp
   work rather than as a checked-in file — the palette is already there, and a

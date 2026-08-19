@@ -416,6 +416,14 @@ const boardSrv = await createConfigServer({
   // all three of them.
   activity: () => activity,
   reorder: () => {},
+  status: async () => ({
+    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    // Untrusted the same way every other label here is — this reaches the page
+    // from another tool's cache file.
+    stats: [{ label: '<script>alert(1)</script>', value: "66b" }, { label: "Sessions", value: "4.4k" }],
+    blocked: "41m",
+    version: "9.9.9",
+  }),
 });
 const bBase = new URL(boardSrv.url).origin;
 const bToken = boardSrv.token;
@@ -477,19 +485,40 @@ const gone = await (await fetch(`${bBase}/session?t=${bToken}&id=../../etc/passw
 eq(gone.includes("has ended"), true, "an id nothing matches says the session has ended");
 eq(gone.includes("class=\"task"), false, "and shows nothing stale");
 
+// The status page: the stats board's numbers, reached from the usage tile and
+// from the header's own icon. Formatted differently on purpose — the deck
+// spends two whole keys saying "Session reset 3h" because a 72px key cannot
+// hold a percentage and its window at once.
+eq((await fetch(`${bBase}/status`)).status, 403, "the status page is behind the token gate");
+const status = await (await fetch(`${bBase}/status?t=${bToken}`)).text();
+eq(status.includes("82%"), true, "the session window's percentage is on it");
+eq(status.includes("resets in 2h"), true, "beside when that window turns over");
+eq(status.includes("resets in 7d"), true, "and the same for the week");
+eq(status.includes("41m"), true, "today's blocked time, which the deck lost a slot for once");
+eq(status.includes("9.9.9"), true, "and the daemon's own version");
+eq(status.split("<script>").length - 1, 0, "a stat label named <script> does not reach it as a tag");
+
+// The usage tile is the other way in. An anchor rather than a click handler:
+// it is a navigation, so it needs nothing from SCRIPT and survives the poll's
+// diffing unchanged.
+eq(board.includes(`<a class="key dark tile" href="/status?t=${bToken}"`), true,
+   "the usage tile links to it, carrying the token");
+eq(grid.includes(`href="/status?t=${bToken}"`), true, "and so does the tile the poll swaps in");
+
 // One header on all three views. It was icons on the board and text links on
 // the config pages, which made "where am I and how do I get back" a different
 // question depending on where you already were.
-for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/", "accents"]]) {
+for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/status", "status"], ["/", "accents"]]) {
   const html = await (await fetch(`${bBase}${path}?t=${bToken}`)).text();
   const head = html.split('class="head"')[1].split("</header>")[0];
-  eq(head.split('class="icon').length - 1, 3, `${path} carries all three views`);
+  eq(head.split('class="icon').length - 1, 4, `${path} carries all four destinations`);
   // The accents page is not one of the three destinations — it is where the
   // deck's own config key lands, and it keeps drag-to-reorder — so nothing is
   // marked there rather than something being marked arbitrarily.
   eq(head.split('class="icon on"').length - 1, here === "accents" ? 0 : 1, `${path} marks the right icon current`);
   eq(head.includes(`href="/board?t=${bToken}"`), true, `${path} links the board with the token`);
   eq(head.includes(`href="/activity?t=${bToken}"`), true, `${path} links activity with the token`);
+  eq(head.includes(`href="/status?t=${bToken}"`), true, `${path} links status with the token`);
   // The gear ends in the same place from every page: the board's settings
   // sheet. On the board it toggles it; elsewhere it links to the board with
   // the sheet already open. It pointed at the accents page from the config
@@ -619,4 +648,4 @@ eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }] 
 eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }], en0: [{ family: "IPv6", address: "fe80::1", internal: false }, { family: "IPv4", address: "192.168.2.28", internal: false }] }), "192.168.2.28", "the first non-internal IPv4 wins");
 eq(lanAddress({}), null, "no interfaces at all is null, not a throw");
 
-console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts, board page, detail panel, shared header, focus and lanAddress");
+console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts, board page, detail panel, status page, shared header, focus and lanAddress");

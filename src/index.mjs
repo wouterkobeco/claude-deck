@@ -1210,6 +1210,32 @@ export const configDeps = {
   // two so the page and the fragment its poll fetches can never be rendered
   // from two different reads.
   board: async () => ({ keys: await boardKeys(), projects: configDeps.projects(), palette: ACCENTS }),
+  // The stats board's numbers, for the page the usage tile and the header's
+  // info icon both open. Formatted here rather than in the page, the same
+  // split every other route follows: index.mjs owns the clock and the units,
+  // board-page.mjs owns the markup, and config-check drives the page from
+  // fixed strings instead of a real rate-limit window.
+  //
+  // The reset times are the half the deck has to spend two whole keys on
+  // ("Session reset 3h", "Week reset 5d") because a key cannot hold a
+  // percentage and its window at once. Here they sit under their own meter,
+  // which is the point of the page having a different shape.
+  status: async () => {
+    const { session, week, sessionResetsAt, weekResetsAt } = await getUsage();
+    const hours = hoursUntil(sessionResetsAt);
+    const days = daysUntil(weekResetsAt);
+    return {
+      usage: {
+        session,
+        week,
+        sessionResets: hours === null ? "" : `${hours}h`,
+        weekResets: days === null ? "" : `${days}d`,
+      },
+      stats: await getStats(),
+      blocked: blockedTodayTile().value,
+      version: pkg.version,
+    };
+  },
   // One session at length, for the panel the board's second tap opens. The
   // deck's detail board reads its tasks per poll rather than in
   // getLiveSessions for a reason that holds here too — this costs nothing

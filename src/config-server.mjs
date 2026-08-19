@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
 import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
-import { boardGrid, boardPage, detailPanel, iconHeader, HEADER_CSS } from "./board-page.mjs";
+import { boardGrid, boardPage, detailPanel, statusPage, iconHeader, HEADER_CSS } from "./board-page.mjs";
 import { renderIcon } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
 
@@ -501,7 +501,13 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         // Deliberately a fragment rather than a JSON payload the client turns
         // into markup: one renderer, on the server, for the first paint and
         // every one after it.
-        return send(res, 200, boardGrid((await deps.board()).keys), "text/html; charset=utf-8");
+        return send(res, 200, boardGrid((await deps.board()).keys, token), "text/html; charset=utf-8");
+      }
+
+      // The stats board as a page: what the deck's usage key opens, reached
+      // here from that same tile and from the header's own icon.
+      if (req.method === "GET" && url.pathname === "/status") {
+        return send(res, 200, statusPage(token, await deps.status()), "text/html; charset=utf-8");
       }
 
       // One session at length, for the panel a second tap opens. `deps.detail`
