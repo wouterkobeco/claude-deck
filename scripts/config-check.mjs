@@ -61,7 +61,7 @@ eq(page.headers.get("referrer-policy"), "no-referrer", "the token cannot travel 
 // Exactly one — the drag script the page ships. A second is a folder name that
 // reached the document as a tag. Counting beats "contains" now that the page
 // legitimately has one of its own.
-eq(html.split("<script>").length - 1, 1, "a folder named <script> does not reach the page as a second tag");
+eq(html.split("<script>").length - 1, 2, "a folder named <script> does not reach the page as a third tag, beside the header's own and the page's");
 eq(html.includes("&lt;script&gt;"), true, "it is escaped instead");
 eq(html.includes('value="/projects/<script>"x"'), false, "and the quote does not break out of the hidden field");
 eq(html.includes("&quot;"), true, "the quote is escaped too");
@@ -239,6 +239,7 @@ const withHistory = await createConfigServer({
     stats: [{ label: "Sessions", value: "4.4k" }],
     blocked: "41m",
     version: "9.9.9",
+    account: "Wouter",
   }),
 });
 const hBase = new URL(withHistory.url).origin;
@@ -249,6 +250,7 @@ const hPage = await fetch(`${hBase}/activity?t=${hToken}`);
 eq(hPage.status, 200, "and is served with it");
 const hHtml = await hPage.text();
 eq(hHtml.includes("3h12m"), true, "the numbers reach the table");
+eq(hHtml.includes('class="account">Wouter<'), true, "the account name sits under the rate-limit heading");
 eq(hHtml.includes("4h11m"), true, "including the total the pie is a share of");
 // One table now, following the same window picker as the charts above it.
 eq(hHtml.split('class="project"').length - 1, 2, "one row per project, in one table");
@@ -265,7 +267,7 @@ const split = hHtml.split('class="split"')[1];
 eq(split.split("#555555").length - 1, 2, "it becomes the neutral, in the row and in the slice");
 // A project name is untrusted here for exactly the reason it is on the other
 // page, and this table is a second place it reaches the document.
-eq(hHtml.split("<script>").length - 1, 0, "a folder named <script> does not reach the activity page as a tag");
+eq(hHtml.split("<script>").length - 1, 2, "a folder named <script> does not reach the activity page as a third tag, beside the header's own and the page's");
 eq(hHtml.includes("&lt;script&gt;"), true, "it is escaped there too");
 // The blocked column is coloured to draw the eye to real blocked time, so a
 // row with none must not wear it: alpha has a value, the second row an em
@@ -346,10 +348,12 @@ eq(weekPage.includes('<a class="on" href="/activity?t=' + hToken + '&amp;p=7d"')
 // An edited URL must not render a picker that disagrees with the charts: the
 // page marks whichever window index.mjs says it actually used, never the one
 // that was asked for.
-const junkPage = await (await fetch(`${hBase}/activity?t=${hToken}&p=../../etc`)).text();
-eq(askedFor, "../../etc", "an unknown window is passed through rather than guessed at here");
+// Not "etc": the page's own script legitimately says "fetch", which contains
+// it as a substring — a marker with no accidental hits in real page content.
+const junkPage = await (await fetch(`${hBase}/activity?t=${hToken}&p=../../nowhere`)).text();
+eq(askedFor, "../../nowhere", "an unknown window is passed through rather than guessed at here");
 eq(picker(junkPage).split('<a class="on"').length - 1, 1, "and the page still marks exactly one");
-eq(junkPage.includes("etc"), false, "an unknown window never reaches the document");
+eq(junkPage.includes("nowhere"), false, "an unknown window never reaches the document");
 // pct arrives from index.mjs, but it reaches a style attribute — the one place
 // on this page where a number rather than a string does — so it is coerced
 // rather than trusted, the same rule the folder field lives by.
@@ -466,7 +470,7 @@ eq(board.includes("data-id=\"s-1\""), true, "every tile carries the id its poll 
 eq(board.includes("data-id=\"__usage\""), true, "the reserved keys are tiles like any other");
 // Exactly one — the page's own SCRIPT. A second is a project name or a title
 // that reached the document as a tag.
-eq(board.split("<script>").length - 1, 1, "a project named <img> and a title of <script> do not reach the page as tags");
+eq(board.split("<script>").length - 1, 2, "a project named <img> and a title of <script> do not reach the page as tags, beside the header's own script and the board's");
 eq(board.includes("url(javascript"), false, "an accent that is not a hex never reaches a CSS colour slot");
 eq(board.includes("background:#555555"), true, "it becomes the neutral instead");
 // The session tile alone is tappable; the reserved three and an unreachable
@@ -530,7 +534,7 @@ eq(act.includes("resets in 2h"), true, "beside when that window turns over");
 eq(act.includes("resets in 7d"), true, "and the same for the week");
 eq(act.includes("41m"), true, "today's blocked time, which the deck lost a slot for once");
 eq(act.includes("9.9.9"), true, "and the daemon's own version");
-eq(act.split("<script>").length - 1, 0, "a stat label named <script> does not reach it as a tag");
+eq(act.split("<script>").length - 1, 2, "a stat label named <script> does not reach it as a third tag, beside the header's own and the page's");
 // Above the picker, because no window applies to them: a 5-hour rate limit is
 // not a thing you look at "over 30 days".
 eq(act.indexOf("Rate limits") < act.indexOf('class="periods"'), true,

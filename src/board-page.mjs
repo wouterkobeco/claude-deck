@@ -83,7 +83,7 @@ export function iconHeader(token, here, title = "Deck") {
   const t = esc(token);
   const link = (view, href, label) =>
     `<a class="icon${here === view ? " on" : ""}" href="${href}?t=${t}" title="${label}">${ICONS[view]}</a>`;
-  return `<header class="head">
+  return `<header class="head" data-here="${here}">
     <h1>${esc(title)}</h1>
     <span class="offline-note">daemon not responding</span>
     <span class="spacer"></span>
@@ -96,6 +96,73 @@ export function iconHeader(token, here, title = "Deck") {
     }
   </header>`;
 }
+
+// Shared with every page that renders the header, for the same reason its CSS
+// is: a gesture that only worked on one of the three would be a worse bug
+// than not having it, once you got used to it existing.
+//
+// Nothing on any of these pages is meant to be wider than the viewport, so a
+// horizontal drag has no scroll to spend — each page's own CSS blocks it with
+// overflow-x:hidden, which leaves the gesture unclaimed. This claims it: swipe
+// or trackpad-scroll left/right steps through the header's own icon order.
+//
+// Only "board" and "activity" are steps — "settings" isn't a page of its own,
+// it's the board's sheet, and including it as a third step made every other
+// swipe land back on the board with the sheet open, which looks identical to
+// the board with it closed. That read as the same view twice in a row, not a
+// third destination, so it's the gear icon's job alone (click it, or its link
+// to the board with the sheet already open) and never the swipe's.
+// A header with no data-here (the accents page, which carries no icon of its
+// own) has no place in the order, so `at` comes back -1 and the whole thing
+// opts out rather than guessing.
+//
+// `.handle` and `input` are excluded from starting a swipe because both are
+// draggable in their own right (the corner grip, the accents page's reorder
+// handles, the font-size slider) — without the exclusion, dragging one more
+// than the threshold would fire a page change out from under it.
+export const HEADER_SCRIPT = `
+(() => {
+  const CYCLE = ["board", "activity"];
+  const at = CYCLE.indexOf(document.querySelector(".head")?.dataset.here);
+  if (at < 0) return;
+
+  function go(view) {
+    location.href = "/" + view + location.search;
+  }
+
+  // dx < 0 is a leftward swipe (or, for wheel, its scroll-right equivalent) —
+  // read as "forward", the same sense a book page turns.
+  function step(dx) {
+    if (!dx) return;
+    go(CYCLE[(at + (dx < 0 ? 1 : CYCLE.length - 1)) % CYCLE.length]);
+  }
+
+  let x0 = null, y0 = null;
+  document.addEventListener("touchstart", (e) => {
+    if (e.target.closest("input, .handle")) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+  }, { passive: true });
+  document.addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    x0 = y0 = null;
+    // Mostly horizontal and past a real threshold, or an ordinary vertical
+    // scroll would fire this on every page.
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx);
+  }, { passive: true });
+
+  // A trackpad's horizontal scroll fires a burst of small-deltaX wheel events
+  // per gesture, not one — the cooldown turns that burst into a single step
+  // instead of flipping through every page in it.
+  let cooling = false;
+  document.addEventListener("wheel", (e) => {
+    if (cooling || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    cooling = true;
+    setTimeout(() => (cooling = false), 500);
+    step(-e.deltaX);
+  }, { passive: true });
+})();
+`;
 
 const STYLE = `
   :root {
@@ -237,7 +304,6 @@ const STYLE = `
   .usage .half { flex: 1; min-height: 0; overflow: hidden;
                  display: flex; flex-direction: column; align-items: center;
                  justify-content: center; gap: 1cqh; padding: 0 7cqw }
-  .usage .half + .half { border-top: 1px solid #ffffff22 }
   .usage .bar { width: 100%; height: 5cqh; min-height: 3px; border-radius: 2px;
                 background: #ffffff22; overflow: hidden }
   .usage .bar i { display: block; height: 100% }
@@ -591,6 +657,7 @@ export function boardPage(token, { keys, projects, palette, version }) {
 
   <div class="readout" id="readout">5 × 3</div>
   <div class="handle" id="handle">⇲</div>
+  <script>${HEADER_SCRIPT}</script>
   <script>${SCRIPT}</script>
   </body></html>`;
 }

@@ -619,6 +619,27 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   than `deps.activity()`, kept apart because the two are cached on completely
   different clocks (`getUsage` 5m, `getStats` and blocked-today 30s, against a
   regroup of records the picker drives).
+  **The account name sits under "Rate limits", not beside the version.** It's
+  the same `getAccountName()` the deck's own stats board reads, off
+  `~/.claude.json` rather than the OAuth token — the two are on this page
+  because it's the one place both a plan and a name make sense together.
+  **The period links used to be plain `<a>`s — a real navigation on every tap,
+  full reload, scroll thrown back to the top.** `ACTIVITY_SCRIPT` intercepts a
+  click on one, fetches it, and swaps `document.body` — the same shape as the
+  accents page's own drag script (fetch, `DOMParser`, `replaceChildren`), just
+  triggered by a link instead of a form. `pushState` keeps the URL tracking the
+  window picked; `popstate` re-fetches so the back button isn't left showing a
+  page that disagrees with its own URL.
+  **The pie centres itself only once it's actually alone on a row.**
+  `.split`'s `justify-content:center` looks like it should center the table too,
+  but the table's `flex-grow` fills the row completely while they're side by
+  side, so there's no leftover space to center against until the pie wraps
+  onto a row of its own.
+  **Five period tabs is more than the fixed padding/font fit on an iPhone
+  SE's ~351px of content width.** `.periods`' gap, padding and font are all
+  `clamp()`s that shrink together as the viewport narrows, rather than
+  wrapping to a second row or overflowing into the horizontal scroll the rest
+  of the page just gave up.
   **Its type is sized for a tablet, not for a laptop it is leaning on.** The
   page was 760px of 13px table in whatever window it opened in, which is fine
   on a Mac two feet away and a column of small print on an iPad — and the iPad
@@ -816,6 +837,22 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   which tiles are tappable (`data-session` is emitted only for session tiles, so
   the reserved three and an unreachable stand-in are inert by construction
   rather than by a check in the handler).
+  **`HEADER_SCRIPT` is exported alongside `HEADER_CSS`/`iconHeader`, for the
+  same reason those are: a gesture that only worked on one of the three pages
+  sharing the header would be a worse bug than not having it.** Every page's
+  own CSS blocks horizontal scroll (`overflow-x:hidden`), which leaves a
+  horizontal swipe or trackpad-scroll unclaimed — this claims it, stepping
+  through the header's icon order. **Only "board" and "activity" are steps.**
+  "settings" was a third step for one release, and it made every other swipe
+  land back on the board with the sheet open, which looks identical to the
+  board with it closed — read as the same view twice rather than a third
+  destination. Settings stays the gear icon's job alone. A header with no
+  `data-here` (the accents page, which carries no icon of its own) has no
+  place in the order and opts out rather than guessing one. `.handle` and
+  `input` are excluded from starting a swipe because both are draggable in
+  their own right (the corner grip, the accents page's reorder handles, the
+  font-size slider) — without the exclusion, dragging one past the threshold
+  fires a page change out from under it.
 - `src/board-state.mjs` — the board's address, remembered between runs
   (`~/.claude/streamdeck-board.json`, the daemon's **seventh** file and the
   second that is its own memory rather than a message to another process).

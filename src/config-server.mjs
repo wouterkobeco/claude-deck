@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
 import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
-import { boardGrid, boardPage, detailPanel, iconHeader, HEADER_CSS } from "./board-page.mjs";
+import { boardGrid, boardPage, detailPanel, iconHeader, HEADER_CSS, HEADER_SCRIPT } from "./board-page.mjs";
 import { renderIcon, usageColor } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
 
@@ -31,7 +31,7 @@ const STYLE = `
   /* No padding on the body: the header is sticky and full-bleed, and a padded
      body would leave a strip of page showing above it as you scroll. */
   body { background:#121212; color:#e0e0e0; font-family:-apple-system,sans-serif;
-         margin:0; padding:0; box-sizing:border-box }
+         margin:0; padding:0; box-sizing:border-box; overflow-x:hidden }
   /* border-box, or max-width plus this padding is wider than the window it is
      capped to and the page scrolls sideways. */
   main { padding:28px calc(clamp(12px,2.2vw,32px) + var(--safe-right)) calc(48px + var(--safe-bottom))
@@ -124,14 +124,23 @@ const STYLE = `
   .peak { float:right; font-size:12px; color:#616161; letter-spacing:0;
           text-transform:none; font-weight:400 }
   /* The window picker. Links rather than a select, because a select needs a
-     script to act on and this page decides everything on the server. */
-  .periods { display:flex; gap:6px; margin:0 0 20px }
-  .periods a { font-size:14px; color:#9e9e9e; text-decoration:none; padding:8px 15px;
-               border-radius:5px; background:#1b1b1b }
+     script to act on and this page decides everything on the server. Five
+     tabs is more than the fixed 14px/8px 15px padding fits on an iPhone SE's
+     351px of content width — clamp() shrinks gap/padding/font together as the
+     viewport narrows rather than wrapping to a second row (flex-wrap stays at
+     its nowrap default) or overflowing into the horizontal scroll the rest of
+     the page just gave up. */
+  .periods { display:flex; gap:clamp(2px,1vw,6px); margin:0 0 20px }
+  .periods a { font-size:clamp(10px,2.8vw,14px); color:#9e9e9e; text-decoration:none;
+               padding:clamp(6px,1.6vw,8px) clamp(8px,2.6vw,15px);
+               border-radius:5px; background:#1b1b1b; white-space:nowrap }
   .periods a.on { background:#2a2a2a; color:#e0e0e0; font-weight:700 }
   /* Table left, pie right, wrapping under on a narrow window rather than
-     squeezing the columns. */
-  .split { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap }
+     squeezing the columns. justify-content only bites once it's wrapped: the
+     table's flex-grow fills the row completely while they're side by side, so
+     there's no leftover space to centre there — once the pie drops to a row
+     of its own, it's the only thing on that row and centres in it. */
+  .split { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap; justify-content:center }
   .split table { flex:1 1 460px }
   /* A conic-gradient, not an SVG: the slices are already percentages by the
      time they get here, so there is no trig and no path to build. */
@@ -144,6 +153,7 @@ const STYLE = `
   /* The rate-limit meters and the all-time totals, which moved here off a page
      of their own. Side by side where there is room, stacked on a phone. */
   h2.first { margin-top:6px }
+  .account { font-size:12px; color:#757575; margin:-8px 0 14px }
   .limits { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)) }
   .limit { background:#1b1b1b; border-radius:8px; padding:16px 18px }
   .lrow { display:flex; align-items:baseline; gap:12px }
@@ -293,6 +303,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
     ${iconHeader(token, "activity", "Activity")}
     <main class="wide">
       <h2 class="first">Rate limits</h2>
+      ${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}
       ${limits(status.usage)}
       ${facts(status.blocked, status.stats)}
       <h2>Where the tokens went</h2>
@@ -321,8 +332,35 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
       }
       <p class="ver">Claude Deck v${esc(status.version)}</p>
     </main>
+    <script>${HEADER_SCRIPT}</script>
+    <script>${ACTIVITY_SCRIPT}</script>
     </body></html>`;
 }
+
+// The period links were plain <a>s, so switching window was a real
+// navigation — full reload, scroll thrown back to the top. Same swap as the
+// accents page's SCRIPT (fetch, parse, replaceChildren), just triggered by a
+// link instead of a form: nothing here scrolls on its own, which is the fix.
+// pushState so the URL still tracks the window picked, and popstate re-fetches
+// so the back button isn't left showing a page that disagrees with its own URL.
+const ACTIVITY_SCRIPT = `
+function swap(html) {
+  const fresh = new DOMParser().parseFromString(html, "text/html");
+  document.body.replaceChildren(...fresh.body.childNodes);
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest(".periods a");
+  if (!a) return;
+  e.preventDefault();
+  fetch(a.href).then((r) => r.text()).then((html) => {
+    swap(html);
+    history.pushState(null, "", a.href);
+  });
+});
+window.addEventListener("popstate", () => {
+  fetch(location.href).then((r) => r.text()).then(swap);
+});
+`;
 
 function page(token, projects) {
   const rows = projects
@@ -351,6 +389,7 @@ function page(token, projects) {
       <p class="hint">Topmost is the first block on the deck. Drag a handle to reorder.</p>
       ${rows || '<p class="empty">nothing on the board right now</p>'}
     </main>
+    <script>${HEADER_SCRIPT}</script>
     <script>${SCRIPT}</script>
     </body></html>`;
 }
