@@ -174,18 +174,27 @@ const historyRows = [
 ];
 const activity = {
   rows: historyRows,
-  tokens: [
-    { label: "09:00", bars: [{ state: "tokens", pct: 100 }], value: "900k" },
-    { label: "10:00", bars: [{ state: "tokens", pct: 40 }], value: "360k" },
-  ],
+  // The two time series are columns — time on the x axis — and the by-model
+  // list stays a row per name, because those are categories rather than a
+  // clock.
+  tokens: {
+    peak: "900k",
+    cols: [
+      { label: "09:00", tick: "9h", bars: [{ state: "tokens", pct: 100 }], value: "900k" },
+      { label: "10:00", tick: "", bars: [{ state: "tokens", pct: 40 }], value: "360k" },
+    ],
+  },
   models: [{ label: "opus-5", bars: [{ state: "tokens", pct: 100 }], value: "1.1M" }],
-  sessions: [
-    { label: "09:00", unseen: false, bars: [{ state: "busy", pct: 50 }, { state: "idle", pct: 25 }], value: "3" },
-    // The hour nobody watched: no bars, striped track, an em dash. This is the
-    // row the whole TICK mechanism exists to make possible, and it must not
-    // render as an idle hour.
-    { label: "10:00", unseen: true, bars: [], value: "—" },
-  ],
+  sessions: {
+    peak: "3",
+    cols: [
+      { label: "09:00", tick: "9h", unseen: false, bars: [{ state: "busy", pct: 50 }, { state: "idle", pct: 25 }], value: "3 open" },
+      // The hour nobody watched: no bars, striped column. This is the one the
+      // whole TICK mechanism exists to make possible, and it must not render
+      // as an idle hour.
+      { label: "10:00", tick: "", unseen: true, bars: [], value: "not watched" },
+    ],
+  },
 };
 const withHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, activity: () => activity });
 const hBase = new URL(withHistory.url).origin;
@@ -211,11 +220,20 @@ eq(hHtml.split('class="blocked"').length - 1, 2, "an em dash in the blocked colu
 // The charts. Widths are the only thing the browser is asked to do, so the
 // percentage has to survive into the attribute — a bar that renders at 0%
 // is a chart that silently draws nothing.
-eq(hHtml.includes("width:100%"), true, "the tallest bar fills its track");
-eq(hHtml.includes("width:40%"), true, "and a smaller one is scaled against it");
-// Three tokens bars, one model bar, two session segments, four legend swatches.
+eq(hHtml.includes("height:100%"), true, "the tallest column fills the plot");
+eq(hHtml.includes("height:40%"), true, "and a shorter one is scaled against it");
+eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row per name");
+// Two token columns, one model bar, two session segments, four legend swatches.
 eq(hHtml.split("<i style=").length - 1, 9, "one element per bar segment, plus the legend swatches");
-eq(hHtml.split('class="track unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
+eq(hHtml.split('class="col unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
+// Only some hours carry a label, and every column keeps a slot so the ones
+// that do stay under their own column.
+eq(hHtml.split('<div class="xaxis">')[1].split("</div>")[0].split("<span>").length - 1, 2, "one x-axis slot per column");
+eq(hHtml.includes(">9h<"), true, "a labelled hour prints its label");
+// The value has nowhere to go under a column, so it rides in a title —
+// a tooltip needs no script.
+eq(hHtml.includes('title="09:00 · 900k"'), true, "a column names itself on hover");
+eq(hHtml.includes("peak 900k/h"), true, "and the scale is stated, since no column can carry it");
 // pct arrives from index.mjs, but it reaches a style attribute — the one place
 // on this page where a number rather than a string does — so it is coerced
 // rather than trusted, the same rule the folder field lives by.
@@ -233,7 +251,7 @@ const emptyHistory = await createConfigServer({
   projects,
   setAccent: () => {},
   reorder: () => {},
-  activity: () => ({ rows: [], tokens: [], models: [], sessions: [] }),
+  activity: () => ({ rows: [], tokens: { peak: "—", cols: [] }, models: [], sessions: { peak: "—", cols: [] } }),
 });
 eq(
   (await (await fetch(new URL(emptyHistory.url).origin + "/activity?t=" + new URL(emptyHistory.url).searchParams.get("t"))).text()).includes("no history recorded yet"),

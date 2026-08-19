@@ -1013,14 +1013,24 @@ const configDeps = {
     // and anything absolute draws every ordinary hour as a sliver.
     const scale = (values) => Math.max(1, ...values);
 
+    // Time runs left to right, so only some hours carry a label — 25 of them
+    // under 25 columns is a smear. Every third, anchored on the *newest* hour
+    // rather than on the clock, so the rightmost column is always named and
+    // the labels don't shuffle as the window slides.
+    const tickAt = (i, n) => ((n - 1 - i) % 3 === 0 ? new Date(from + i * 3600000).getHours() + "h" : "");
+
     const buckets = readTokens();
     const perHour = summariseTokens(buckets, from, now);
     const peakOut = scale(perHour.map((r) => r.out));
-    const tokens = perHour.map((r) => ({
-      label: hourLabel(r.hour),
-      bars: [{ state: "tokens", pct: (r.out / peakOut) * 100 }],
-      value: compactCount(r.out),
-    }));
+    const tokens = {
+      peak: compactCount(peakOut),
+      cols: perHour.map((r, i) => ({
+        label: hourLabel(r.hour),
+        tick: tickAt(i, perHour.length),
+        bars: [{ state: "tokens", pct: (r.out / peakOut) * 100 }],
+        value: compactCount(r.out),
+      })),
+    };
 
     const byModel = groupTokens(buckets, "model", from, now);
     const peakModel = scale(byModel.map((r) => r.out));
@@ -1035,16 +1045,20 @@ const configDeps = {
 
     const peaks = concurrency(records, from, now, now);
     const peakAny = scale(peaks.map((r) => r.any));
-    const sessions = peaks.map((r) => ({
-      label: hourLabel(r.hour),
-      // An hour nobody watched draws striped and empty. It is not an idle hour
-      // and the two must not look alike — see history.mjs's TICK.
-      unseen: r.samples === 0,
-      bars: ["busy", "shell", "requires_action", "waiting", "idle"]
-        .filter((state) => r.states[state])
-        .map((state) => ({ state, pct: (r.states[state] / peakAny) * 100 })),
-      value: r.samples === 0 ? "—" : String(r.any),
-    }));
+    const sessions = {
+      peak: String(peakAny),
+      cols: peaks.map((r, i) => ({
+        label: hourLabel(r.hour),
+        tick: tickAt(i, peaks.length),
+        // An hour nobody watched draws striped and empty. It is not an idle
+        // hour and the two must not look alike — see history.mjs's TICK.
+        unseen: r.samples === 0,
+        bars: ["busy", "shell", "requires_action", "waiting", "idle"]
+          .filter((state) => r.states[state])
+          .map((state) => ({ state, pct: (r.states[state] / peakAny) * 100 })),
+        value: r.samples === 0 ? "not watched" : `${r.any} open`,
+      })),
+    };
 
     return { rows, tokens, models, sessions };
   },

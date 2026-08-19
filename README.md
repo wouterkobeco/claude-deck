@@ -44,11 +44,14 @@ the token in the URL it just opened.
 
 The page's **Activity** tab is everything a 72px key can't carry:
 
-- **Output tokens per hour**, last 24 hours, and the same split by model.
+- **Output tokens per hour**, last 24 hours, one column per hour — and the
+  same total split by model.
 - **Sessions at once**, the peak per hour, coloured by what they were doing.
   Open is not the same as working, and this is the difference. An hour the
   daemon wasn't running is drawn striped rather than empty — a sleeping
   machine and an idle one both produce silence, and they must not look alike.
+
+Hover any column for its hour and its number.
 - **Where the time went**: time each project spent working, waiting, and
   blocked on you, today and over the last 7 days.
 

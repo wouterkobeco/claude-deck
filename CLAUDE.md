@@ -538,11 +538,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   which accent each live project wears, and — on its second tab, **Activity** —
   for the charts nothing on a 72px key could carry: output tokens per hour, the
   same split by model, sessions at once per hour coloured by state, and the
-  per-project time table that tab used to be. The charts are **rows of divs
-  whose width is a percentage, rendered on the server** like everything else
+  per-project time table that tab used to be. The charts are **divs whose width
+  or height is a percentage, rendered on the server** like everything else
   here; there is no canvas and no chart library, because `SCRIPT` is already
   the one part of this project no check can reach and a drawing routine in
-  there would be worse. Bars scale against the busiest row rather than a fixed
+  there would be worse. The two time series are **columns** — time on the x
+  axis, one per hour — while the by-model list stays a row per name, because
+  those are categories rather than a clock. A column carries its value in a
+  `title` (25 numbers will not fit under 25 columns, and a tooltip needs no
+  script) and only every third hour is labelled, anchored on the newest hour so
+  the rightmost column is always named and the labels don't shuffle as the
+  window slides. Bars scale against the busiest column rather than a fixed
   ceiling — these series span three orders of magnitude between a quiet hour
   and a fan-out — and `pct` is the one number rather than string that reaches
   an attribute, so it is coerced rather than trusted, the same rule the folder

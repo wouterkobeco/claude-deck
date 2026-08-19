@@ -80,10 +80,11 @@ const STYLE = `
   td.blocked { color:#ff8a65 }
   h2 { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#757575;
        font-weight:600; margin:28px 0 10px }
-  /* Charts are rows of divs whose width is a percentage, server-rendered like
-     everything else on this page. No canvas, no chart library, nothing for the
-     browser to compute — CLAUDE.md's rule about SCRIPT being the one part of
-     this project no check can reach applies double to a drawing routine. */
+  /* Charts are divs whose width or height is a percentage, server-rendered
+     like everything else on this page. No canvas, no chart library, nothing
+     for the browser to compute — CLAUDE.md's rule about SCRIPT being the one
+     part of this project no check can reach applies double to a drawing
+     routine. */
   .chart { display:grid; grid-template-columns:44px 1fr 62px; gap:2px 8px;
            align-items:center; font-size:11px; font-variant-numeric:tabular-nums }
   /* Model ids are names, not clock times: haiku-4-5-20251001 ran straight out
@@ -98,9 +99,26 @@ const STYLE = `
      one. Diagonal stripes rather than an empty track: empty is a real reading
      here (nothing ran) and these two must never look alike. */
   .track.unseen { background:repeating-linear-gradient(135deg,#1b1b1b 0 4px,#242424 4px 8px) }
-  .legend { display:flex; gap:14px; font-size:11px; color:#757575; margin:8px 0 0 52px }
+  .legend { display:flex; gap:14px; font-size:11px; color:#757575; margin:8px 0 0 }
   .legend i { display:inline-block; width:9px; height:9px; border-radius:2px;
-              margin-right:5px; vertical-align:-1px }`;
+              margin-right:5px; vertical-align:-1px }
+  /* Time series run left to right, so their bars stand up: one column per
+     hour, height as a percentage of the busiest one. The horizontal .chart
+     above stays for the by-model list, where the categories are names rather
+     than a clock and reading them down the left is the whole point. */
+  .cols { display:flex; align-items:flex-end; gap:2px; height:104px }
+  .col { flex:1 1 0; display:flex; flex-direction:column-reverse; height:100%;
+         background:#1b1b1b; border-radius:2px 2px 0 0; overflow:hidden }
+  .col.unseen { background:repeating-linear-gradient(135deg,#1b1b1b 0 4px,#242424 4px 8px) }
+  /* flex:none, or a column of segments would share the height out between them
+     and every percentage above would be a suggestion. */
+  .col i { display:block; width:100%; flex:none }
+  /* Every hour gets a slot so the labels line up under their columns; only
+     some of them carry text, because 25 timestamps in 460px is a smear. */
+  .xaxis { display:flex; gap:2px; font-size:10px; color:#757575; margin-top:5px }
+  .xaxis span { flex:1 1 0; text-align:center; white-space:nowrap }
+  .peak { float:right; font-size:10px; color:#616161; letter-spacing:0;
+          text-transform:none; font-weight:400 }`;
 
 const nav = (token, here) =>
   `<nav>${[
@@ -142,6 +160,19 @@ const chart = (rows, wide = false) =>
     )
     .join("")}</div>`;
 
+// One column per hour, growing from the baseline, with the value in a `title`
+// so hovering a column names it — 25 numbers will not fit under 25 columns and
+// a tooltip needs no script.
+const columns = ({ cols }) =>
+  `<div class="cols">${cols
+    .map(
+      (c) => `<span class="col${c.unseen ? " unseen" : ""}" title="${esc(c.label)} · ${esc(c.value)}">${(c.bars ?? [])
+        .map((b) => `<i style="height:${Number(b.pct) || 0}%;background:${STATE_FILL[b.state] ?? "#4fc3f7"}"></i>`)
+        .join("")}</span>`
+    )
+    .join("")}</div>
+  <div class="xaxis">${cols.map((c) => `<span>${esc(c.tick ?? "")}</span>`).join("")}</div>`;
+
 const legend = (states) =>
   `<div class="legend">${states
     .map((s) => `<span><i style="background:${STATE_FILL[s] ?? "#4fc3f7"}"></i>${esc(s.replace("requires_action", "blocked"))}</span>`)
@@ -169,9 +200,9 @@ function activityPage(token, { rows, tokens, sessions, models }) {
       <h1>Activity</h1>
       ${nav(token, "/activity")}
       ${
-        tokens.length === 0
+        tokens.cols.length === 0
           ? ""
-          : `<h2>Output tokens per hour · last 24h</h2>${chart(tokens)}`
+          : `<h2>Output tokens per hour · last 24h<span class="peak">peak ${esc(tokens.peak)}/h</span></h2>${columns(tokens)}`
       }
       ${
         models.length === 0
@@ -179,9 +210,9 @@ function activityPage(token, { rows, tokens, sessions, models }) {
           : `<h2>By model · last 24h</h2>${chart(models, true)}`
       }
       ${
-        sessions.length === 0
+        sessions.cols.length === 0
           ? ""
-          : `<h2>Sessions at once · peak per hour</h2>${chart(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+          : `<h2>Sessions at once · peak per hour<span class="peak">max ${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
       }
       ${
         rows.length === 0
