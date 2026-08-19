@@ -21,7 +21,8 @@ npm run remote-install-check # what remote:install decides before it writes
 npm run config-check   # config server: token gate, validation, HTML escaping
 npm run statusline-check     # what `npm start` decides your status line needs
 npm run statusline:install   # add the context-gauge block here, no question
-npm run history-check  # state log: change-only records, durations, retention
+npm run history-check  # state log: change-only records, durations, retention, concurrency
+npm run tokens-check   # token extraction: incremental reads, grouping, compaction
 npm run remote:install -- <host>  # status line on a remote host, for its gauge
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
@@ -488,9 +489,64 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   question is about projects. Trimming is a whole-file rewrite, so it runs at
   startup and then once per local day, off the day boundary the summary already
   computes.
+  **`concurrency` answers the question durations cannot**: eight hours of busy
+  is one session all day or eight at once, and those are different machines. It
+  walks the same intervals with a 5-minute sampling clock and reports an hourly
+  high-water mark. Two things in it are load-bearing. **`states` is the split at
+  the busiest sample, not a peak per state** — per-state maxima happen at
+  different minutes, so they sum to more than the hour ever held and a stacked
+  bar drawn from them runs off the end of its own track; the cost is that a
+  session blocked at a quieter minute isn't in that chart, which is what the
+  table's blocked column is for. And **unobserved time is reported as
+  unobserved**: a change-only log cannot tell a sleeping machine from a quiet
+  one, because five idle sessions overnight produce exactly as many records as a
+  daemon that isn't running, which is none. That is what `TICK` is for —
+  `recordTick` writes one line every `TICK_MS` (5 min) saying the daemon was
+  watching, `OUTAGE_MS` is three of those, and a sample inside a longer gap is
+  dropped rather than counted. Without it this machine's own log drew a ten-hour
+  sleep as six sessions working all night, which is the shape the bug takes.
+  Ticks carry `kind` and no `id`; every reader that walks records skips them,
+  and `summarise` is the one that would otherwise grow a phantom project.
+- `src/tokens.mjs` — what the tokens went on: hourly totals lifted out of
+  Claude Code's transcripts, into a log that outlives them. Every assistant
+  message carries `message.usage` beside an ISO timestamp, so the history is
+  already on disk — for 30 days, and then it is gone (see the read-only
+  invariant below). **Incremental by byte offset, never by mtime**: a transcript
+  is appended to for hours, so "changed since last time" is true of a 1.2MB file
+  that grew by one line, and re-reading it whole doubles every total in it. A
+  partial trailing line is left for next time — this reads a file another
+  process is writing, so the last line is routinely half-written, and the cursor
+  advances only over bytes that ended in a newline. A file that has *shrunk* is
+  a different file under the same name and is re-read from zero. Records are
+  hourly buckets keyed by `(hour, cwd, model, sub)` rather than one per message:
+  19,580 messages a day is 3,400 buckets, and the split that matters is the one
+  the deck can't show — **38% of all calls on this machine came from Agent-tool
+  subagents**, which is what `sub` (the transcript sitting under `subagents/`)
+  records. What is kept from `usage` is chosen for what is *not recoverable
+  later*: the 5m/1h cache-creation split, because those are billed differently,
+  and `model`, for the same reason. An all-zero usage object — a `<synthetic>`
+  message, an API error, an interrupt — earns no bucket; it was a third of the
+  rows on the first backfill. `compactTokens` is not housekeeping: a pass
+  appends a bucket for the hour in progress, so a 5-minute cadence writes a
+  dozen rows for one hour, and merging them is what keeps the log growing with
+  *time* rather than with the poll rate. The first pass reads the whole tree —
+  11s against 2GB, measured — so `index.mjs` fires it without awaiting and
+  guards it in-flight, the shape `remote-hosts.mjs` uses and for the same
+  reason: the bookmark is written when a pass *finishes*.
 - `src/config-server.mjs` — the config page: a local web UI, served by the
   daemon on loopback and opened from the stats board's config key, for setting
-  which accent each live project wears. **Server-rendered HTML with form POSTs,
+  which accent each live project wears, and — on its second tab, **Activity** —
+  for the charts nothing on a 72px key could carry: output tokens per hour, the
+  same split by model, sessions at once per hour coloured by state, and the
+  per-project time table that tab used to be. The charts are **rows of divs
+  whose width is a percentage, rendered on the server** like everything else
+  here; there is no canvas and no chart library, because `SCRIPT` is already
+  the one part of this project no check can reach and a drawing routine in
+  there would be worse. Bars scale against the busiest row rather than a fixed
+  ceiling — these series span three orders of magnitude between a quiet hour
+  and a fan-out — and `pct` is the one number rather than string that reaches
+  an attribute, so it is coerced rather than trusted, the same rule the folder
+  field lives by. **Server-rendered HTML with form POSTs,
   not a JSON API**, and the deciding reason is this repo's quality model rather
   than taste: a POST handler is checkable by a real server on port 0 and a real
   `fetch`, while client JS inside a template literal is the one thing here that
@@ -780,6 +836,21 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   session changes state rather than when you do something. Everything above it
   is rewritten in place and says what is true now; this one accumulates and
   says what was true, which is why it is the only one with a retention policy.
+  **The fifth file is the first whose source is outside this project's view
+  entirely**: `~/.claude/streamdeck-tokens.jsonl` (`tokens.mjs`), hourly token
+  totals lifted out of Claude Code's transcripts. It exists because those
+  transcripts are **deleted** — `cleanupPeriodDays` defaults to 30 and is doing
+  it, measured: the oldest transcript on this machine was exactly 32 days old.
+  So a page that reads them live can never answer anything about last quarter
+  no matter how it is cached, and copying the numbers out is the only way to
+  keep them. Retention here is a year rather than a month, because outliving
+  the source is the entire point. Its sixth file is a **bookmark, not data**:
+  `streamdeck-tokens.pos`, which byte of each transcript has already been
+  counted. It cannot live in the log — a bookmark is rewritten every pass and
+  the log is only appended to — and without it every pass re-reads 2GB and
+  doubles every total. It is written *after* the log, never before: a crash
+  between the two re-counts a few lines, where the other order drops them for
+  good. Over-counting is visible and fixable; a hole is neither.
   There is another file in this feature and the daemon does **not** write it:
   `~/.claude/streamdeck-windows/<pid>.json` is published by the extension and
   only read here. Keep it that way — a daemon that deletes files it did not

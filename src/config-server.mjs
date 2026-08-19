@@ -79,12 +79,33 @@ const STYLE = `
      stays grey — colouring a zero draws the eye to the wrong row. */
   td.blocked { color:#ff8a65 }
   h2 { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#757575;
-       font-weight:600; margin:28px 0 10px }`;
+       font-weight:600; margin:28px 0 10px }
+  /* Charts are rows of divs whose width is a percentage, server-rendered like
+     everything else on this page. No canvas, no chart library, nothing for the
+     browser to compute — CLAUDE.md's rule about SCRIPT being the one part of
+     this project no check can reach applies double to a drawing routine. */
+  .chart { display:grid; grid-template-columns:44px 1fr 62px; gap:2px 8px;
+           align-items:center; font-size:11px; font-variant-numeric:tabular-nums }
+  /* Model ids are names, not clock times: haiku-4-5-20251001 ran straight out
+     of the 44px column the hour charts share. No backticks in here — STYLE is
+     a template literal, and one inside a comment ends it. */
+  .chart.wide { grid-template-columns:132px 1fr 62px }
+  .chart .t { color:#757575; text-align:right }
+  .chart .v { color:#9e9e9e }
+  .track { display:flex; height:11px; background:#1b1b1b; border-radius:2px; overflow:hidden }
+  .track i { display:block; height:100% }
+  /* An hour the daemon did not watch is not an idle hour, and must not draw as
+     one. Diagonal stripes rather than an empty track: empty is a real reading
+     here (nothing ran) and these two must never look alike. */
+  .track.unseen { background:repeating-linear-gradient(135deg,#1b1b1b 0 4px,#242424 4px 8px) }
+  .legend { display:flex; gap:14px; font-size:11px; color:#757575; margin:8px 0 0 52px }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:2px;
+              margin-right:5px; vertical-align:-1px }`;
 
 const nav = (token, here) =>
   `<nav>${[
     ["/", "Accents"],
-    ["/history", "Time"],
+    ["/activity", "Activity"],
   ]
     .map(([href, name]) =>
       href === here
@@ -93,11 +114,40 @@ const nav = (token, here) =>
     )
     .join("")}</nav>`;
 
-// Rows arrive with their durations already formatted. index.mjs owns the
-// summarising and the clock; this file owns the markup, and keeping the split
-// there is what lets config-check drive the page with three fixed strings
-// instead of reconstructing a day of history.
-function historyPage(token, rows) {
+// Every number arrives formatted and every bar arrives as a percentage.
+// index.mjs owns the summarising, the clock and the units; this file owns the
+// markup, and keeping the split there is what lets config-check drive the page
+// with fixed fixtures instead of reconstructing a day of history and a
+// gigabyte of transcripts.
+const STATE_FILL = {
+  busy: "#43a047",
+  shell: "#43a047",
+  requires_action: "#e53935",
+  waiting: "#c79100",
+  idle: "#555555",
+};
+
+// One row per hour: label, a track, a value. `bars` is a list of
+// {state, pct} so the same renderer draws a single-series chart (tokens) and a
+// stacked one (sessions by state) — the difference is how many segments a row
+// has, not a second code path.
+const chart = (rows, wide = false) =>
+  `<div class="chart${wide ? " wide" : ""}">${rows
+    .map(
+      (r) => `<span class="t">${esc(r.label)}</span>
+      <span class="track${r.unseen ? " unseen" : ""}">${(r.bars ?? [])
+        .map((b) => `<i style="width:${Number(b.pct) || 0}%;background:${STATE_FILL[b.state] ?? "#4fc3f7"}"></i>`)
+        .join("")}</span>
+      <span class="v">${esc(r.value)}</span>`
+    )
+    .join("")}</div>`;
+
+const legend = (states) =>
+  `<div class="legend">${states
+    .map((s) => `<span><i style="background:${STATE_FILL[s] ?? "#4fc3f7"}"></i>${esc(s.replace("requires_action", "blocked"))}</span>`)
+    .join("")}</div>`;
+
+function activityPage(token, { rows, tokens, sessions, models }) {
   const table = (period) => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th></tr>
@@ -116,12 +166,27 @@ function historyPage(token, rows) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
     <style>${STYLE}</style></head><body>
     <main>
-      <h1>Where the time goes</h1>
-      ${nav(token, "/history")}
+      <h1>Activity</h1>
+      ${nav(token, "/activity")}
+      ${
+        tokens.length === 0
+          ? ""
+          : `<h2>Output tokens per hour · last 24h</h2>${chart(tokens)}`
+      }
+      ${
+        models.length === 0
+          ? ""
+          : `<h2>By model · last 24h</h2>${chart(models, true)}`
+      }
+      ${
+        sessions.length === 0
+          ? ""
+          : `<h2>Sessions at once · peak per hour</h2>${chart(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+      }
       ${
         rows.length === 0
           ? '<p class="empty">no history recorded yet</p>'
-          : `<h2>Today</h2>${table("today")}<h2>Last 7 days</h2>${table("week")}`
+          : `<h2>Where the time went · today</h2>${table("today")}<h2>Last 7 days</h2>${table("week")}`
       }
     </main>
     </body></html>`;
@@ -308,8 +373,8 @@ export async function createConfigServer(deps) {
         return send(res, 200, page(token, deps.projects()), "text/html; charset=utf-8");
       }
 
-      if (req.method === "GET" && url.pathname === "/history") {
-        return send(res, 200, historyPage(token, deps.history()), "text/html; charset=utf-8");
+      if (req.method === "GET" && url.pathname === "/activity") {
+        return send(res, 200, activityPage(token, deps.activity()), "text/html; charset=utf-8");
       }
 
       if (req.method === "POST" && url.pathname === "/accent") {

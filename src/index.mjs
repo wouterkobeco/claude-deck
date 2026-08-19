@@ -11,7 +11,8 @@ import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { openConfig } from "./config-server.mjs";
-import { readHistory, recordStates, startOfDay, summarise, trimHistory } from "./history.mjs";
+import { concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
+import { collectTokens, compactTokens, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
@@ -144,9 +145,20 @@ async function liveSessions() {
 // publishSessions is here for. Only writes when something changed.
 const lastStates = new Map();
 let historyDay = 0;
+let lastTick = 0;
+let collecting = false;
 function recordHistory(sessions) {
   const now = Date.now();
   recordStates(sessions, lastStates, now);
+  // Coverage, not state: this is what lets the activity page tell a machine
+  // that was asleep from one that was merely quiet. Both produce no change
+  // records at all, and without a tick the chart reads five idle sessions
+  // overnight as a working night. See history.mjs's TICK.
+  if (now - lastTick >= TICK_MS) {
+    lastTick = now;
+    recordTick(now);
+    collectTokensInBackground();
+  }
   // Trimming is a whole-file rewrite, so it runs at startup (historyDay starts
   // at 0) and then once per local day — not on a timer, and never on a poll
   // that isn't already crossing a boundary the summary computes anyway.
@@ -155,7 +167,26 @@ function recordHistory(sessions) {
     historyDay = today;
     const dropped = trimHistory(now);
     if (dropped) console.error(`history: dropped ${dropped} records past the retention window`);
+    const merged = compactTokens(now);
+    if (merged) console.error(`tokens: merged ${merged} duplicate hour buckets`);
   }
+}
+
+// Token capture, on the same tick as the coverage record and for the same
+// reason it is not on the poll: this reads every transcript that has grown
+// since last time, which on a first run means every byte of a 2GB tree — 11s,
+// measured. Never awaited by the poll loop, and guarded so a slow pass cannot
+// have a second one started on top of it against the same bookmark file. Same
+// shape as remote-hosts.mjs's in-flight claim, and load-bearing for the same
+// reason: the bookmark is written when a pass *finishes*.
+function collectTokensInBackground() {
+  if (collecting) return;
+  collecting = true;
+  collectTokens()
+    .catch((err) => console.error("tokens:", err?.message ?? err))
+    .finally(() => {
+      collecting = false;
+    });
 }
 
 // Colour is picked from what no other live folder is using, not from
@@ -950,7 +981,7 @@ const configDeps = {
   // where the week went, and a project you closed an hour ago is exactly the
   // kind of answer that would go missing. Ordered by today's blocked time,
   // because that is the column the page exists for.
-  history: () => {
+  activity: () => {
     const now = Date.now();
     const records = readHistory();
     const today = summarise(records, now, startOfDay(now));
@@ -961,7 +992,7 @@ const configDeps = {
       waiting: dur(states.waiting),
       blocked: dur(states.requires_action),
     });
-    return [...new Set([...Object.keys(today), ...Object.keys(week)])]
+    const rows = [...new Set([...Object.keys(today), ...Object.keys(week)])]
       .filter(Boolean)
       .map((key) => ({
         key,
@@ -971,8 +1002,71 @@ const configDeps = {
         blockedMs: today[key]?.requires_action ?? 0,
       }))
       .sort((a, b) => b.blockedMs - a.blockedMs);
+
+    // The two charts. Both are "last 24h" on the hour rather than "today",
+    // because at 09:00 a today-chart is three bars and says nothing about the
+    // night that produced the backlog you are looking at.
+    const from = Math.floor((now - 24 * 3600000) / 3600000) * 3600000;
+    const hourLabel = (h) => new Date(h).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    // Bars are a percentage of the busiest row, not of a fixed ceiling: these
+    // series span three orders of magnitude between a quiet hour and a fan-out,
+    // and anything absolute draws every ordinary hour as a sliver.
+    const scale = (values) => Math.max(1, ...values);
+
+    const buckets = readTokens();
+    const perHour = summariseTokens(buckets, from, now);
+    const peakOut = scale(perHour.map((r) => r.out));
+    const tokens = perHour.map((r) => ({
+      label: hourLabel(r.hour),
+      bars: [{ state: "tokens", pct: (r.out / peakOut) * 100 }],
+      value: compactCount(r.out),
+    }));
+
+    const byModel = groupTokens(buckets, "model", from, now);
+    const peakModel = scale(byModel.map((r) => r.out));
+    const models = byModel.slice(0, 6).map((r) => ({
+      // "claude-opus-5" is mostly vendor, the same reason the detail board
+      // strips it, and a dated id (`haiku-4-5-20251001`) is mostly date; ""
+      // is what a transcript line without a model reads as.
+      label: (r.model || "unknown").replace(/^claude-/, "").replace(/-\d{8}$/, ""),
+      bars: [{ state: "tokens", pct: (r.out / peakModel) * 100 }],
+      value: compactCount(r.out),
+    }));
+
+    const peaks = concurrency(records, from, now, now);
+    const peakAny = scale(peaks.map((r) => r.any));
+    const sessions = peaks.map((r) => ({
+      label: hourLabel(r.hour),
+      // An hour nobody watched draws striped and empty. It is not an idle hour
+      // and the two must not look alike — see history.mjs's TICK.
+      unseen: r.samples === 0,
+      bars: ["busy", "shell", "requires_action", "waiting", "idle"]
+        .filter((state) => r.states[state])
+        .map((state) => ({ state, pct: (r.states[state] / peakAny) * 100 })),
+      value: r.samples === 0 ? "—" : String(r.any),
+    }));
+
+    return { rows, tokens, models, sessions };
   },
 };
+
+/**
+ * A token count at a glance: 899k, 1.2M, 3.7B.
+ *
+ * Three significant figures at most — these are read off a bar chart to
+ * compare hours, and the exact digit count of a cache-read total is noise at
+ * that job.
+ */
+export function compactCount(n) {
+  if (!n) return "—";
+  for (const [limit, suffix] of [[1e9, "B"], [1e6, "M"], [1e3, "k"]]) {
+    if (n >= limit) {
+      const scaled = n / limit;
+      return `${scaled >= 100 ? Math.round(scaled) : scaled.toFixed(1).replace(/\.0$/, "")}${suffix}`;
+    }
+  }
+  return String(n);
+}
 
 /**
  * One stand-in "session" per folder whose keys are missing because its host is

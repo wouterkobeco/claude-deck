@@ -6,7 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GONE, RETENTION_DAYS, readHistory, recordStates, startOfDay, summarise, trimHistory } from "../src/history.mjs";
+import { GONE, OUTAGE_MS, RETENTION_DAYS, TICK, TICK_MS, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory } from "../src/history.mjs";
 
 const eq = (got, want, label) => {
   const a = JSON.stringify(got);
@@ -119,5 +119,92 @@ const midnight = new Date(2026, 7, 17, 0, 0, 0, 0).getTime();
 eq(startOfDay(noon), midnight, "today starts at local midnight");
 eq(startOfDay(midnight), midnight, "and midnight is already the start of its own day");
 
+// --- concurrency -----------------------------------------------------------
+
+// How many at once, which is the question durations cannot answer: eight hours
+// of busy is one session all day or eight at once.
+{
+  const H = Date.parse("2026-08-18T09:00:00.000Z");
+  // Ticks are what say the daemon was watching. Without them a quiet stretch
+  // between two changes is indistinguishable from a sleeping machine, and the
+  // sweep would honestly refuse to count the very samples this case is about.
+  const ticks = Array.from({ length: 12 }, (_, i) => ({ ts: H + i * TICK_MS, kind: TICK }));
+  const recs = [
+    ...ticks,
+    { ts: H + 60000, id: "a", folder: A, state: "busy" },
+    { ts: H + 120000, id: "b", folder: A, state: "busy" },
+    { ts: H + 180000, id: "c", folder: A, state: "requires_action" },
+    { ts: H + 20 * 60000, id: "b", state: GONE },
+    { ts: H + 50 * 60000, id: "a", folder: A, state: "idle" },
+  ];
+  const rows = concurrency(recs, H, H + 3600000, H + 55 * 60000);
+  eq(rows.length, 1, "one row per hour in the window");
+  eq(rows[0].any, 3, "three sessions at once is a peak of three");
+  eq(rows[0].states.busy, 2, "with the split at that instant: two busy");
+  eq(rows[0].states.requires_action, 1, "and one blocked");
+  // The reason it is the split at one instant rather than a peak per state: a
+  // stacked bar drawn from per-state maxima runs past the end of its own
+  // track, because the busiest busy minute and the busiest idle minute are
+  // different minutes.
+  eq(
+    Object.values(rows[0].states).reduce((a, b) => a + b, 0),
+    rows[0].any,
+    "the segments sum to the total exactly, so a stacked bar cannot overflow"
+  );
+}
+
+// The failure this exists to prevent: the log only records what a *running*
+// daemon saw, so a sleep leaves one interval spanning ten hours. A naive sweep
+// counts the last known state straight across it and reads as a machine that
+// worked all night. Unobserved time is reported as unobserved.
+{
+  const H = Date.parse("2026-08-18T09:00:00.000Z");
+  const recs = [
+    { ts: H, kind: TICK },
+    { ts: H + 60000, id: "a", folder: A, state: "busy" },
+    { ts: H + TICK_MS, kind: TICK },
+    { ts: H + 2 * TICK_MS, kind: TICK },
+    // Then no ticks for three hours — the daemon was not running.
+    { ts: H + 3 * 3600000, kind: TICK },
+    { ts: H + 3 * 3600000 + 60000, id: "a", folder: A, state: "busy" },
+  ];
+  const rows = concurrency(recs, H, H + 4 * 3600000, H + 3 * 3600000 + 120000);
+  eq(rows.map((r) => r.samples > 0), [true, false, false, true], "the hours inside the gap got no samples");
+  eq(rows[1].any, 0, "and report nothing rather than a session that was never seen");
+  eq(rows[0].states.busy, 1, "while the observed hours are unaffected");
+}
+
+// A gap shorter than the threshold is ordinary quiet, not an outage: the daemon
+// writes only on change, so nothing changing for a few minutes is the norm.
+{
+  const H = Date.parse("2026-08-18T09:00:00.000Z");
+  const recs = [
+    { ts: H + 60000, id: "a", folder: A, state: "busy" },
+    { ts: H + 60000 + OUTAGE_MS - 60000, id: "a", folder: A, state: "idle" },
+  ];
+  eq(concurrency(recs, H, H + 3600000, H + 3600000)[0].samples > 0, true, "a sub-threshold quiet spell is still observed");
+}
+
+// A tick is coverage, never a session: it must not become an interval, a
+// duration or a folder. Every reader that walks records has to skip it, and
+// summarise is the one that would silently grow a phantom project.
+{
+  const H = Date.parse("2026-08-18T09:00:00.000Z");
+  const recs = [{ ts: H, kind: TICK }, { ts: H, id: "a", folder: A, state: "busy" }];
+  eq(Object.keys(summarise(recs, H + 60000, H)), [A], "a tick adds no folder to the summary");
+  eq(concurrency(recs, H, H + 3600000, H + 60000)[0].any, 1, "and no session to the concurrency count");
+}
+
+// It round-trips through the real file, alongside the state records — one log,
+// two kinds of line, and readHistory has to keep both.
+{
+  recordTick(now, dir);
+  const kinds = readHistory(dir).map((r) => r.kind ?? "state");
+  eq(kinds.includes(TICK), true, "a tick written to the log reads back as one");
+}
+
+// An empty log is a window nobody watched, not a window in which nothing ran.
+eq(concurrency([], 0, 3600000, 3600000)[0].samples, 0, "no records means no observations");
+
 rmSync(dir, { recursive: true, force: true });
-console.log("OK: change-only records, closing records, duration and clipping, retention");
+console.log("OK: change-only records, closing records, duration and clipping, retention, concurrency");

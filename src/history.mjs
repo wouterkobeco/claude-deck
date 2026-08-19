@@ -31,6 +31,28 @@ export const RETENTION_DAYS = 30;
 // that ever ran counts up to now, forever.
 export const GONE = "gone";
 
+// A record that says "the daemon was watching at this moment", and nothing
+// else. Change-only logging cannot distinguish a machine that was asleep from
+// one that was merely quiet — five idle sessions overnight produce exactly as
+// many records as a daemon that is not running, which is none — and the
+// difference is the whole of whether "nobody was working" is a finding or an
+// artefact. So the daemon says so on its own timer, and `concurrency` reads
+// coverage off the record stream rather than guessing at it.
+//
+// Cheap enough not to think about: one line every TICK_MS, 288 a day, against
+// the state log's own few thousand.
+export const TICK = "tick";
+export const TICK_MS = 300_000;
+
+/** Append one coverage record. Best-effort: a lost tick is a gap in a chart. */
+export function recordTick(now = Date.now(), root = CLAUDE_DIR) {
+  try {
+    appendFileSync(fileIn(root), JSON.stringify({ ts: now, kind: TICK }) + "\n");
+  } catch {
+    // Same as a lost transition: the next tick writes again.
+  }
+}
+
 /**
  * Append a record for every session whose state changed since the last call,
  * plus a `gone` record for every session that has disappeared.
@@ -77,7 +99,8 @@ export function readHistory(root = CLAUDE_DIR) {
         if (!line) return [];
         try {
           const rec = JSON.parse(line);
-          return typeof rec?.ts === "number" && typeof rec?.id === "string" ? [rec] : [];
+          if (typeof rec?.ts !== "number") return [];
+          return typeof rec.id === "string" || rec.kind === TICK ? [rec] : [];
         } catch {
           // A poll that died mid-append leaves a half-written last line.
           return [];
@@ -106,6 +129,7 @@ export function readHistory(root = CLAUDE_DIR) {
 export function summarise(records, now, from) {
   const byId = new Map();
   for (const rec of records) {
+    if (rec.kind === TICK) continue; // coverage, not a session
     if (!byId.has(rec.id)) byId.set(rec.id, []);
     byId.get(rec.id).push(rec);
   }
@@ -152,4 +176,104 @@ export function startOfDay(now) {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
+}
+
+// A sample lands inside an outage when the log's own records straddle it by
+// more than this. `TICK` is what makes that a fact rather than a guess: a
+// running daemon writes one every TICK_MS whether or not anything changed, so
+// three missed ticks is a daemon that was not running. Kept at three rather
+// than one so a poll that lost a write, or a machine briefly too busy to get
+// there, does not punch a hole in the chart.
+//
+// It stays a threshold rather than a strict "was there a tick" test because
+// history predating the ticks has to keep reading sensibly: on a log with no
+// ticks in it this degrades to the heuristic it replaced — quiet longer than
+// this is treated as unobserved — which is wrong only for a machine left idle
+// with sessions open, and wrong in the safe direction.
+export const OUTAGE_MS = 3 * TICK_MS;
+// How often concurrency is sampled. Fine enough that a session that ran for
+// half an hour cannot fall between two samples, coarse enough that a week is
+// two thousand of them.
+export const SAMPLE_MS = 300_000;
+
+/**
+ * How many sessions were in each state at once, as an hourly peak.
+ *
+ * `summarise` answers "how long", which says nothing about overlap: eight hours
+ * of busy is one session all day or eight at once, and those are different
+ * machines. This walks the same intervals with a sampling clock instead and
+ * reports the high-water mark per hour.
+ *
+ * **Unobserved time is reported as unobserved, never as duration.** The log
+ * records changes a *running* daemon saw, so a sleep or a restart leaves one
+ * interval spanning the gap — and a naive sweep counts the last known state
+ * straight across it, which reads as six sessions working all night. Samples
+ * inside a gap longer than `OUTAGE_MS` are dropped, and each hour carries how
+ * many samples it actually got so a caller can show the difference rather than
+ * average it away.
+ *
+ * `states` is the split at the busiest observed sample, not a peak per state.
+ * Per-state peaks read as the obvious thing and are unstackable: the maximum
+ * busy and the maximum idle happen at different minutes, so they sum to more
+ * than the hour ever held and a stacked bar drawn from them runs past the end
+ * of its own track. The composition at one instant sums to `any` by
+ * construction. The cost is that a session blocked at a quieter minute of a
+ * busy hour is not in this chart — it is in the blocked column of the table
+ * below, which is the place that question is actually asked.
+ *
+ * `now` is an argument for the same reason it is in `summarise`: the last
+ * record of a live session is an open interval that runs to it, and a check
+ * cannot reproduce a clock.
+ */
+export function concurrency(records, from, to, now) {
+  const byId = new Map();
+  for (const rec of records) {
+    if (rec.kind === TICK) continue; // coverage, not a session
+    if (!byId.has(rec.id)) byId.set(rec.id, []);
+    byId.get(rec.id).push(rec);
+  }
+  const intervals = [];
+  for (const list of byId.values()) {
+    list.sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].state === GONE) continue;
+      intervals.push({ start: list[i].ts, end: list[i + 1] ? list[i + 1].ts : now, state: list[i].state });
+    }
+  }
+
+  // Gaps in the log itself, from the timestamps of the records rather than
+  // from the intervals: an interval is exactly what spans a gap, so asking it
+  // is circular.
+  const stamps = [...new Set(records.map((r) => r.ts))].sort((a, b) => a - b);
+  const outages = [];
+  for (let i = 1; i < stamps.length; i++) {
+    if (stamps[i] - stamps[i - 1] > OUTAGE_MS) outages.push([stamps[i - 1], stamps[i]]);
+  }
+  // Before the first record and after the last one, nothing was being watched
+  // either — an empty log means the whole window is unobserved, not idle.
+  outages.push([-Infinity, stamps[0] ?? Infinity], [stamps[stamps.length - 1] ?? -Infinity, Infinity]);
+  const unobserved = (t) => outages.some(([a, b]) => t > a && t < b);
+
+  const rows = new Map();
+  const start = Math.floor(from / 3600000) * 3600000;
+  for (let h = start; h < to; h += 3600000) {
+    rows.set(h, { hour: h, samples: 0, any: 0, states: {} });
+  }
+  for (let t = start; t < to; t += SAMPLE_MS) {
+    const row = rows.get(Math.floor(t / 3600000) * 3600000);
+    if (!row || unobserved(t)) continue;
+    row.samples++;
+    const counts = {};
+    let any = 0;
+    for (const iv of intervals) {
+      if (iv.start > t || iv.end <= t) continue;
+      counts[iv.state] = (counts[iv.state] ?? 0) + 1;
+      any++;
+    }
+    if (any > row.any) {
+      row.any = any;
+      row.states = counts;
+    }
+  }
+  return [...rows.values()];
 }

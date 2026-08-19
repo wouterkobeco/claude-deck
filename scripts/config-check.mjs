@@ -163,19 +163,36 @@ eq((await drop(ALPHA, ALPHA, "below")).status, 303, "dropping a row on itself is
 eq(moves.length, 0, "and moves nothing");
 withOrder.server.close();
 
-// The history page. Rows arrive already formatted — index.mjs owns the
-// summarising and the clock, this file owns the markup — so the check renders
-// a table from fixed strings rather than reconstructing a day of transitions.
+// The activity page. Every number arrives already formatted and every bar as a
+// percentage — index.mjs owns the summarising, the clock and the units, this
+// file owns the markup — so the check renders the page from fixed fixtures
+// rather than reconstructing a day of transitions and a gigabyte of
+// transcripts.
 const historyRows = [
   { key: ALPHA, name: "alpha", today: { busy: "3h12m", waiting: "41m", blocked: "18m" }, week: { busy: "9h", waiting: "2h", blocked: "51m" } },
   { key: NASTY, name: '<script>"x', today: { busy: "—", waiting: "—", blocked: "—" }, week: { busy: "4m", waiting: "—", blocked: "—" } },
 ];
-const withHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, history: () => historyRows });
+const activity = {
+  rows: historyRows,
+  tokens: [
+    { label: "09:00", bars: [{ state: "tokens", pct: 100 }], value: "900k" },
+    { label: "10:00", bars: [{ state: "tokens", pct: 40 }], value: "360k" },
+  ],
+  models: [{ label: "opus-5", bars: [{ state: "tokens", pct: 100 }], value: "1.1M" }],
+  sessions: [
+    { label: "09:00", unseen: false, bars: [{ state: "busy", pct: 50 }, { state: "idle", pct: 25 }], value: "3" },
+    // The hour nobody watched: no bars, striped track, an em dash. This is the
+    // row the whole TICK mechanism exists to make possible, and it must not
+    // render as an idle hour.
+    { label: "10:00", unseen: true, bars: [], value: "—" },
+  ],
+};
+const withHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, activity: () => activity });
 const hBase = new URL(withHistory.url).origin;
 const hToken = new URL(withHistory.url).searchParams.get("t");
 
-eq((await fetch(`${hBase}/history`)).status, 403, "the history page is behind the same token");
-const hPage = await fetch(`${hBase}/history?t=${hToken}`);
+eq((await fetch(`${hBase}/activity`)).status, 403, "the activity page is behind the same token");
+const hPage = await fetch(`${hBase}/activity?t=${hToken}`);
 eq(hPage.status, 200, "and is served with it");
 const hHtml = await hPage.text();
 eq(hHtml.includes("3h12m"), true, "today's numbers reach the table");
@@ -184,16 +201,42 @@ eq(hHtml.includes("9h"), true, "and the week's");
 eq(hHtml.split('class="project"').length - 1, 4, "two rows in each of the two tables");
 // A project name is untrusted here for exactly the reason it is on the other
 // page, and this table is a second place it reaches the document.
-eq(hHtml.split("<script>").length - 1, 0, "a folder named <script> does not reach the history page as a tag");
+eq(hHtml.split("<script>").length - 1, 0, "a folder named <script> does not reach the activity page as a tag");
 eq(hHtml.includes("&lt;script&gt;"), true, "it is escaped there too");
 // The blocked column is coloured to draw the eye to real blocked time, so a
 // row with none must not wear it. Four blocked cells across the two tables:
 // alpha has a value in both, the second row is an em dash in both.
 eq(hHtml.split('class="blocked"').length - 1, 2, "an em dash in the blocked column is not coloured");
 
-const emptyHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, history: () => [] });
+// The charts. Widths are the only thing the browser is asked to do, so the
+// percentage has to survive into the attribute — a bar that renders at 0%
+// is a chart that silently draws nothing.
+eq(hHtml.includes("width:100%"), true, "the tallest bar fills its track");
+eq(hHtml.includes("width:40%"), true, "and a smaller one is scaled against it");
+// Three tokens bars, one model bar, two session segments, four legend swatches.
+eq(hHtml.split("<i style=").length - 1, 9, "one element per bar segment, plus the legend swatches");
+eq(hHtml.split('class="track unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
+// pct arrives from index.mjs, but it reaches a style attribute — the one place
+// on this page where a number rather than a string does — so it is coerced
+// rather than trusted, the same rule the folder field lives by.
+const hostile = await createConfigServer({
+  projects,
+  setAccent: () => {},
+  reorder: () => {},
+  activity: () => ({ ...activity, tokens: [{ label: "x", bars: [{ state: "tokens", pct: "50;background:url(evil)" }], value: "x" }] }),
+});
+const hostileHtml = await (await fetch(hostile.url.replace("/?", "/activity?"))).text();
+eq(hostileHtml.includes("evil"), false, "a non-numeric width never reaches the style attribute");
+hostile.server.close();
+
+const emptyHistory = await createConfigServer({
+  projects,
+  setAccent: () => {},
+  reorder: () => {},
+  activity: () => ({ rows: [], tokens: [], models: [], sessions: [] }),
+});
 eq(
-  (await (await fetch(new URL(emptyHistory.url).origin + "/history?t=" + new URL(emptyHistory.url).searchParams.get("t"))).text()).includes("no history recorded yet"),
+  (await (await fetch(new URL(emptyHistory.url).origin + "/activity?t=" + new URL(emptyHistory.url).searchParams.get("t"))).text()).includes("no history recorded yet"),
   true,
   "no history says so rather than rendering an empty table"
 );
@@ -206,4 +249,4 @@ eq((await (await fetch(emptyUrl)).text()).includes("nothing on the board"), true
 empty.close();
 
 server.close();
-console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, history page");
+console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts");

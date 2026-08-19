@@ -42,12 +42,22 @@ so no two projects on the board are ever the same colour. The page is served
 by the daemon on localhost, only while it's running, and only reachable with
 the token in the URL it just opened.
 
-The page's **Time** tab answers where the day went: time each project spent
-working, waiting, and blocked on you, for today and the last 7 days. The
-daemon has always watched every session's state every two seconds — this just
-stops throwing it away. It's kept in `~/.claude/streamdeck-history.jsonl` for
-30 days; delete it and the tables start again from empty. Today's total
-blocked time also gets a tile on the stats board.
+The page's **Activity** tab is everything a 72px key can't carry:
+
+- **Output tokens per hour**, last 24 hours, and the same split by model.
+- **Sessions at once**, the peak per hour, coloured by what they were doing.
+  Open is not the same as working, and this is the difference. An hour the
+  daemon wasn't running is drawn striped rather than empty — a sleeping
+  machine and an idle one both produce silence, and they must not look alike.
+- **Where the time went**: time each project spent working, waiting, and
+  blocked on you, today and over the last 7 days.
+
+The state history is `~/.claude/streamdeck-history.jsonl`, kept 30 days; the
+token totals are `~/.claude/streamdeck-tokens.jsonl`, kept a year. That second
+one exists because Claude Code deletes its own transcripts after 30 days
+(`cleanupPeriodDays`), so the numbers have to be copied out while they're
+there. Both are read-only history — delete either and the charts start again
+from empty. Today's total blocked time also gets a tile on the stats board.
 
 The same page reorders the board. Drag a project by its **⠿** handle and drop
 it where you want; a line shows where it will land. Topmost is the first block
