@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, wrapLabel, wrapWords, ellipsize, measureText } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, renderIcon, wrapLabel, wrapWords, ellipsize, measureText } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -449,4 +449,17 @@ await sharp(configBuf, { raw: { width, height, channels: 4 } })
   .png()
   .toFile(new URL("./render-check-config.png", import.meta.url).pathname);
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, free key, back key, compacting spinner");
+
+// The home-screen icon: nine keys on a dark ground, at whatever size a
+// platform asks for. Checked for what actually breaks — a size that isn't
+// square, or a renderer that quietly returns nothing.
+// eq here compares by identity, so one assertion per scalar rather than an
+// array that could never match itself.
+for (const size of [180, 192, 512]) {
+  const meta = await sharp(await renderIcon(size)).metadata();
+  eq(meta.format, "png", `icon-${size} is a png, the only thing iOS takes here`);
+  eq(meta.width, size, `icon-${size} is that wide`);
+  eq(meta.height, size, `icon-${size} is square`);
+}
+
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, free key, back key, compacting spinner, home-screen icon");

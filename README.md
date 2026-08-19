@@ -125,6 +125,69 @@ does the usage key.
 > The screenshots are rendered by `npm run board-shot`, which draws made-up
 > sessions through the same code the daemon draws with.
 
+## The same board, on an iPad
+
+`npm start` prints a URL and a QR code. Point an iPad's camera at it and you
+get the whole board as a web page — same data, same colours, same 2s beat.
+
+```
+board: http://192.168.2.28:58790/board?t=2805846b-…
+█ ▄▄▄▄▄ █▀ █▀▀█▀▀▄▀▀▄▀█▀▄▀█ ▄▄▄▄▄ █
+█ █   █ █▀ ▄ █▀▄ ▄▀▀▀▄▄ ▄ █ █   █ █
+…
+```
+
+What it does that the deck can't:
+
+- **No 12-key limit.** Every session gets a tile and the page scrolls. The
+  three reserved keys — usage, blocked, free — trail the sessions.
+- **Rows, columns and font size are yours**, from the gear top right or the
+  grip in the corner (drag left/right for columns, up/down for rows). The whole
+  key scales with the font, so one number keeps a key proportional. Your
+  choices live in that browser, so an iPad and a phone can each have their own.
+- **It works on a phone too.** A key is never taller than square, however the
+  rows and columns divide the screen, and a first visit picks a shape and a
+  text size from the width it landed on — three columns on a phone, five on a
+  landscape iPad, with the font set so the words come out about the same size
+  on both.
+- **Tap a key** and it raises that session's VS Code window, exactly as a first
+  press on the deck does. **Tap it again** and a panel slides in with that one
+  session at length: state, context, model, where it's running, its *whole*
+  task list, and every subagent it has going. The deck's detail board windows
+  that list to what twelve buttons hold; a page that scrolls doesn't have to.
+- **The gear also picks project colours** — the same accents the config page
+  sets, on the same keys.
+- **One header everywhere** — board, activity, settings — where every icon
+  lands in the same place whichever page you press it from. It stays put while
+  you scroll, and sits above the settings sheet and the detail panel rather
+  than behind them, so the gear closes what the gear opened.
+- **Save it to the home screen** and it opens as an app — its own icon, no
+  browser chrome, straight to the board. Neither platform lets a page install
+  itself: on Android the gear offers a one-tap button, on iPhone and iPad it is
+  **Share → Add to Home Screen**, which Safari will not let a site trigger. The
+  gear says so either way.
+
+It says when it can't see the daemon: three missed polls and the board greys
+out rather than leaving a plausible frozen picture up.
+
+**The address stays the same across restarts**, so a page left open on the iPad
+reconnects on its own and a bookmark keeps working — port 8765 by default, and
+the token is remembered alongside it in `~/.claude/streamdeck-board.json`
+(owner-only; delete it to mint a new one). If something else already holds the
+port, the board comes up on a spare one and says so above the QR:
+
+```
+board: port 8765 is in use — the board is on 61147 this run,
+       so an old bookmark or QR will not reach it
+```
+
+`STREAMDECK_PORT=9000 npm start` picks a different one.
+
+The server binds to your LAN so the iPad can reach it, gated on that token in
+the URL — anyone on your network holding the URL can see the board and change
+accents. `STREAMDECK_NO_BOARD=1 npm start` skips it entirely; the config key
+still opens the same pages on loopback.
+
 ## Nice details
 
 - **Subagents don't get a key.** A session an SDK script started, or an agent a
@@ -190,6 +253,9 @@ fi
 ```
 
 Skip it and everything else still works; the gauge just never draws.
+
+`npm start` also prints a QR code for the board on your iPad — see above, or
+`STREAMDECK_NO_BOARD=1` to turn it off.
 
 ### Reveal the right terminal
 
@@ -294,6 +360,7 @@ npm run vscode-state-check   # which window's storage answers for a folder
 npm run remote-install-check # what remote:install decides before it writes
 npm run extension-check      # whose window a focus request is for
 npm run remote-check    # remote source: host validation, tar/tail framing, matches a local source's output
+npm run config-check    # config + board pages: token gate, validation, escaping, focus
 npm run board-shot      # re-render the screenshots above
 ```
 

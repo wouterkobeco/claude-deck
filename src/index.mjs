@@ -4,18 +4,19 @@ import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
+import qrcode from "qrcode-terminal";
 import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
 import { fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
-import { openConfig } from "./config-server.mjs";
+import { lanAddress, openConfig, startServer } from "./config-server.mjs";
 import { concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
 import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -137,8 +138,15 @@ async function liveSessions() {
   // filesystem that isn't answering.
   void publishSessions(sessions).catch(() => {});
   recordHistory(sessions);
+  // Held for the board page, which is read by an iPad on its own 2s clock and
+  // must not start a second pass over ~/.claude every time it asks. Every
+  // board's poll goes through here, so this is at most one tick stale
+  // whichever one is up — the same freshness the deck itself is drawing from.
+  lastSessions = sessions;
   return sessions;
 }
+
+let lastSessions = [];
 
 // State-history capture, hung off the one session read so it happens on every
 // poll rather than on the polls of whichever board is up — the same reasoning
@@ -1018,6 +1026,97 @@ function persistAccents() {
   writeProjects(folderAccent, projectOrder);
 }
 
+// The board page's tiles, in the deck's own order and with the deck's own
+// folding — but without its geometry. There is no slot cap here: an iPad is
+// not 15 keys, so every session gets a tile and the page scrolls, which is
+// also why the three reserved keys are appended to the list rather than
+// pinned to fixed indices that only exist on a 5×3 device.
+//
+// Read from `lastSessions`, never from a fresh getLiveSessions(): the page
+// polls on its own 2s clock, and a second pass over ~/.claude per request
+// would double this daemon's filesystem work to show the same numbers the
+// deck is already drawing.
+//
+// `?? Number.MAX_SAFE_INTEGER` rather than Infinity for the same reason
+// projects() reaches for a sentinel at all — assignSlots is what fills these
+// maps and it runs only on sessions-board polls, so a session that appeared
+// while the stats board was up has no position yet. A finite sentinel keeps
+// two unknowns comparing equal instead of subtracting to NaN.
+const at = (m, k) => m.get(k) ?? Number.MAX_SAFE_INTEGER;
+
+/**
+ * The session and stand-in tiles, in the deck's own order and with the deck's
+ * own folding. Pure and exported for the same reason `detailLayout` is: the
+ * ordering, the primary-key rule and the state folding are exactly where an
+ * off-by-one silently puts a subagent's marker on a sibling's key, and none of
+ * it is visible without a deck or an iPad. `slots-check` covers it.
+ *
+ * `now` is an argument rather than a clock read for the reason `summarise`
+ * takes one: an unreachable tile's label counts from it.
+ */
+export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) {
+  const nested = sessions.filter((s) => s.nested);
+  // Unreachable stand-ins are mixed in here exactly as refresh() mixes them
+  // into assignSlots, and for the same reason: a host going quiet must move
+  // its keys' *contents*, never their place on the board.
+  const ordered = [...sessions.filter((s) => !s.nested), ...unreachable].sort(
+    (a, b) =>
+      at(folderOrder, folderKeyFor(a)) - at(folderOrder, folderKeyFor(b)) ||
+      at(sessionOrder, a.session_id) - at(sessionOrder, b.session_id)
+  );
+
+  const keys = ordered.map((s, i) => {
+    const accent = accentFor(folderKeyFor(s));
+    const project = s.folder.split("/").filter(Boolean).pop() ?? "";
+    if (s.unreachable) {
+      // "offline" rather than "unreachable" to match the key on the deck —
+      // there is room for the longer word here, and two boards disagreeing
+      // about what a thing is called is worse than one being imprecise.
+      return { id: s.session_id, kind: "offline", project, accent, label: `${s.host} offline ${formatAge(now - s.ts)}` };
+    }
+    const isPrimary = i === 0 || folderKeyFor(ordered[i - 1]) !== folderKeyFor(s);
+    const own = nestedFor(s, nested, isPrimary).sort((a, b) => at(nestedOrder, a.session_id) - at(nestedOrder, b.session_id));
+    const { label } = keyFields(s);
+    return {
+      id: s.session_id,
+      kind: "session",
+      project,
+      accent,
+      // The block's colour, folded over its subagents — the same call refresh()
+      // makes, so a tile and its key can never disagree.
+      state: mostUrgent([s.state, ...own.map((n) => n.state)]),
+      // Carried separately for the same reason renderKey takes it separately:
+      // `state` is the block's, and the blue shell marker is about this
+      // session alone.
+      shell: s.state === "shell",
+      label,
+      context: typeof s.context === "number" ? s.context : null,
+      // taskSquares already decides which square is done, active or still to
+      // do; only its geometry is for an SVG, so the width here is arbitrary.
+      squares: s.progress ? taskSquares(s.progress, 100).map((q) => q.state) : [],
+      nested: own.map((n) => n.state),
+    };
+  });
+
+  return keys;
+}
+
+async function boardKeys() {
+  const now = Date.now() / 1000;
+  const sessions = lastSessions;
+  const keys = boardTiles(sessions, unreachableTiles(readWindowStates()), now);
+  const { session, week } = await getUsage();
+  const attention = attentionQueue(sessions, now);
+  const free = freeQueue(sessions, now);
+  const longest = (q) => (q.length && q[0].ts ? formatAge(now - q[0].ts) : "");
+  return [
+    ...keys,
+    { id: "__usage", kind: "usage", session, week },
+    { id: "__attention", kind: "attention", count: attention.length, longest: longest(attention) },
+    { id: "__free", kind: "free", count: free.length, longest: longest(free) },
+  ];
+}
+
 // The config server's entire coupling to this daemon. Two functions, so the
 // page can be rewritten — drag-to-reorder, when it lands — without touching
 // anything here, and so config-check can drive the real server with fakes.
@@ -1042,6 +1141,49 @@ export const configDeps = {
     moveProject(projectOrder, folder, before);
     reindexProjects();
     persistAccents();
+  },
+  // The board and the palette its settings sheet offers. One call rather than
+  // two so the page and the fragment its poll fetches can never be rendered
+  // from two different reads.
+  board: async () => ({ keys: await boardKeys(), projects: configDeps.projects(), palette: ACCENTS }),
+  // One session at length, for the panel the board's second tap opens. The
+  // deck's detail board reads its tasks per poll rather than in
+  // getLiveSessions for a reason that holds here too — this costs nothing
+  // until someone is actually looking at one session.
+  //
+  // Null for an id nothing on the board matches, which covers both a made-up
+  // one and a session that ended while the panel was open. Nested sessions
+  // are deliberately reachable by id: they have no tile of their own, but the
+  // panel lists them and a future tap on one should find something here.
+  detail: async (id) => {
+    const session = lastSessions.find((s) => s.session_id === id);
+    if (!session) return null;
+    // `primary` is true for the same reason refreshDetail passes it: a detail
+    // view is the one place per project you can be looking at, so an SDK
+    // session with no parent to point at belongs on it.
+    const nested = nestedFor(session, lastSessions.filter((s) => s.nested), true);
+    // Same null-for-remote rule as the deck's: readLedgerTasks needs a path on
+    // *this* machine, and a remote session's cwd is not one.
+    const tasks = await readTaskList(session.session_id, session.root, session.host ? null : session.cwd);
+    const { label, project, age } = keyFields(session);
+    return {
+      id,
+      project,
+      label,
+      age,
+      accent: accentFor(folderKeyFor(session)),
+      state: session.state,
+      context: typeof session.context === "number" ? session.context : null,
+      // "claude-opus-5" is three quarters vendor, on a key or anywhere else.
+      model: [(session.model ?? "").replace(/^claude-/, ""), session.effort ?? ""].filter(Boolean).join(" ") || "—",
+      host: session.host ?? null,
+      cwd: session.cwd,
+      // The whole list, not taskWindow's slice: the window exists because
+      // twelve keys cannot hold twenty tasks, and a scrolling page can.
+      tasks: tasks.map((t, i) => ({ n: i + 1, subject: t.subject ?? "", status: t.status ?? "pending" })),
+      // Likewise all of them, rather than however many the tail had room for.
+      nested: nested.map((n) => ({ id: n.session_id, state: n.state, label: keyFields(n).label })),
+    };
   },
   // Formatted here rather than in the page: config-server.mjs owns markup and
   // nothing else, which is what lets config-check render the table from three
@@ -1626,6 +1768,55 @@ async function run() {
   // no answer at all.
   const everActive = new Set();
   const requestedAt = new Map();
+
+  // The board's two extra deps. `focus` closes over `requestedAt` because a
+  // tap on the iPad is the same act as a press on the deck and has to leave
+  // the same trace — without it, isRepeatPress would read a session revealed
+  // from the iPad as one that has never been revealed at all.
+  const serverDeps = {
+    ...configDeps,
+    focus: (id) => {
+      const session = lastSessions.find((s) => s.session_id === id);
+      // Not awaited and it cannot throw, same as a key press: focusWindow
+      // swallows its own failures and the board has nothing to report either
+      // way.
+      if (session) focusWindow(session, requestedAt);
+    },
+  };
+
+  // The one thing here that accepts a connection rather than reading a file,
+  // and now the one that accepts it from off this machine. That is what the
+  // board is for — an iPad has no other way in — and it is why this is the
+  // second thing in the project with an explicit off switch, beside
+  // STREAMDECK_NO_REMOTE. Skipped, the config key still works: openConfig
+  // starts the same server on loopback instead.
+  if (process.env.STREAMDECK_NO_BOARD !== "1") {
+    try {
+      // `remember` is what makes the address survive a restart: the same port
+      // and the same token, so a page left open on an iPad reconnects on its
+      // own rather than sitting grey until someone scans a new code. Both
+      // halves have to persist — a fixed port with a fresh token every start
+      // is still a dead bookmark. STREAMDECK_PORT overrides, for a machine
+      // where the default is spoken for by something you would rather keep.
+      const wanted = Number(process.env.STREAMDECK_PORT) || undefined;
+      const { port, token, warning } = await startServer(serverDeps, "0.0.0.0", { port: wanted, remember: true });
+      const ip = lanAddress();
+      const boardUrl = `http://${ip ?? "127.0.0.1"}:${port}/board?t=${token}`;
+      // Printed as text as well as scanned: lanAddress takes the first
+      // non-internal IPv4 it finds, which on a machine with a VPN or Docker
+      // up can be the wrong one, and the line beside the QR is how you see
+      // that rather than wondering why the iPad can't connect.
+      console.log(`board: ${boardUrl}`);
+      // Before the QR rather than after it: the code is seventeen lines tall,
+      // and a warning above it is the thing you are still looking at when you
+      // reach for the iPad and find the old bookmark dead.
+      if (warning) console.warn(`board: ${warning}`);
+      qrcode.generate(boardUrl, { small: true }, (qr) => console.log(qr));
+    } catch (err) {
+      // Best-effort like every other risky path here — the deck is untouched.
+      console.error("board server failed:", err?.message ?? err);
+    }
+  }
   // Last logged "N of M windows have the extension", so the line is printed
   // when it changes rather than every 2s. Logged on change and not only at
   // startup because the number changes as you reload windows, and that is
@@ -1715,7 +1906,7 @@ async function run() {
         // Not awaited, and it cannot throw: a press is a synchronous handler,
         // and openConfig swallows everything the way every other risky path
         // here does.
-        void openConfig(configDeps);
+        void openConfig(serverDeps);
         // Back to the sessions board on the way out. The browser takes focus
         // anyway, and watching the accents change on the real keys is the only
         // place the choice actually reads.

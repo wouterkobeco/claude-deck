@@ -781,6 +781,48 @@ export async function renderBack({ width, height, glyph = "←", caps = "BACK" }
 }
 
 /** Blank/off key, used to clear unassigned slots. */
+/**
+ * The home-screen icon. Neither platform lets a page install itself — iOS has
+ * no API at all and Android can only offer a button — so the most this can do
+ * is make what you *do* save look like an app instead of a Safari bookmark.
+ *
+ * Nine keys on a dark ground, in this project's own accents with the two state
+ * colours a glance is actually looking for. Drawn here rather than shipped as
+ * a file for the reason every other image here is: sharp is already a
+ * dependency, the palette is already imported, and a checked-in PNG is a
+ * second copy of the colours to keep in step.
+ */
+export async function renderIcon(size = 512) {
+  const pad = size * 0.14;
+  const gap = size * 0.035;
+  const cell = (size - 2 * pad - 2 * gap) / 3;
+  // Enough to read as "a board with things happening on it" at 60px, which is
+  // the size this is actually seen at.
+  const fills = [
+    ACCENT_ICON[0], BUSY, ACCENT_ICON[1],
+    BUSY, ACCENT_ICON[2], STATE_COLORS.waiting,
+    ACCENT_ICON[3], STATE_COLORS.idle, BUSY,
+  ];
+  const keys = fills
+    .map((fill, i) => {
+      const x = pad + (i % 3) * (cell + gap);
+      const y = pad + Math.floor(i / 3) * (cell + gap);
+      return `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="${cell * 0.16}" fill="${fill}" />`;
+    })
+    .join("");
+  const svg = `
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${size}" height="${size}" fill="#0b0b0b" />
+      ${keys}
+    </svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+// Four of the accents, named here rather than imported: accents.mjs imports
+// nothing from this file and this file imports nothing from it, and one icon
+// is not a reason to make that edge exist.
+const ACCENT_ICON = ["#4fc3f7", "#ffb74d", "#f06292", "#81c784"];
+
 export async function renderBlank({ width, height }) {
   return sharp({
     create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } },

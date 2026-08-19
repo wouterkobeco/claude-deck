@@ -3,7 +3,11 @@
 // (which for a remote project are another machine's strings), and that a valid
 // POST calls setAccent exactly once with what was asked for.
 // Run: node scripts/config-check.mjs
-import { createConfigServer } from "../src/config-server.mjs";
+import { createConfigServer, lanAddress } from "../src/config-server.mjs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_PORT, readBoardState, writeBoardState } from "../src/board-state.mjs";
 import { ACCENTS } from "../src/accents.mjs";
 
 const eq = (got, want, label) => {
@@ -308,7 +312,7 @@ oneVendor.server.close();
 eq(askedFor, null, "no window in the URL asks index.mjs for nothing in particular");
 eq(hHtml.split('class="periods"').length - 1, 1, "the picker renders once");
 eq(hHtml.includes('href="/activity?t=' + hToken + '&amp;p=7d"'), true, "each window is a link carrying the token");
-// Scoped to the picker: the tab nav above marks its own current entry the
+// Scoped to the picker: the icon header above marks its own current view the
 // same way, so counting across the whole document counts both.
 const picker = (html) => html.split('class="periods"')[1].split("</div>")[0];
 eq(picker(hHtml).split('<a class="on"').length - 1, 1, "exactly one window is marked current");
@@ -355,4 +359,260 @@ eq((await (await fetch(emptyUrl)).text()).includes("nothing on the board"), true
 empty.close();
 
 server.close();
-console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts");
+
+// ---------------------------------------------------------------------------
+// The board page: an iPad on the LAN, so everything it renders is escaped and
+// everything it posts is checked against the live board rather than trusted.
+const focused = [];
+const boardKeys = [
+  {
+    id: "s-1",
+    kind: "session",
+    project: '<img src=x>"alpha',
+    // Not a palette colour, and not a colour at all: readAccents only checks
+    // that a stored value is a string, and this one reaches a CSS slot.
+    accent: "url(javascript:alert(1))",
+    state: "requires_action",
+    shell: false,
+    label: '<script>alert(1)</script>',
+    context: 91,
+    squares: ["done", "active", "todo"],
+    nested: ["busy"],
+  },
+  { id: "s-2", kind: "session", project: "beta", accent: ACCENTS[1], state: "idle", shell: true, label: "", context: null, squares: [], nested: [] },
+  { id: "pi:/x", kind: "offline", project: "x", accent: ACCENTS[2], label: "pi offline 4m" },
+  { id: "__usage", kind: "usage", session: 46, week: null },
+  { id: "__attention", kind: "attention", count: 1, longest: "6m" },
+  { id: "__free", kind: "free", count: 0, longest: "" },
+];
+// One session at length. Everything here is another machine's string for a
+// remote project, so the panel escapes the same way the tiles do.
+const detail = {
+  id: "s-1",
+  project: '<b>alpha',
+  label: '<script>alert(1)</script>',
+  age: "4m",
+  accent: "javascript:alert(1)",
+  state: "requires_action",
+  context: 62,
+  model: "opus-5 high",
+  host: "pi",
+  cwd: "/home/pi/x",
+  tasks: [
+    { n: 1, subject: "read it", status: "completed" },
+    { n: 2, subject: "write it", status: "in_progress" },
+    { n: 3, subject: "check it", status: "pending" },
+  ],
+  nested: [{ id: "n-1", state: "busy", label: "code-reviewer" }],
+};
+const boardSrv = await createConfigServer({
+  projects,
+  setAccent: (...args) => calls.push(args),
+  board: async () => ({ keys: boardKeys, projects: projects(), palette: ACCENTS }),
+  focus: (id) => focused.push(id),
+  detail: async (id) => (id === "s-1" ? detail : null),
+  // All three views share one header, so this server has to be able to render
+  // all three of them.
+  activity: () => activity,
+  reorder: () => {},
+});
+const bBase = new URL(boardSrv.url).origin;
+const bToken = boardSrv.token;
+
+eq((await fetch(`${bBase}/board`)).status, 403, "the board is behind the same token gate");
+eq((await fetch(`${bBase}/board/grid`)).status, 403, "and so is its poll fragment");
+
+const board = await (await fetch(`${bBase}/board?t=${bToken}`)).text();
+eq(board.includes("data-id=\"s-1\""), true, "every tile carries the id its poll diffs on");
+eq(board.includes("data-id=\"__usage\""), true, "the reserved keys are tiles like any other");
+// Exactly one — the page's own SCRIPT. A second is a project name or a title
+// that reached the document as a tag.
+eq(board.split("<script>").length - 1, 1, "a project named <img> and a title of <script> do not reach the page as tags");
+eq(board.includes("url(javascript"), false, "an accent that is not a hex never reaches a CSS colour slot");
+eq(board.includes("background:#555555"), true, "it becomes the neutral instead");
+// The session tile alone is tappable; the reserved three and an unreachable
+// stand-in carry no data-session, so they are inert by construction.
+eq(board.split("data-session=").length - 1, 2, "only the two session tiles are tappable");
+eq(board.includes("CLEAR"), true, "a session with nothing said in it reads CLEAR, as on the deck");
+
+const grid = await (await fetch(`${bBase}/board/grid?t=${bToken}`)).text();
+eq(grid.startsWith("<div class=\"key"), true, "the poll fragment is the tiles alone, no page around them");
+eq(grid.includes("data-id=\"__free\""), true, "and it is the same list the page was built from");
+
+const bPost = (path, body) =>
+  fetch(`${bBase}${path}?t=${bToken}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(body),
+  });
+
+eq((await bPost("/focus", { session: "nope" })).status, 400, "an id that is not on the board is refused");
+eq((await bPost("/focus", { session: "__usage" })).status, 400, "and so is a reserved tile's");
+eq((await bPost("/focus", { session: "pi:/x" })).status, 400, "and an unreachable stand-in's, which has no window to raise");
+eq(focused, [], "none of those reached the daemon");
+eq((await bPost("/focus", { session: "s-1" })).status, 204, "a live session id is accepted");
+eq(focused, ["s-1"], "and is handed over exactly once, unchanged");
+
+// The panel a second tap opens. Not a key layout: the deck's version windows
+// its task list to what twelve buttons hold and pins subagents to the tail so
+// a long plan can't push them off; this one shows all of both.
+eq((await fetch(`${bBase}/session?id=s-1`)).status, 403, "the panel is behind the token gate too");
+const panel = await (await fetch(`${bBase}/session?t=${bToken}&id=s-1`)).text();
+eq(panel.split("<script>").length - 1, 0, "a title of <script> does not reach the panel as a tag");
+eq(panel.includes("javascript:alert"), false, "an accent that is not a hex never reaches the stripe's colour slot");
+eq(panel.split('class="task ').length - 1, 3, "every task is listed, not a window of them");
+eq(panel.includes("in_progress"), true, "and carries its status, so the running one reads as running");
+eq(panel.includes("1 of 3"), true, "with the count the deck's progress bar shows");
+eq(panel.split('class="agent"').length - 1, 1, "every subagent too");
+eq(panel.includes("pi:/home/pi/x"), true, "a remote session says which host it is on");
+eq(panel.includes("blocked on you"), true, "requires_action is spelled out where there is room for it");
+
+// Both "you made that up" and "it ended while you were looking at it" — the
+// panel says the same thing either way rather than the handler guessing.
+const gone = await (await fetch(`${bBase}/session?t=${bToken}&id=../../etc/passwd`)).text();
+eq(gone.includes("has ended"), true, "an id nothing matches says the session has ended");
+eq(gone.includes("class=\"task"), false, "and shows nothing stale");
+
+// One header on all three views. It was icons on the board and text links on
+// the config pages, which made "where am I and how do I get back" a different
+// question depending on where you already were.
+for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/", "accents"]]) {
+  const html = await (await fetch(`${bBase}${path}?t=${bToken}`)).text();
+  const head = html.split('class="head"')[1].split("</header>")[0];
+  eq(head.split('class="icon').length - 1, 3, `${path} carries all three views`);
+  // The accents page is not one of the three destinations — it is where the
+  // deck's own config key lands, and it keeps drag-to-reorder — so nothing is
+  // marked there rather than something being marked arbitrarily.
+  eq(head.split('class="icon on"').length - 1, here === "accents" ? 0 : 1, `${path} marks the right icon current`);
+  eq(head.includes(`href="/board?t=${bToken}"`), true, `${path} links the board with the token`);
+  eq(head.includes(`href="/activity?t=${bToken}"`), true, `${path} links activity with the token`);
+  // The gear ends in the same place from every page: the board's settings
+  // sheet. On the board it toggles it; elsewhere it links to the board with
+  // the sheet already open. It pointed at the accents page from the config
+  // pages for one release, which is the one thing a fixed icon bar exists to
+  // prevent.
+  eq(
+    here === "board" ? head.includes('id="gear"') : head.includes(`href="/board?t=${bToken}&amp;settings=1"`),
+    true,
+    `${path}'s gear leads to the same settings as everywhere else`
+  );
+  eq(head.includes(`href="/?t=`), false, `${path} does not send the gear somewhere of its own`);
+}
+
+// What turns a saved bookmark into a home-screen app. Neither platform lets a
+// page install itself, so the only thing under this project's control is that
+// what you do save opens a board rather than a 403 — which is entirely about
+// the token surviving into start_url.
+const manifestRes = await fetch(`${bBase}/manifest.webmanifest?t=${bToken}`);
+eq(manifestRes.status, 200, "the manifest is served");
+eq(manifestRes.headers.get("content-type").startsWith("application/manifest+json"), true, "as a manifest");
+const manifest = JSON.parse(await manifestRes.text());
+eq(manifest.start_url, `/board?t=${bToken}`, "start_url carries the token, or the installed icon opens a 403");
+eq(manifest.display, "standalone", "and opens without browser chrome");
+eq(
+  manifest.icons.every((i) => i.src.includes(`t=${bToken}`)),
+  true,
+  "so does every icon it names — they are behind the same gate as everything else"
+);
+eq((await fetch(`${bBase}/manifest.webmanifest`)).status, 403, "and the manifest itself is gated, since it holds the token");
+
+const iconRes = await fetch(`${bBase}/icon-180.png?t=${bToken}`);
+eq(iconRes.status, 200, "the apple-touch icon is served");
+eq(iconRes.headers.get("content-type"), "image/png", "as a png, which is the only thing iOS accepts here");
+eq((await iconRes.arrayBuffer()).byteLength > 0, true, "with bytes in it");
+eq((await fetch(`${bBase}/icon-64.png?t=${bToken}`)).status, 404, "a size nothing asks for is not rendered on demand");
+eq((await fetch(`${bBase}/icon-180.png`)).status, 403, "and icons are gated too");
+
+const boardHead = board.slice(0, board.indexOf("</head>"));
+eq(boardHead.includes(`rel="manifest" href="/manifest.webmanifest?t=${bToken}"`), true, "the page links its manifest with the token");
+eq(boardHead.includes(`rel="apple-touch-icon" href="/icon-180.png?t=${bToken}"`), true, "and its apple-touch icon");
+// iOS never fires beforeinstallprompt, so the button starts hidden and the
+// instructions start visible; Android's event swaps them.
+eq(board.includes('<button id="install" hidden>'), true, "the install button is hidden until a browser offers one");
+
+// The board's settings sheet posts the same accent mutation the config page's
+// form does, but has no page to be redirected to.
+calls = [];
+eq((await bPost("/accent", { folder: ALPHA, accent: ACCENTS[3] })).status, 200, "the form POST still follows its 303 to the page");
+const fromBoard = await fetch(`${bBase}/accent?t=${bToken}&from=board`, {
+  method: "POST",
+  headers: { "content-type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({ folder: ALPHA, accent: ACCENTS[4] }),
+});
+eq(fromBoard.status, 204, "the board's POST answers 204 and leaves the page where it is");
+eq(calls, [[ALPHA, ACCENTS[3]], [ALPHA, ACCENTS[4]]], "both routes mutate the same way");
+
+boardSrv.server.close();
+
+// ---------------------------------------------------------------------------
+// The remembered address. A page left open on an iPad has to reconnect after a
+// daemon restart, which needs the *same* port and the same token — a fixed
+// port with a fresh token every start is still a dead bookmark.
+{
+  const dir = mkdtempSync(join(tmpdir(), "board-state-"));
+  eq(readBoardState(dir), { port: null, token: null }, "a first run remembers nothing");
+  const token = "3f7bd51c-7c87-4bf2-b784-e4d0a3320eec";
+  writeBoardState({ port: 8765, token }, dir);
+  eq(readBoardState(dir), { port: 8765, token }, "and reads back exactly what it wrote");
+  // It holds a bearer token for a service on the LAN, which is not the same
+  // kind of thing as a colour map.
+  eq(statSync(join(dir, "streamdeck-board.json")).mode & 0o777, 0o600, "the file is owner-only");
+
+  // Every field is validated: this is small enough to hand-edit, the port
+  // reaches listen() and the token is compared against a query parameter.
+  // Per field, not all-or-nothing: a hand-edited port should not throw away a
+  // working token, and a token this never wrote must not be accepted whatever
+  // the port beside it says.
+  const after = (obj) => {
+    writeFileSync(join(dir, "streamdeck-board.json"), JSON.stringify(obj));
+    return readBoardState(dir);
+  };
+  eq(after({ port: 99999, token }), { port: null, token }, "a port outside the usable range is dropped, the token kept");
+  eq(after({ port: 0, token }).port, null, "and so is a zero port, which means ephemeral rather than remembered");
+  eq(after({ port: 8765, token: "letmein" }), { port: 8765, token: null }, "a token this never wrote is refused");
+  writeFileSync(join(dir, "streamdeck-board.json"), "{not json");
+  eq(readBoardState(dir), { port: null, token: null }, "a corrupt file is a first run, not a throw");
+  rmSync(dir, { recursive: true, force: true });
+  eq(readBoardState(dir), { port: null, token: null }, "and so is a missing one");
+}
+
+// A port already in use must not stop the board coming up — it degrades to an
+// ephemeral one and says so, because an old bookmark silently reaching nothing
+// is the failure you would waste an evening on.
+{
+  const held = await createConfigServer({ projects: () => [] });
+  const taken = held.port;
+  const a = await createConfigServer({ projects: () => [] }, "127.0.0.1", { port: taken });
+  eq(a.port === taken, false, "a taken port is not where the board lands");
+  eq(typeof a.warning === "string" && a.warning.includes(String(taken)), true, "and the caller is told which port it wanted");
+  eq(a.warning.includes(String(a.port)), true, "and which one it got instead");
+  const b = await createConfigServer({ projects: () => [] }, "127.0.0.1", { port: 0 });
+  eq(b.warning, null, "a port that was free warns about nothing");
+  held.server.close();
+  a.server.close();
+  b.server.close();
+}
+
+// What gets remembered after a clash is the port to *try*, never the ephemeral
+// one it settled for: the squatter is the thing that goes away, and the next
+// run has to ask for the standard port again rather than chase a number that
+// meant nothing. Driven through the real file, since that is the whole claim.
+{
+  const dir = mkdtempSync(join(tmpdir(), "board-clash-"));
+  const file = join(dir, "streamdeck-board.json");
+  writeBoardState({ port: 8765, token: "3f7bd51c-7c87-4bf2-b784-e4d0a3320eec" }, dir);
+  eq(readBoardState(dir).port, 8765, "the preferred port round-trips");
+  writeBoardState({ port: 8765, token: readBoardState(dir).token }, dir);
+  eq(JSON.parse(readFileSync(file, "utf8")).port, 8765, "and is what a later run reads back, not a fallback");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+eq(DEFAULT_PORT, 8765, "the default port is fixed, not ephemeral");
+
+// lanAddress picks the first non-internal IPv4 and nothing else — a machine
+// with only loopback has no board address, which is a null rather than a lie.
+eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }] }), null, "loopback is not a LAN address");
+eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }], en0: [{ family: "IPv6", address: "fe80::1", internal: false }, { family: "IPv4", address: "192.168.2.28", internal: false }] }), "192.168.2.28", "the first non-internal IPv4 wins");
+eq(lanAddress({}), null, "no interfaces at all is null, not a throw");
+
+console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts, board page, detail panel, shared header, focus and lanAddress");

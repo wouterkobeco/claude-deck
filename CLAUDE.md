@@ -18,7 +18,7 @@ npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run vscode-state-check   # which window's storage answers for a folder
 npm run extension-check      # whose window a focus request is for
 npm run remote-install-check # what remote:install decides before it writes
-npm run config-check   # config server: token gate, validation, HTML escaping
+npm run config-check   # config + board pages: token gate, validation, escaping, focus
 npm run statusline-check     # what `npm start` decides your status line needs
 npm run statusline:install   # add the context-gauge block here, no question
 npm run history-check  # state log: change-only records, durations, retention, concurrency
@@ -609,6 +609,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   is not time that went anywhere. Anything under a minute is dropped rather
   than drawn, because a minute is the floor `dur` can render and below it a row
   is four em dashes beside a slice too thin to see.
+  **Its type is sized for a tablet, not for a laptop it is leaning on.** The
+  page was 760px of 13px table in whatever window it opened in, which is fine
+  on a Mac two feet away and a column of small print on an iPad — and the iPad
+  is now a first-class reader of it, since the board's stats icon is how you
+  get here. `main.wide` is 1180px, the table is 17px, the column charts are
+  170px tall and the pie is 240px; the body's side padding is a `clamp` so a
+  phone loses the margin rather than the content. Nothing here is per-device:
+  one set of numbers that is honest at arm's length reads fine at two feet,
+  and the reverse was what was wrong.
   **`PERIODS` in `index.mjs` is the whole window feature** —
   24h/7d/30d/all-time, each with the bucket it groups into, chosen to keep the
   column count in the 24–52 band (fewer and a bar chart is a table; more and
@@ -687,6 +696,144 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Dragging into the empty space **below** the list marks the last row, because
   that is the natural way to ask for "last" and doing nothing there made the
   one gesture people reach for feel broken.
+- `src/board-page.mjs` — the whole board as a web page, for an iPad propped up
+  beside the deck. Same sessions, same folding, same palette (`STATE_COLORS`,
+  `MARKER_COLORS` and `usageColor` are imported, not re-picked, so
+  `colors-check`'s floors still cover what an iPad shows); what it does not
+  inherit is the deck's *geometry*, and that is the whole design.
+  **There is no slot cap**: an iPad is not 15 keys of 72px, so every session
+  gets a tile and the page scrolls, which is also why the three reserved keys
+  are appended to the tile list rather than pinned to indices 12–14 that only
+  mean something on a 5×3 device. Columns, rows and font size come from the
+  gear or the corner grip and live in `localStorage`, never on the daemon — they
+  are facts about *that screen*, and a phone and an iPad looking at the same
+  board want different ones.
+  **One number scales a key.** Everything inside a tile is sized in `cqh`/`cqw`
+  against the tile itself, so rows and `--fs` move the caps, the body, the
+  markers and the task squares together — the deck's own proportions, without a
+  second layout to keep in step.
+  **A key is never taller than square**, and that cap is what makes the same
+  page work on a phone. Rows set a key's *height* and columns set its *width*,
+  and on a 390px screen those two numbers are nothing like each other — five
+  columns of it against a third of its height is a key three times taller than
+  it is wide. `grid-auto-rows` is therefore the `min()` of the row division and
+  the column's own width; on a tablet the row division is already the smaller
+  of the two and nothing changes. The first visit also picks its shape from
+  `innerWidth` (3 columns under 600px, 5 over 1000). **Deliberately not a device
+  test**: iPadOS Safari reports a Mac user-agent by default, so "is this a
+  phone" is a question the browser will lie about, while the width is the thing
+  that was actually wrong.
+  **`--lines` is renderKey's `maxLines`, measured rather than derived**, because
+  only the browser knows how tall a key ended up at this rows/font pair. It is
+  taken from the *smallest* body on the board, not the first one: a key carrying
+  task squares has less room than one without, and a count taken off the roomier
+  kind overflows the tighter one — which is exactly the half-line that showed up
+  under the progress bar. `-webkit-line-clamp` alone was not enough either: it
+  puts the ellipsis on the last line it keeps and then paints the line after it
+  anyway when the element was stretched to a taller flex box, so `.text` also
+  carries `align-self: flex-start` and a `max-height` that clips whatever it
+  paints.
+  **The poll diffs rather than swaps.** Replacing the grid every 2s restarts
+  every CSS animation, so a `requires_action` tile would stutter on a 2s cycle
+  instead of blinking at 0.8s. `tick()` compares each incoming tile against what
+  is in the DOM and touches only what changed — `btn.drawn`'s idea, in the one
+  place that has to be the browser. That is also why the beats are CSS
+  animations and not a network event: `pulse()`'s 400ms tick has no equivalent
+  here and needs none.
+  **A second tap opens the detail panel, and it is deliberately not the deck's
+  detail board.** That board spends most of its design on fitting one session
+  into 5×3 keys of 72px — `taskWindow` re-centring so the in-progress task
+  stays visible, subagents pinned to a tail so a twenty-task plan cannot push
+  them off, a back key carved out of a fixed index. None of those constraints
+  exist on a page that scrolls, so `detailPanel` shows the *whole* task list
+  and every subagent, and nothing is cut to fit a square.
+  **The repeat rule is decided in the browser, and that is right rather than a
+  shortcut**: the deck's `lastPress` is per-deck, and per-client is what the
+  equivalent is here — two people looking at one board must not steal each
+  other's second tap, and the daemon cannot tell them apart. Everything else
+  about the rule is the deck's: both taps raise the window, any other tile
+  breaks the chain, and leaving clears it (without that the tap that closed
+  the panel is still in `lastTap` and the next one reopens what you just left).
+  The panel is re-rendered rather than diffed, because the age in its header
+  ticks by the second for the first minute of a state — so it saves and
+  restores `scrollTop`, or a long task list you were halfway down would jump
+  to the top every 2s.
+  **The body font is a proportion of a key, and copying the deck's ratio was
+  wrong.** 19% of 72px is 13.7px seen across a room; 19% of a 226px tile is
+  43px, which is why every title was cut off at three lines. The default is 9%
+  on a tablet and 11% on a phone (whose key is half the size and so needs a
+  bigger share of it), which fits five lines and four — and it is a slider,
+  because how far away the thing is sitting is not something this can know.
+  **A saved icon has to open a board, not a 403.** The page ships a manifest
+  and PNG icons (`renderIcon`, in `render.mjs` with the rest of the SVG→sharp
+  work rather than as a checked-in file — the palette is already there, and a
+  committed PNG is a second copy of these colours to keep in step). Both sit
+  behind the same token gate as everything else and are linked *with* the token
+  in their href, because `start_url` has to carry it — that is the only reason
+  any of this is more than three meta tags. Installing is a tap the platform
+  owns: Android's `beforeinstallprompt` lets the gear offer a button, iOS has
+  no equivalent at all, so the sheet says where Safari's own menu item is
+  rather than pretending.
+  **A stopped daemon must say so.** Three failed polls grey the board and say
+  `daemon not responding`, for the same reason `unreachableHosts` exists — a
+  frozen board is indistinguishable from a quiet one, and that is the one
+  dishonest thing this project refuses to ship.
+  Everything else is decided on the server, the rule `config-server.mjs` already
+  lives by: what a tile says, what colour it is, whether a gauge is critical,
+  which tiles are tappable (`data-session` is emitted only for session tiles, so
+  the reserved three and an unreachable stand-in are inert by construction
+  rather than by a check in the handler).
+- `src/board-state.mjs` — the board's address, remembered between runs
+  (`~/.claude/streamdeck-board.json`, the daemon's **seventh** file and the
+  second that is its own memory rather than a message to another process).
+  The server used to take an ephemeral port and mint a fresh token every start,
+  which is right for something you open from a key press and wrong for
+  something you *scan onto an iPad*: the URL changed on every restart, so a
+  bookmark broke and a page left open on the wall stayed grey. **Both halves
+  have to persist** — a fixed port with a rotating token is still a dead
+  bookmark, which is why the token is in here and not just the port.
+  That makes this the one file in the project that is a **credential at rest**,
+  so it is written `0600` and read back with both fields validated: the port
+  reaches `listen()` and the token is compared against a query parameter, and
+  a token that isn't a UUID this could have written is refused whatever the
+  port beside it says. Validated per field rather than all-or-nothing, so a
+  hand-edited port doesn't throw away a working token.
+  **`DEFAULT_PORT` is 8765 and deliberately not 8080**: 8080 is the most
+  standard alternative HTTP port and therefore the most likely to already be
+  answering on a machine that runs dev servers — measured here, 8080 was in
+  use along with 3000, 5000 and 8888, so it would have warned on every start.
+  A clash is not fatal: `createConfigServer` falls back to an ephemeral port
+  and returns a `warning` for `run()` to print above the QR (this module has no
+  console of its own by design). **What it then remembers is the port to *try*,
+  never the one it settled for** — the squatter is the thing that goes away,
+  and the next run has to ask for the standard port again rather than chase an
+  ephemeral number that meant nothing. `STREAMDECK_PORT` overrides.
+  Ephemeral stays the default for anyone who doesn't pass `remember`, which is
+  what stops `config-check` fighting a running daemon for the same socket.
+  **One header on all three views**, exported from here (`iconHeader`,
+  `HEADER_CSS`) and used by `config-server.mjs`'s two pages as well — it was
+  icons on the board and text links on the config pages, which made "where am
+  I and how do I get back" a different question depending on where you already
+  were. Three icons: the board (the same nine keys the home-screen icon draws,
+  so the way back looks like the thing it goes back to), activity, and
+  settings — and **every one of them lands in the same place from every page,
+  the gear included**. Settings are the board's sheet, so the gear toggles it
+  on the board and links to `/board?…&settings=1` from anywhere else, which
+  opens the board with the sheet already up and then drops the flag from the
+  URL (the token has to stay — the poll reads `location.search` — but a reload
+  must not keep reopening a sheet you closed). It pointed at the accents page
+  from the config pages for one release, so the same icon landed you somewhere
+  else depending on where you pressed it, which is the one thing a fixed icon
+  bar exists to prevent. The accents page is deliberately *not* a fourth icon:
+  it is where the deck's own config key lands and it keeps drag-to-reorder, so
+  its header marks nothing current rather than marking something arbitrarily. The CSS travels with the markup because a header
+  imported without the rules that make it one is how the two drift apart.
+  **The sheet, the panel and the scrim all start below it** (`--head`), rather
+  than covering the whole viewport as they did: with the header buried under
+  the scrim there was no way to close the sheet with the control that opened
+  it, and the activity icon was unreachable from a board with a panel up.
+- `src/html.mjs` — `esc` and `colour`, in one place because two files now render
+  markup and the alternative was an import cycle between them.
 - `src/sdd-ledger.mjs` — tasks Claude Code doesn't know about. The progress
   bar and the detail board both come from `~/.claude/tasks/<session id>/`,
   which is filled only when a session uses Claude Code's *own* task tool — a
@@ -903,19 +1050,40 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   they meet — first one processed keeps it, the later one re-claims and the
   re-claim is written back, so the loser settles rather than flipping every
   poll.
-  **The daemon also listens, but only after you ask it to.** Pressing the
-  stats board's config key starts a loopback HTTP server (`config-server.mjs`)
-  that lives for the daemon's remaining life — the one thing here that accepts
-  a connection rather than reading a file. It writes nothing new of its own:
-  the page's mutations go through `applyAccentChoice`/`moveProject` and
-  `persistAccents`, into the accents file that already existed. The port does
-  not exist until the press, which is why there is no off switch for it the
-  way `STREAMDECK_NO_REMOTE=1` is one for ssh.
+  **The daemon also listens, and since the board it listens off this machine.**
+  `config-server.mjs` is the one thing here that accepts a connection rather
+  than reading a file, and it now starts with `npm start` rather than on the
+  config key, bound to `0.0.0.0` rather than loopback — because the board page
+  it serves is *for* an iPad, and an iPad has no other way in. `run()` prints
+  the LAN URL and a QR of it (`lanAddress` picks the first non-internal IPv4,
+  which a machine with a VPN or Docker up can get wrong, hence the URL printed
+  as text beside the code). It still writes nothing new of its own: every
+  mutation goes through `applyAccentChoice`/`moveProject` and `persistAccents`,
+  into the accents file that already existed, and `focus` is the same
+  `focusWindow` a key press calls — closed over the same `requestedAt`, or a
+  session revealed from the iPad would read to `isRepeatPress` as one that has
+  never been revealed at all.
+  That is a real widening of the trust boundary and it gets the treatment the
+  other one did: the per-server `randomUUID` still gates every route before
+  routing, a `/focus` id is checked against the live board rather than trusted
+  (it arrives from a device on the LAN and everything downstream of it reaches
+  VS Code and a shell), and `STREAMDECK_NO_BOARD=1` is the off switch —
+  the second in the project, beside `STREAMDECK_NO_REMOTE=1`, and for the same
+  reason: this is the risky reader/listener that talks to another machine.
+  Skipped, the config key still works — `openConfig` starts the same server on
+  loopback instead, which is what `startServer`'s memoised promise is for: one
+  server, two doors, and whichever opens first decides the bind address.
   **The fourth file is the first the daemon appends to on its own schedule**:
   `~/.claude/streamdeck-history.jsonl` (`history.mjs`), written whenever a
   session changes state rather than when you do something. Everything above it
   is rewritten in place and says what is true now; this one accumulates and
   says what was true, which is why it is the only one with a retention policy.
+  **The seventh file is the first that is a credential**:
+  `~/.claude/streamdeck-board.json` (`board-state.mjs`), the port and token the
+  board answers on, so a page open on an iPad reconnects by itself after a
+  restart instead of waiting for someone to scan a new code. `0600`, unlike
+  every other file here, because the rest of `~/.claude` being user-only is not
+  a reason to be careless with the one thing in it that is a bearer token.
   **The fifth file is the first whose source is outside this project's view
   entirely**: `~/.claude/streamdeck-tokens.jsonl` (`tokens.mjs`), hourly token
   totals lifted out of Claude Code's transcripts. It exists because those
@@ -1122,6 +1290,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   reserved** — key 14 is the usage readout and the stats toggle, key 13 the
   attention key, key 12 the free-capacity key — leaving **12 session slots**.
   Extra sessions past that get no key, by design.
+  **The board page is where that cap does not apply** (`board-page.mjs`): an
+  iPad is not this device, so it shows every session and scrolls. That is not a
+  second answer to "what falls off the end" — the two queues are still the
+  complete ones — it is the same board without a constraint that is a fact
+  about 15 keys of 72px and nothing else.
   **The third reserved key is what makes that "by design" honest.** With 14
   sessions on this machine the board stopped fitting, and the thing being
   scanned for turned out not to be alarms — 9 of 14 sessions were idle, 0

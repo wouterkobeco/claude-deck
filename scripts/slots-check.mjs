@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, loadAccents, attentionQueue, freeQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, loadAccents, attentionQueue, freeQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
@@ -699,4 +699,66 @@ eq(
   "pressing a sibling remote key is a new first press, not a repeat of its neighbour"
 );
 
-console.log("OK: project grouping");
+
+// ---------------------------------------------------------------------------
+// boardTiles: the same grouping the deck's slots get, without the deck's cap.
+// The board page is the one view with no 12-slot truncation, so what has to
+// hold here is that nothing *else* changed — order, the primary-key rule, and
+// the state folding all still come out as the keys beside it.
+{
+  const bslots = new Array(12).fill(null);
+  const bnested = new Array(12).fill(null);
+  // `cwd` is not optional here: keyFields' last fallback is its basename, and
+  // every session out of the registry has one.
+  const sess = (id, folder, extra = {}) => ({ session_id: id, folder, cwd: folder, nested: false, state: "idle", ...extra });
+  const sub = (id, folder, parent, state) => ({ session_id: id, folder, nested: true, parent, state });
+  // Fourteen sessions across two projects: more than the deck can show, which
+  // is the whole reason this view exists.
+  const many = [
+    ...Array.from({ length: 8 }, (_, i) => sess(`a${i}`, A)),
+    ...Array.from({ length: 6 }, (_, i) => sess(`b${i}`, B)),
+  ];
+  assignSlots(many, bslots, bnested);
+  const tiles = boardTiles(many);
+  eq(tiles.length, 14, "every session gets a tile, past the deck's twelve");
+  eq(
+    tiles.slice(0, 3).map((t) => t.id),
+    ["a0", "a1", "a2"],
+    "and in the deck's own first-seen order, project by project"
+  );
+  eq(tiles.at(-1).id, "b5", "including the two the deck had no slot for");
+
+  // A subagent colours the key of the session that spawned it, and only that
+  // one — the bug folder-attachment shipped with, which nothing but a deck or
+  // this page would show.
+  const withAgent = [sess("a0", A), sess("a1", A), sub("g1", A, "a1", "busy")];
+  assignSlots(withAgent, bslots, bnested);
+  const folded = boardTiles(withAgent);
+  eq(
+    folded.map((t) => [t.id, t.state, t.nested]),
+    [["a0", "idle", []], ["a1", "busy", ["busy"]]],
+    "a busy subagent colours its own parent's tile, not its sibling's"
+  );
+
+  // `shell` is carried apart from `state` for the same reason renderKey takes
+  // it apart: a tile greened by a subagent must not lose its own shell marker.
+  const shelly = [sess("a0", A, { state: "shell" }), sub("g2", A, "a0", "busy")];
+  assignSlots(shelly, bslots, bnested);
+  eq(boardTiles(shelly).map((t) => [t.state, t.shell]), [["busy", true]], "a shell session keeps its marker under a busy fold");
+
+  // Task squares come from the same taskSquares the deck draws with — the
+  // square after the done run is the running one.
+  const tasked = [sess("a0", A, { progress: { current: 3, total: 5, active: true } })];
+  assignSlots(tasked, bslots, bnested);
+  eq(boardTiles(tasked)[0].squares, ["done", "done", "active", "todo", "todo"], "task squares match the deck's");
+
+  // An unreachable host keeps its block's place and accent and says so; it is
+  // never a session tile, so nothing can try to focus it.
+  const down = [sess("a0", A)];
+  assignSlots(down, bslots, bnested);
+  const mixed = boardTiles(down, [{ session_id: "u", folder: B, host: "pi", unreachable: true, state: "idle", ts: 1000 }], 1240);
+  eq(mixed.map((t) => t.kind), ["session", "offline"], "a stand-in is its own kind, never a tappable session");
+  eq(mixed[1].label, "pi offline 4m", "and says which host, and for how long");
+}
+
+console.log("OK: project grouping, board tiles");

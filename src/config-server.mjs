@@ -14,25 +14,27 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
+import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
+import { boardGrid, boardPage, detailPanel, iconHeader, HEADER_CSS } from "./board-page.mjs";
+import { renderIcon } from "./render.mjs";
+import { esc, colour } from "./html.mjs";
 
 // A form POST of one folder key and one hex value. Anything approaching this
 // is not a browser filling in the page we served.
 const MAX_BODY = 4096;
 
-const ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-
-// The full five-entity escape, not tags only. Folder keys reach this page from
-// the filesystem and, for a remote project, from another machine's registry —
-// and the hidden `folder` field puts them in *attribute* context, where a
-// double quote breaks out with no `<` involved. A tag-only escaper passes a
-// `<script>` test case while still being injectable.
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ENTITIES[c]);
-
 const STYLE = `
   :root { color-scheme: dark }
+  :root { --page-bg:#121212 }
+  /* No padding on the body: the header is sticky and full-bleed, and a padded
+     body would leave a strip of page showing above it as you scroll. */
   body { background:#121212; color:#e0e0e0; font-family:-apple-system,sans-serif;
-         margin:0; padding:32px; box-sizing:border-box }
+         margin:0; padding:0; box-sizing:border-box }
+  /* border-box, or max-width plus this padding is wider than the window it is
+     capped to and the page scrolls sideways. */
+  main { padding:28px clamp(12px,2.2vw,32px) 48px; box-sizing:border-box }
   /* Horizontally centred, vertically pinned to the top. Centring both ways
      looked better on one page and wrong across two: Accents and Time are
      different heights, so the heading and the tabs jumped every time you
@@ -41,9 +43,7 @@ const STYLE = `
   main { width:100%; max-width:520px; margin:0 auto }
   /* The activity page carries charts and a table beside a pie; 520px is right
      for a list of projects and cramped for those. */
-  main.wide { max-width:760px }
-  h1 { font-size:15px; letter-spacing:.18em; text-transform:uppercase;
-       color:#9e9e9e; font-weight:600; margin:0 0 24px }
+  main.wide { max-width:1180px }
   .row { margin:0 0 20px }
   /* The drop line. A box-shadow rather than a border so the row doesn't
      change height as it appears — a list that shifts under the pointer while
@@ -67,52 +67,49 @@ const STYLE = `
            cursor:pointer; padding:0 }
   button.on { border-color:#ffffff }
   .empty, .hint { color:#757575 }
-  .hint { font-size:12px; margin:-14px 0 24px }
-  nav { margin:0 0 24px; font-size:12px }
-  nav a { color:#4fc3f7; text-decoration:none; margin-right:16px }
-  nav a.on { color:#e0e0e0; font-weight:700 }
-  table { border-collapse:collapse; width:100%; font-size:13px }
-  th { text-align:left; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
-       color:#757575; font-weight:600; padding:0 12px 8px 0 }
-  td { padding:7px 12px 7px 0; border-top:1px solid #262626;
+  .hint { font-size:13px; margin:0 0 24px }
+  table { border-collapse:collapse; width:100%; font-size:17px }
+  th { text-align:left; font-size:12px; letter-spacing:.14em; text-transform:uppercase;
+       color:#757575; font-weight:600; padding:0 16px 10px 0 }
+  td { padding:11px 16px 11px 0; border-top:1px solid #262626;
        font-variant-numeric:tabular-nums }
   td.project { font-weight:600 }
   /* The column the page exists for: time this project spent blocked on you.
      Applied per cell rather than per column, so an em dash for "none today"
      stays grey — colouring a zero draws the eye to the wrong row. */
   td.blocked { color:#ff8a65 }
-  h2 { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#757575;
-       font-weight:600; margin:28px 0 10px }
+  h2 { font-size:13px; letter-spacing:.16em; text-transform:uppercase; color:#757575;
+       font-weight:600; margin:34px 0 12px }
   /* Charts are divs whose width or height is a percentage, server-rendered
      like everything else on this page. No canvas, no chart library, nothing
      for the browser to compute — CLAUDE.md's rule about SCRIPT being the one
      part of this project no check can reach applies double to a drawing
      routine. */
-  .chart { display:grid; grid-template-columns:44px 1fr 62px; gap:2px 8px;
-           align-items:center; font-size:11px; font-variant-numeric:tabular-nums }
+  .chart { display:grid; grid-template-columns:54px 1fr 78px; gap:3px 10px;
+           align-items:center; font-size:13px; font-variant-numeric:tabular-nums }
   /* Model ids are names, not clock times: haiku-4-5-20251001 ran straight out
      of the 44px column the hour charts share. No backticks in here — STYLE is
      a template literal, and one inside a comment ends it. */
-  .chart.wide { grid-template-columns:132px 1fr 62px }
+  .chart.wide { grid-template-columns:172px 1fr 78px }
   .chart .t { color:#757575; text-align:right }
   .chart .v { color:#9e9e9e }
-  .track { display:flex; height:11px; background:#1b1b1b; border-radius:2px; overflow:hidden }
+  .track { display:flex; height:15px; background:#1b1b1b; border-radius:2px; overflow:hidden }
   .track i { display:block; height:100% }
   /* An hour the daemon did not watch is not an idle hour, and must not draw as
      one. Diagonal stripes rather than an empty track: empty is a real reading
      here (nothing ran) and these two must never look alike. */
   .track.unseen { background:repeating-linear-gradient(135deg,#1b1b1b 0 4px,#242424 4px 8px) }
-  .legend { display:flex; gap:14px; font-size:11px; color:#757575; margin:8px 0 0 }
-  .legend i { display:inline-block; width:9px; height:9px; border-radius:2px;
-              margin-right:5px; vertical-align:-1px }
+  .legend { display:flex; gap:18px; font-size:13px; color:#757575; margin:10px 0 0 }
+  .legend i { display:inline-block; width:11px; height:11px; border-radius:2px;
+              margin-right:6px; vertical-align:-1px }
   /* Money, not tokens — its own line rather than another number crowding the
      heading, and in the metered rung's own amber. */
-  .cost { font-size:12px; color:#ffb300; margin:10px 0 0 }
+  .cost { font-size:14px; color:#ffb300; margin:12px 0 0 }
   /* Time series run left to right, so their bars stand up: one column per
      hour, height as a percentage of the busiest one. The horizontal .chart
      above stays for the by-model list, where the categories are names rather
      than a clock and reading them down the left is the whole point. */
-  .cols { display:flex; align-items:flex-end; gap:2px; height:104px }
+  .cols { display:flex; align-items:flex-end; gap:3px; height:170px }
   .col { flex:1 1 0; display:flex; flex-direction:column-reverse; height:100%;
          background:#1b1b1b; border-radius:2px 2px 0 0; overflow:hidden }
   .col.unseen { background:repeating-linear-gradient(135deg,#1b1b1b 0 4px,#242424 4px 8px) }
@@ -121,54 +118,34 @@ const STYLE = `
   .col i { display:block; width:100%; flex:none }
   /* Every hour gets a slot so the labels line up under their columns; only
      some of them carry text, because 25 timestamps in 460px is a smear. */
-  .xaxis { display:flex; gap:2px; font-size:10px; color:#757575; margin-top:5px }
+  .xaxis { display:flex; gap:3px; font-size:12px; color:#757575; margin-top:6px }
   .xaxis span { flex:1 1 0; text-align:center; white-space:nowrap }
-  .peak { float:right; font-size:10px; color:#616161; letter-spacing:0;
+  .peak { float:right; font-size:12px; color:#616161; letter-spacing:0;
           text-transform:none; font-weight:400 }
   /* The window picker. Links rather than a select, because a select needs a
      script to act on and this page decides everything on the server. */
   .periods { display:flex; gap:6px; margin:0 0 20px }
-  .periods a { font-size:11px; color:#9e9e9e; text-decoration:none; padding:4px 10px;
-               border-radius:4px; background:#1b1b1b }
+  .periods a { font-size:14px; color:#9e9e9e; text-decoration:none; padding:8px 15px;
+               border-radius:5px; background:#1b1b1b }
   .periods a.on { background:#2a2a2a; color:#e0e0e0; font-weight:700 }
   /* Table left, pie right, wrapping under on a narrow window rather than
      squeezing the columns. */
   .split { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap }
-  .split table { flex:1 1 320px }
+  .split table { flex:1 1 460px }
   /* A conic-gradient, not an SVG: the slices are already percentages by the
      time they get here, so there is no trig and no path to build. */
-  .pie { flex:none; width:168px; border-radius:50%; aspect-ratio:1 }
-  .pie-total { flex:none; width:168px; text-align:center; font-size:11px;
-               color:#757575; margin-top:8px }
+  .pie { flex:none; width:240px; border-radius:50%; aspect-ratio:1 }
+  .pie-total { flex:none; width:240px; text-align:center; font-size:13px;
+               color:#757575; margin-top:10px }
   /* Ties a row to its slice, so the pie needs no legend. */
-  .dot { display:inline-block; width:9px; height:9px; border-radius:2px;
-         margin-right:7px; vertical-align:-1px }`;
-
-const nav = (token, here) =>
-  `<nav>${[
-    ["/", "Accents"],
-    ["/activity", "Activity"],
-  ]
-    .map(([href, name]) =>
-      href === here
-        ? `<a class="on" href="${href}?t=${esc(token)}">${name}</a>`
-        : `<a href="${href}?t=${esc(token)}">${name}</a>`
-    )
-    .join("")}</nav>`;
+  .dot { display:inline-block; width:11px; height:11px; border-radius:2px;
+         margin-right:9px; vertical-align:-1px }`;
 
 // Every number arrives formatted and every bar arrives as a percentage.
 // index.mjs owns the summarising, the clock and the units; this file owns the
 // markup, and keeping the split there is what lets config-check drive the page
 // with fixed fixtures instead of reconstructing a day of history and a
 // gigabyte of transcripts.
-// An accent reaches a CSS colour slot, which is the same trust boundary `pct`
-// crosses and needs the same treatment: `esc` makes a string safe as *text*,
-// and this is not text. readAccents only checks that the stored value is a
-// string, so a hand-edited accents file could otherwise put `url(...)` into a
-// background. Anything that is not a plain hex becomes the neutral.
-const HEX = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
-const colour = (c) => (HEX.test(String(c)) ? String(c) : "#555555");
-
 const STATE_FILL = {
   // The two meters, told apart by hue rather than by a label under every
   // column: Claude keeps the page's own blue, Codex the vendor's green.
@@ -251,10 +228,10 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
      <div class="pie-total">${esc(pie.total)} of session time</div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
-    <style>${STYLE}</style></head><body>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>${HEADER_CSS}${STYLE}</style></head><body>
+    ${iconHeader(token, "activity", "Activity")}
     <main class="wide">
-      <h1>Activity</h1>
-      ${nav(token, "/activity")}
       ${periodBar(token, periods, period)}
       ${
         tokens.cols.length === 0
@@ -302,10 +279,10 @@ function page(token, projects) {
     .join("");
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
-    <style>${STYLE}</style></head><body>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>${HEADER_CSS}${STYLE}</style></head><body>
+    ${iconHeader(token, "accents", "Projects")}
     <main>
-      <h1>Projects</h1>
-      ${nav(token, "/")}
       <p class="hint">Topmost is the first block on the deck. Drag a handle to reorder.</p>
       ${rows || '<p class="empty">nothing on the board right now</p>'}
     </main>
@@ -445,8 +422,14 @@ function readBody(req) {
  * rather than timingSafeEqual: it is 122 random bits over loopback, and
  * anything else would be theatre.
  */
-export async function createConfigServer(deps) {
-  const token = randomUUID();
+const icons = {};
+
+export async function createConfigServer(deps, host = "127.0.0.1", { port: wanted, remember = false } = {}) {
+  // Reuse the address this daemon last answered on, so a page already open on
+  // an iPad reconnects by itself after a restart instead of sitting grey until
+  // someone scans a new code. A first run mints both.
+  const remembered = remember ? readBoardState() : { port: null, token: null };
+  const token = remembered.token ?? randomUUID();
 
   const server = createServer(async (req, res) => {
     // Set on every response, including the 403s. The page has no external
@@ -461,6 +444,85 @@ export async function createConfigServer(deps) {
 
       if (req.method === "GET" && url.pathname === "/") {
         return send(res, 200, page(token, deps.projects()), "text/html; charset=utf-8");
+      }
+
+      // The two things that turn a saved bookmark into a home-screen app: a
+      // manifest (Android reads it; iOS reads the meta tags in the page) and
+      // PNG icons. Both sit behind the same token gate as everything else,
+      // and both are linked with the token in their href — the manifest has
+      // to be, because `start_url` carries the token that makes the installed
+      // app open a board rather than a 403.
+      if (req.method === "GET" && url.pathname === "/manifest.webmanifest") {
+        return send(
+          res,
+          200,
+          JSON.stringify({
+            name: "Claude deck",
+            short_name: "Deck",
+            start_url: `/board?t=${token}`,
+            display: "standalone",
+            orientation: "any",
+            background_color: "#0b0b0b",
+            theme_color: "#0b0b0b",
+            icons: [192, 512].map((s) => ({
+              src: `/icon-${s}.png?t=${token}`,
+              sizes: `${s}x${s}`,
+              type: "image/png",
+              purpose: "any",
+            })),
+          }),
+          "application/manifest+json; charset=utf-8"
+        );
+      }
+
+      const icon = url.pathname.match(/^\/icon-(180|192|512)\.png$/);
+      if (req.method === "GET" && icon) {
+        // Rendered once per size and held: it is three kilobytes and never
+        // changes, and a home screen asks for it exactly when the network is
+        // least interesting.
+        const size = Number(icon[1]);
+        icons[size] ??= await renderIcon(size);
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "max-age=86400" });
+        return res.end(icons[size]);
+      }
+
+      // The board, and the fragment its own 2s poll re-fetches. Both come
+      // from one `deps.board()` call, so the page you load and the tiles that
+      // replace it can never be rendered by two different code paths.
+      if (req.method === "GET" && url.pathname === "/board") {
+        return send(res, 200, boardPage(token, await deps.board()), "text/html; charset=utf-8");
+      }
+
+      if (req.method === "GET" && url.pathname === "/board/grid") {
+        // Deliberately a fragment rather than a JSON payload the client turns
+        // into markup: one renderer, on the server, for the first paint and
+        // every one after it.
+        return send(res, 200, boardGrid((await deps.board()).keys), "text/html; charset=utf-8");
+      }
+
+      // One session at length, for the panel a second tap opens. `deps.detail`
+      // answers null for an id it doesn't know — which is both "you made that
+      // up" and "it ended while you were looking at it", and the panel says
+      // the same thing either way rather than this handler guessing which.
+      if (req.method === "GET" && url.pathname === "/session") {
+        return send(res, 200, detailPanel(await deps.detail(url.searchParams.get("id"))), "text/html; charset=utf-8");
+      }
+
+      // A tap on a session tile. The same focusWindow a deck press calls, and
+      // the id is checked against the live board rather than trusted: it
+      // arrives from a device on the LAN, and everything downstream of it
+      // reaches VS Code and a shell.
+      if (req.method === "POST" && url.pathname === "/focus") {
+        const raw = await readBody(req);
+        if (raw === null) return send(res, 400, "body too large");
+        const id = new URLSearchParams(raw).get("session");
+        const keys = (await deps.board()).keys;
+        if (!keys.some((k) => k.kind === "session" && k.id === id)) return send(res, 400, "unknown session");
+        deps.focus(id);
+        // No redirect: the page stays where it is and picks the result up on
+        // its next poll, like every other thing it shows.
+        res.writeHead(204);
+        return res.end();
       }
 
       if (req.method === "GET" && url.pathname === "/activity") {
@@ -485,6 +547,13 @@ export async function createConfigServer(deps) {
         // it, and nothing arbitrary ever enters the accent map.
         if (!deps.projects().some((p) => p.key === folder)) return send(res, 400, "unknown project");
         deps.setAccent(folder, accent);
+        // The board posts this from its settings sheet and stays put — it has
+        // no page to be redirected to, and its keys pick the new accent up on
+        // the next poll. The config page's own form still wants the 303.
+        if (url.searchParams.get("from") === "board") {
+          res.writeHead(204);
+          return res.end();
+        }
         // A 400 above is a dead end by contrast — only a stale page or a
         // forged request gets one, and the way back for both is the config key.
         res.writeHead(303, { Location: `/?t=${token}` });
@@ -535,20 +604,91 @@ export async function createConfigServer(deps) {
     }
   });
 
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { server, url: `http://127.0.0.1:${server.address().port}/?t=${token}` };
+  // The port we would like, then whatever we can get. A fixed port is the
+  // whole point — but something else holding it must not stop the board
+  // coming up, so this degrades to an ephemeral one and says so. `warning` is
+  // returned rather than logged here: this module has no console of its own by
+  // design, and run() is where the QR is printed anyway.
+  // Ephemeral unless someone asked for an address worth remembering. A check
+  // spins up a real server on this machine, and a fixed default would have it
+  // fighting the daemon that is actually running for the same socket.
+  const first = wanted ?? remembered.port ?? (remember ? DEFAULT_PORT : 0);
+  let warning = null;
+  try {
+    await listenOn(server, first, host);
+  } catch (err) {
+    if (err?.code !== "EADDRINUSE" && err?.code !== "EACCES") throw err;
+    await listenOn(server, 0, host);
+    warning = `port ${first} is in use — the board is on ${server.address().port} this run, so an old bookmark or QR will not reach it`;
+  }
+  const port = server.address().port;
+  // The port to *try* next time, not the one we ended up on. Those differ
+  // exactly when something else held it, and remembering the ephemeral
+  // fallback would chase a number that means nothing — the squatter is the
+  // thing that goes away, and the next run should ask for the standard port
+  // again and get it.
+  if (remember) writeBoardState({ port: first, token });
+  return { server, port, token, warning, url: `http://127.0.0.1:${port}/?t=${token}` };
 }
 
-// Started by the first press and kept for the daemon's life: an idle shutdown
-// is a timer to get wrong, and the port doesn't exist until you've asked for
-// it. The *promise* is memoised, not its result, so two fast presses can't
-// start two servers.
+// listen() reports failure by event, not by rejection, and the error listener
+// has to come off again or the second attempt inherits it.
+function listenOn(server, port, host) {
+  return new Promise((resolve, reject) => {
+    const fail = (err) => {
+      server.removeListener("listening", ok);
+      reject(err);
+    };
+    const ok = () => {
+      server.removeListener("error", fail);
+      resolve();
+    };
+    server.once("error", fail);
+    server.once("listening", ok);
+    server.listen(port, host);
+  });
+}
+
+/**
+ * This machine's first non-internal IPv4 address, or null. What the iPad has
+ * to dial, and the one thing about the board that can't be derived from the
+ * server itself.
+ *
+ * First rather than best: a laptop has one Wi-Fi address and a pile of virtual
+ * ones (Docker, VPNs, `awdl0`), and picking correctly between those needs a
+ * routing table. The QR is printed with whatever this returns, so a wrong
+ * guess is visible immediately and fixed by reading the address off the line
+ * beside it — which is why it prints the URL as text too.
+ */
+export function lanAddress(interfaces = networkInterfaces()) {
+  for (const addrs of Object.values(interfaces)) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return null;
+}
+
+// One server for both doors into it — the config key and the board — kept for
+// the daemon's life: an idle shutdown is a timer to get wrong. The *promise*
+// is memoised, not its result, so two fast presses can't start two servers,
+// and whichever door opens first decides the bind address.
 let running = null;
+
+/**
+ * The server, started if it isn't. `host` is honoured only by the call that
+ * actually starts it: the daemon starts it on 0.0.0.0 so an iPad can reach the
+ * board, and a config-key press on a daemon that skipped that (STREAMDECK_NO_BOARD)
+ * starts it on loopback instead.
+ */
+export function startServer(deps, host, opts) {
+  running ??= createConfigServer(deps, host, opts);
+  return running;
+}
 
 export async function openConfig(deps) {
   try {
-    running ??= createConfigServer(deps);
-    const { url } = await running;
+    const { url } = await startServer(deps);
     console.log(`config: ${url}`);
     execFile("open", [url], () => {});
   } catch (err) {
