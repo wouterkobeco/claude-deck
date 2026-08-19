@@ -548,7 +548,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `title` (25 numbers will not fit under 25 columns, and a tooltip needs no
   script) and only every third hour is labelled, anchored on the newest hour so
   the rightmost column is always named and the labels don't shuffle as the
-  window slides. Bars scale against the busiest column rather than a fixed
+  window slides. **`PERIODS` in `index.mjs` is the whole window feature** —
+  24h/7d/30d/all-time, each with the bucket it groups into, chosen to keep the
+  column count in the 24–52 band (fewer and a bar chart is a table; more and
+  the columns are thinner than the gaps). Every step is a whole number of
+  hours because the stored records *are* hourly, so changing window is a
+  regrouping rather than a re-read — that is why a year of history costs the
+  same page load as a day. The window arrives as `?p=`, and the page renders
+  whichever one `activity()` says it *used* rather than the one that was
+  asked for, so an edited URL cannot produce a picker that disagrees with the
+  charts under it. Coarse buckets sample concurrency proportionally coarser
+  (`samplesFor`): a month of 5-minute samples against every interval in it is
+  tens of millions of comparisons for a chart whose bars are a day wide, and
+  the spike that costs is shorter than the resolution a day-wide bar was
+  claiming anyway. Bars scale against the busiest column rather than a fixed
   ceiling — these series span three orders of magnitude between a quiet hour
   and a fan-out — and `pct` is the one number rather than string that reaches
   an attribute, so it is coerced rather than trusted, the same rule the folder

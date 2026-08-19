@@ -12,7 +12,7 @@ import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { openConfig } from "./config-server.mjs";
 import { concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
-import { collectTokens, compactTokens, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
+import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
@@ -951,7 +951,7 @@ function persistAccents() {
 // The config server's entire coupling to this daemon. Two functions, so the
 // page can be rewritten — drag-to-reorder, when it lands — without touching
 // anything here, and so config-check can drive the real server with fakes.
-const configDeps = {
+export const configDeps = {
   projects: () =>
     [...liveProjects]
       .map(([key, p]) => ({ key, name: p.name, host: p.host, accent: accentFor(key) }))
@@ -981,9 +981,26 @@ const configDeps = {
   // where the week went, and a project you closed an hour ago is exactly the
   // kind of answer that would go missing. Ordered by today's blocked time,
   // because that is the column the page exists for.
-  activity: () => {
+  activity: (period) => {
     const now = Date.now();
     const records = readHistory();
+    const buckets = readTokens();
+    const p = PERIODS[period] ? period : DEFAULT_PERIOD;
+    const { step, unit, every, format, title } = PERIODS[p];
+    // "All time" starts at the oldest thing either log remembers, which is not
+    // the same date for the two of them: tokens are kept a year and state
+    // history a month. The striped columns say so — that asymmetry is exactly
+    // what "unobserved" was built to draw.
+    const oldest = Math.min(earliestBucket(buckets) ?? now, records[0]?.ts ?? now);
+    const span = PERIODS[p].span ?? Math.max(now - oldest, step);
+    const from = Math.floor((now - span) / step) * step;
+    // Ceiling, not round: `from` is floored to a bucket boundary, so the
+    // window always spills into one more bucket than its span — the partial
+    // one happening right now. Rounding drops it, and since the label run is
+    // anchored on the last index, an off-by-one there is exactly the newest
+    // column going unlabelled.
+    const cols = Math.max(1, Math.ceil((now - from) / step));
+
     const today = summarise(records, now, startOfDay(now));
     const week = summarise(records, now, now - 7 * 86400000);
     const dur = (ms) => (!ms || ms < 60000 ? "—" : formatAge(ms / 1000));
@@ -1003,30 +1020,23 @@ const configDeps = {
       }))
       .sort((a, b) => b.blockedMs - a.blockedMs);
 
-    // The two charts. Both are "last 24h" on the hour rather than "today",
-    // because at 09:00 a today-chart is three bars and says nothing about the
-    // night that produced the backlog you are looking at.
-    const from = Math.floor((now - 24 * 3600000) / 3600000) * 3600000;
-    const hourLabel = (h) => new Date(h).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    // Bars are a percentage of the busiest row, not of a fixed ceiling: these
-    // series span three orders of magnitude between a quiet hour and a fan-out,
-    // and anything absolute draws every ordinary hour as a sliver.
+    // Only some columns carry a label — 30 of them under 30 columns is a smear
+    // — and the run is anchored on the *newest* bucket rather than on the
+    // clock, so the rightmost column is always named and the labels don't
+    // shuffle as the window slides.
+    const tickAt = (i) => ((cols - 1 - i) % every === 0 ? format(new Date(from + i * step)) : "");
+    // Bars are a percentage of the busiest column, not of a fixed ceiling:
+    // these series span three orders of magnitude between a quiet hour and a
+    // fan-out, and anything absolute draws every ordinary column as a sliver.
     const scale = (values) => Math.max(1, ...values);
 
-    // Time runs left to right, so only some hours carry a label — 25 of them
-    // under 25 columns is a smear. Every third, anchored on the *newest* hour
-    // rather than on the clock, so the rightmost column is always named and
-    // the labels don't shuffle as the window slides.
-    const tickAt = (i, n) => ((n - 1 - i) % 3 === 0 ? new Date(from + i * 3600000).getHours() + "h" : "");
-
-    const buckets = readTokens();
-    const perHour = summariseTokens(buckets, from, now);
-    const peakOut = scale(perHour.map((r) => r.out));
+    const perBucket = summariseTokens(buckets, from, now, step);
+    const peakOut = scale(perBucket.map((r) => r.out));
     const tokens = {
-      peak: compactCount(peakOut),
-      cols: perHour.map((r, i) => ({
-        label: hourLabel(r.hour),
-        tick: tickAt(i, perHour.length),
+      peak: `${compactCount(peakOut)}/${unit}`,
+      cols: perBucket.map((r, i) => ({
+        label: title(new Date(r.hour)),
+        tick: tickAt(i),
         bars: [{ state: "tokens", pct: (r.out / peakOut) * 100 }],
         value: compactCount(r.out),
       })),
@@ -1036,22 +1046,22 @@ const configDeps = {
     const peakModel = scale(byModel.map((r) => r.out));
     const models = byModel.slice(0, 6).map((r) => ({
       // "claude-opus-5" is mostly vendor, the same reason the detail board
-      // strips it, and a dated id (`haiku-4-5-20251001`) is mostly date; ""
-      // is what a transcript line without a model reads as.
+      // strips it, and a dated id (haiku-4-5-20251001) is mostly date; "" is
+      // what a transcript line without a model reads as.
       label: (r.model || "unknown").replace(/^claude-/, "").replace(/-\d{8}$/, ""),
       bars: [{ state: "tokens", pct: (r.out / peakModel) * 100 }],
       value: compactCount(r.out),
     }));
 
-    const peaks = concurrency(records, from, now, now);
+    const peaks = concurrency(records, from, now, now, step);
     const peakAny = scale(peaks.map((r) => r.any));
     const sessions = {
-      peak: String(peakAny),
+      peak: `max ${peakAny}`,
       cols: peaks.map((r, i) => ({
-        label: hourLabel(r.hour),
-        tick: tickAt(i, peaks.length),
-        // An hour nobody watched draws striped and empty. It is not an idle
-        // hour and the two must not look alike — see history.mjs's TICK.
+        label: title(new Date(r.hour)),
+        tick: tickAt(i),
+        // A bucket nobody watched draws striped and empty. It is not an idle
+        // one and the two must not look alike — see history.mjs's TICK.
         unseen: r.samples === 0,
         bars: ["busy", "shell", "requires_action", "waiting", "idle"]
           .filter((state) => r.states[state])
@@ -1060,9 +1070,39 @@ const configDeps = {
       })),
     };
 
-    return { rows, tokens, models, sessions };
+    return { period: p, periods: PERIOD_LINKS, rows, tokens, models, sessions };
   },
 };
+
+// The windows the activity charts offer, and the bucket each one groups into.
+// Column counts are kept in the 24–52 band on purpose: fewer and a bar chart
+// is a table, more and the columns are thinner than the gaps between them.
+//
+// The stored data is hourly, so every step here is a whole number of hours and
+// nothing needs re-reading to change window — a month is the same records
+// regrouped. `every` is how many columns apart the x-axis labels sit, chosen so
+// the labels themselves land on something meaningful: a day boundary at 6h
+// buckets, roughly a working week at daily ones.
+const PERIODS = {
+  "24h": { name: "24 hours", span: 24 * 3600000, step: 3600000, unit: "h", every: 3,
+    format: (d) => `${d.getHours()}h`,
+    title: (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
+  "7d": { name: "7 days", span: 7 * 86400000, step: 6 * 3600000, unit: "6h", every: 4,
+    format: (d) => d.toLocaleDateString([], { weekday: "short" }),
+    title: (d) => d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) },
+  "30d": { name: "30 days", span: 30 * 86400000, step: 86400000, unit: "day", every: 5,
+    format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
+    title: (d) => d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) },
+  // No span: "all" is however far back the logs go, which is up to a year for
+  // tokens and a month for state history.
+  all: { name: "all time", span: null, step: 7 * 86400000, unit: "week", every: 4,
+    format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
+    title: (d) => `week of ${d.toLocaleDateString([], { day: "numeric", month: "short" })}` },
+};
+const DEFAULT_PERIOD = "24h";
+// The page renders links, not a select — it owns markup and nothing else, so
+// the set of windows and their names live here with the arithmetic.
+const PERIOD_LINKS = Object.entries(PERIODS).map(([key, v]) => ({ key, name: v.name }));
 
 /**
  * A token count at a glance: 899k, 1.2M, 3.7B.

@@ -191,13 +191,22 @@ export function startOfDay(now) {
 // this is treated as unobserved — which is wrong only for a machine left idle
 // with sessions open, and wrong in the safe direction.
 export const OUTAGE_MS = 3 * TICK_MS;
-// How often concurrency is sampled. Fine enough that a session that ran for
-// half an hour cannot fall between two samples, coarse enough that a week is
-// two thousand of them.
+// How often concurrency is sampled, at the finest bucket. Fine enough that a
+// session that ran for half an hour cannot fall between two samples, coarse
+// enough that a day is under three hundred of them.
+//
+// Coarser buckets sample proportionally coarser — a month of 5-minute samples
+// against every interval in it is tens of millions of comparisons for a chart
+// whose bars are a day wide. `samplesFor` keeps it at a dozen samples per
+// bucket, so the cost of a chart is its column count rather than its span. The
+// honest cost: a spike shorter than the sample interval can be missed, which
+// is the resolution a day-wide bar was always claiming anyway.
 export const SAMPLE_MS = 300_000;
+const samplesFor = (step) => Math.max(SAMPLE_MS, Math.round(step / 12));
 
 /**
- * How many sessions were in each state at once, as an hourly peak.
+ * How many sessions were in each state at once, as a peak per `step`-wide
+ * bucket.
  *
  * `summarise` answers "how long", which says nothing about overlap: eight hours
  * of busy is one session all day or eight at once, and those are different
@@ -225,7 +234,7 @@ export const SAMPLE_MS = 300_000;
  * record of a live session is an open interval that runs to it, and a check
  * cannot reproduce a clock.
  */
-export function concurrency(records, from, to, now) {
+export function concurrency(records, from, to, now, step = 3600000) {
   const byId = new Map();
   for (const rec of records) {
     if (rec.kind === TICK) continue; // coverage, not a session
@@ -255,12 +264,13 @@ export function concurrency(records, from, to, now) {
   const unobserved = (t) => outages.some(([a, b]) => t > a && t < b);
 
   const rows = new Map();
-  const start = Math.floor(from / 3600000) * 3600000;
-  for (let h = start; h < to; h += 3600000) {
+  const start = Math.floor(from / step) * step;
+  for (let h = start; h < to; h += step) {
     rows.set(h, { hour: h, samples: 0, any: 0, states: {} });
   }
-  for (let t = start; t < to; t += SAMPLE_MS) {
-    const row = rows.get(Math.floor(t / 3600000) * 3600000);
+  const sample = samplesFor(step);
+  for (let t = start; t < to; t += sample) {
+    const row = rows.get(Math.floor(t / step) * step);
     if (!row || unobserved(t)) continue;
     row.samples++;
     const counts = {};

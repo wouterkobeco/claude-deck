@@ -118,7 +118,13 @@ const STYLE = `
   .xaxis { display:flex; gap:2px; font-size:10px; color:#757575; margin-top:5px }
   .xaxis span { flex:1 1 0; text-align:center; white-space:nowrap }
   .peak { float:right; font-size:10px; color:#616161; letter-spacing:0;
-          text-transform:none; font-weight:400 }`;
+          text-transform:none; font-weight:400 }
+  /* The window picker. Links rather than a select, because a select needs a
+     script to act on and this page decides everything on the server. */
+  .periods { display:flex; gap:6px; margin:0 0 20px }
+  .periods a { font-size:11px; color:#9e9e9e; text-decoration:none; padding:4px 10px;
+               border-radius:4px; background:#1b1b1b }
+  .periods a.on { background:#2a2a2a; color:#e0e0e0; font-weight:700 }`;
 
 const nav = (token, here) =>
   `<nav>${[
@@ -178,7 +184,15 @@ const legend = (states) =>
     .map((s) => `<span><i style="background:${STATE_FILL[s] ?? "#4fc3f7"}"></i>${esc(s.replace("requires_action", "blocked"))}</span>`)
     .join("")}</div>`;
 
-function activityPage(token, { rows, tokens, sessions, models }) {
+const periodBar = (token, periods, here) =>
+  `<div class="periods">${periods
+    .map(
+      (p) =>
+        `<a${p.key === here ? ' class="on"' : ""} href="/activity?t=${esc(token)}&amp;p=${esc(p.key)}">${esc(p.name)}</a>`
+    )
+    .join("")}</div>`;
+
+function activityPage(token, { period, periods, rows, tokens, sessions, models }) {
   const table = (period) => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th></tr>
@@ -199,20 +213,21 @@ function activityPage(token, { rows, tokens, sessions, models }) {
     <main>
       <h1>Activity</h1>
       ${nav(token, "/activity")}
+      ${periodBar(token, periods, period)}
       ${
         tokens.cols.length === 0
           ? ""
-          : `<h2>Output tokens per hour · last 24h<span class="peak">peak ${esc(tokens.peak)}/h</span></h2>${columns(tokens)}`
+          : `<h2>Output tokens<span class="peak">peak ${esc(tokens.peak)}</span></h2>${columns(tokens)}`
       }
       ${
         models.length === 0
           ? ""
-          : `<h2>By model · last 24h</h2>${chart(models, true)}`
+          : `<h2>By model</h2>${chart(models, true)}`
       }
       ${
         sessions.cols.length === 0
           ? ""
-          : `<h2>Sessions at once · peak per hour<span class="peak">max ${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+          : `<h2>Sessions at once<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
       }
       ${
         rows.length === 0
@@ -405,7 +420,11 @@ export async function createConfigServer(deps) {
       }
 
       if (req.method === "GET" && url.pathname === "/activity") {
-        return send(res, 200, activityPage(token, deps.activity()), "text/html; charset=utf-8");
+        // The window is a hint, not a command: index.mjs falls back to its
+        // default for anything it doesn't recognise and echoes back which one
+        // it actually used, so an edited URL can't render a page whose picker
+        // disagrees with its charts.
+        return send(res, 200, activityPage(token, deps.activity(url.searchParams.get("p"))), "text/html; charset=utf-8");
       }
 
       if (req.method === "POST" && url.pathname === "/accent") {

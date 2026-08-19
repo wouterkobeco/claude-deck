@@ -230,28 +230,39 @@ export function readTokens(root = CLAUDE_DIR) {
 }
 
 /**
- * Hourly totals over `[from, to)`, oldest first, with every hour in the window
- * present even when nothing ran in it.
+ * Totals per `step`-wide bucket over `[from, to)`, oldest first, with every
+ * bucket in the window present even when nothing ran in it.
  *
  * The gaps are the point: a bar chart that silently omits an idle hour draws a
  * busy night out of four scattered messages. Buckets are summed rather than
  * replaced, because a pass appends a partial hour and the next pass appends the
  * rest of it — `compactTokens` merges those eventually, and this must be right
  * before it has.
+ *
+ * `step` is what lets one chart cover a day and a year: the stored records are
+ * hourly, so anything coarser is a regrouping rather than a re-read. It has to
+ * be a whole number of hours, which every caller's is; a finer one would ask
+ * for detail that was never kept.
  */
-export function summariseTokens(records, from, to) {
-  const start = Math.floor(from / HOUR_MS) * HOUR_MS;
-  const hours = new Map();
-  for (let h = start; h < to; h += HOUR_MS) {
-    hours.set(h, Object.fromEntries([["hour", h], ["subCalls", 0], ...METRICS.map((m) => [m, 0])]));
+export function summariseTokens(records, from, to, step = HOUR_MS) {
+  const size = Math.max(HOUR_MS, Math.round(step / HOUR_MS) * HOUR_MS);
+  const start = Math.floor(from / size) * size;
+  const buckets = new Map();
+  for (let h = start; h < to; h += size) {
+    buckets.set(h, Object.fromEntries([["hour", h], ["subCalls", 0], ...METRICS.map((m) => [m, 0])]));
   }
   for (const rec of records) {
-    const row = hours.get(rec.hour);
+    const row = buckets.get(Math.floor(rec.hour / size) * size);
     if (!row) continue;
     for (const m of METRICS) row[m] += rec[m] ?? 0;
     if (rec.sub) row.subCalls += rec.calls ?? 0;
   }
-  return [...hours.values()];
+  return [...buckets.values()];
+}
+
+/** The oldest bucket on record, or null. What "all time" starts from. */
+export function earliestBucket(records) {
+  return records.length ? Math.min(...records.map((r) => r.hour)) : null;
 }
 
 /**

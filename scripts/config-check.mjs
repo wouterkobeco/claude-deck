@@ -172,7 +172,10 @@ const historyRows = [
   { key: ALPHA, name: "alpha", today: { busy: "3h12m", waiting: "41m", blocked: "18m" }, week: { busy: "9h", waiting: "2h", blocked: "51m" } },
   { key: NASTY, name: '<script>"x', today: { busy: "—", waiting: "—", blocked: "—" }, week: { busy: "4m", waiting: "—", blocked: "—" } },
 ];
+const PERIODS = [{ key: "24h", name: "24 hours" }, { key: "7d", name: "7 days" }, { key: "all", name: "all time" }];
 const activity = {
+  period: "24h",
+  periods: PERIODS,
   rows: historyRows,
   // The two time series are columns — time on the x axis — and the by-model
   // list stays a row per name, because those are categories rather than a
@@ -196,7 +199,20 @@ const activity = {
     ],
   },
 };
-const withHistory = await createConfigServer({ projects, setAccent: () => {}, reorder: () => {}, activity: () => activity });
+let askedFor = null;
+const withHistory = await createConfigServer({
+  projects,
+  setAccent: () => {},
+  reorder: () => {},
+  // The page hands the window straight through and renders whatever comes
+  // back — index.mjs owns which windows exist and which one an unknown string
+  // falls back to, so an edited URL cannot produce a picker that disagrees
+  // with the charts below it.
+  activity: (p) => {
+    askedFor = p;
+    return { ...activity, period: p === "7d" ? "7d" : "24h" };
+  },
+});
 const hBase = new URL(withHistory.url).origin;
 const hToken = new URL(withHistory.url).searchParams.get("t");
 
@@ -233,7 +249,27 @@ eq(hHtml.includes(">9h<"), true, "a labelled hour prints its label");
 // The value has nowhere to go under a column, so it rides in a title —
 // a tooltip needs no script.
 eq(hHtml.includes('title="09:00 · 900k"'), true, "a column names itself on hover");
-eq(hHtml.includes("peak 900k/h"), true, "and the scale is stated, since no column can carry it");
+eq(hHtml.includes("peak 900k"), true, "and the scale is stated, since no column can carry it");
+
+// The window picker. Links rather than a select, because a select needs a
+// script and this page decides everything on the server.
+eq(askedFor, null, "no window in the URL asks index.mjs for nothing in particular");
+eq(hHtml.split('class="periods"').length - 1, 1, "the picker renders once");
+eq(hHtml.includes('href="/activity?t=' + hToken + '&amp;p=7d"'), true, "each window is a link carrying the token");
+// Scoped to the picker: the tab nav above marks its own current entry the
+// same way, so counting across the whole document counts both.
+const picker = (html) => html.split('class="periods"')[1].split("</div>")[0];
+eq(picker(hHtml).split('<a class="on"').length - 1, 1, "exactly one window is marked current");
+const weekPage = await (await fetch(`${hBase}/activity?t=${hToken}&p=7d`)).text();
+eq(askedFor, "7d", "the window in the URL reaches index.mjs verbatim");
+eq(weekPage.includes('<a class="on" href="/activity?t=' + hToken + '&amp;p=7d"'), true, "and the picker marks it");
+// An edited URL must not render a picker that disagrees with the charts: the
+// page marks whichever window index.mjs says it actually used, never the one
+// that was asked for.
+const junkPage = await (await fetch(`${hBase}/activity?t=${hToken}&p=../../etc`)).text();
+eq(askedFor, "../../etc", "an unknown window is passed through rather than guessed at here");
+eq(picker(junkPage).split('<a class="on"').length - 1, 1, "and the page still marks exactly one");
+eq(junkPage.includes("etc"), false, "an unknown window never reaches the document");
 // pct arrives from index.mjs, but it reaches a style attribute — the one place
 // on this page where a number rather than a string does — so it is coerced
 // rather than trusted, the same rule the folder field lives by.
@@ -251,7 +287,7 @@ const emptyHistory = await createConfigServer({
   projects,
   setAccent: () => {},
   reorder: () => {},
-  activity: () => ({ rows: [], tokens: { peak: "—", cols: [] }, models: [], sessions: { peak: "—", cols: [] } }),
+  activity: () => ({ period: "24h", periods: PERIODS, rows: [], tokens: { peak: "—", cols: [] }, models: [], sessions: { peak: "—", cols: [] } }),
 });
 eq(
   (await (await fetch(new URL(emptyHistory.url).origin + "/activity?t=" + new URL(emptyHistory.url).searchParams.get("t"))).text()).includes("no history recorded yet"),
