@@ -227,7 +227,7 @@ function activityPage(token, { period, periods, rows, tokens, sessions, models }
       ${
         sessions.cols.length === 0
           ? ""
-          : `<h2>Sessions at once<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+          : `<h2>Sessions in parallel<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
       }
       ${
         rows.length === 0

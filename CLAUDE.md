@@ -537,9 +537,9 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   daemon on loopback and opened from the stats board's config key, for setting
   which accent each live project wears, and — on its second tab, **Activity** —
   for the charts nothing on a 72px key could carry: output tokens per hour, the
-  same split by model, sessions at once per hour coloured by state, and the
-  per-project time table that tab used to be. The charts are **divs whose width
-  or height is a percentage, rendered on the server** like everything else
+  same split by model, sessions in parallel per hour coloured by state, and
+  the per-project time table that tab used to be. The charts are **divs whose
+  width or height is a percentage, rendered on the server** like everything else
   here; there is no canvas and no chart library, because `SCRIPT` is already
   the one part of this project no check can reach and a drawing routine in
   there would be worse. The two time series are **columns** — time on the x
