@@ -957,6 +957,49 @@ async function drawUsage(deck, btn) {
   btn.drawn = drawn;
 }
 
+// Stats view: the same 13 session buttons, repurposed as an all-time stats board.
+// Reuses the `drawn`-signature diffing that `refresh` uses for sessions, so
+// switching modes just redraws everything once (the signatures never match
+// across modes) and needs no explicit invalidation.
+//
+// Exported for `stats-check` to drive against a fake deck. Not because the
+// logic is subtle — because this function was *deleted* by an edit to the
+// function above it and nothing noticed: the poll loop swallows a throw into
+// a `refresh failed:` line every 2s, so the board simply stopped updating
+// while the daemon went on looking healthy, and it took pressing the key to
+// find out. Every board branch of that loop has the same shape, and this is
+// the one of them a check can reach without a Stream Deck.
+export async function refreshStats(deck, buttons, stats) {
+  await Promise.all(
+    buttons.map(async (btn, i) => {
+      const stat = stats[i] ?? null;
+      btn.assigned = null;
+      btn.renderParams = null; // same as refreshDetail: keeps pulse off stale data
+
+      if (!stat) {
+        if (btn.drawn !== null) {
+          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
+          btn.drawn = null;
+        }
+        return;
+      }
+      // `stat` is already the one object rendered below — sign it directly
+      // rather than hand-picking fields into a template string, same reason
+      // as every other refresh*.
+      const drawn = `stat ${JSON.stringify(stat)}`;
+      if (btn.drawn === drawn) return;
+      // Two tiles in the list aren't stats: the back key and the config key,
+      // both assigned at fixed indices by the caller the same way the detail
+      // board does it. They carry their own glyph/caps, which `...stat` hands
+      // straight to renderBack — and which JSON.stringify(stat) above already
+      // signs, so neither needs a branch of its own here.
+      const render = stat.kind === "back" || stat.kind === "config" ? renderBack : renderStat;
+      await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...stat, big: true }), { format: "rgba" });
+      btn.drawn = drawn;
+    })
+  );
+}
+
 // The attention board: the queue across the session keys, re-ranked every
 // poll. Unlike the detail view this deliberately re-sorts while it's up — a
 // session that gets unblocked should leave the queue you're looking at.

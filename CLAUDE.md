@@ -1263,6 +1263,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   up), but prove it on a scratch window before doing it to one with real work in
   it. A window without the extension simply doesn't reveal terminals — never
   make its absence an error, same rule as the status line's context file.
+- **The poll loop's board branches are the part nothing checks, and one of them
+  was deleted without anyone noticing.** `refreshStats` was removed by an edit
+  aimed at the function *above* it — a text slice that reached further than it
+  looked — and the daemon went on running: `run()` catches a throw per poll and
+  prints `refresh failed:`, so the stats board simply stopped updating while
+  everything else worked and the process looked healthy. It took pressing the
+  key to find out, two commits and a push later. `refreshStats` is now exported
+  and driven against a fake deck in `stats-check` (a `fillKeyBuffer` that
+  records), which is the only one of these four functions a check can reach
+  without hardware — the other three call `liveSessions()` themselves. When
+  editing near them, prefer an anchored edit to a slice between two comments.
 - **A guard that encodes "X is impossible" is deleted in the commit that makes
   X possible.** This has now gone wrong three times in one feature, always the
   same way and never by anyone deleting a guard: the guard stayed correct while
