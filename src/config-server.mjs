@@ -39,6 +39,9 @@ const STYLE = `
      switched. A nav that moves when you use it is worse than empty space
      below the content. */
   main { width:100%; max-width:520px; margin:0 auto }
+  /* The activity page carries charts and a table beside a pie; 520px is right
+     for a list of projects and cramped for those. */
+  main.wide { max-width:760px }
   h1 { font-size:15px; letter-spacing:.18em; text-transform:uppercase;
        color:#9e9e9e; font-weight:600; margin:0 0 24px }
   .row { margin:0 0 20px }
@@ -124,7 +127,19 @@ const STYLE = `
   .periods { display:flex; gap:6px; margin:0 0 20px }
   .periods a { font-size:11px; color:#9e9e9e; text-decoration:none; padding:4px 10px;
                border-radius:4px; background:#1b1b1b }
-  .periods a.on { background:#2a2a2a; color:#e0e0e0; font-weight:700 }`;
+  .periods a.on { background:#2a2a2a; color:#e0e0e0; font-weight:700 }
+  /* Table left, pie right, wrapping under on a narrow window rather than
+     squeezing the columns. */
+  .split { display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap }
+  .split table { flex:1 1 320px }
+  /* A conic-gradient, not an SVG: the slices are already percentages by the
+     time they get here, so there is no trig and no path to build. */
+  .pie { flex:none; width:168px; border-radius:50%; aspect-ratio:1 }
+  .pie-total { flex:none; width:168px; text-align:center; font-size:11px;
+               color:#757575; margin-top:8px }
+  /* Ties a row to its slice, so the pie needs no legend. */
+  .dot { display:inline-block; width:9px; height:9px; border-radius:2px;
+         margin-right:7px; vertical-align:-1px }`;
 
 const nav = (token, here) =>
   `<nav>${[
@@ -143,6 +158,14 @@ const nav = (token, here) =>
 // markup, and keeping the split there is what lets config-check drive the page
 // with fixed fixtures instead of reconstructing a day of history and a
 // gigabyte of transcripts.
+// An accent reaches a CSS colour slot, which is the same trust boundary `pct`
+// crosses and needs the same treatment: `esc` makes a string safe as *text*,
+// and this is not text. readAccents only checks that the stored value is a
+// string, so a hand-edited accents file could otherwise put `url(...)` into a
+// background. Anything that is not a plain hex becomes the neutral.
+const HEX = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
+const colour = (c) => (HEX.test(String(c)) ? String(c) : "#555555");
+
 const STATE_FILL = {
   busy: "#43a047",
   shell: "#43a047",
@@ -192,25 +215,34 @@ const periodBar = (token, periods, here) =>
     )
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, tokens, sessions, models }) {
-  const table = (period) => `
+function activityPage(token, { period, periods, rows, pie, tokens, sessions, models }) {
+  const table = () => `
     <table>
-      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th></tr>
+      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
       ${rows
         .map(
           (r) => `<tr>
-        <td class="project">${esc(r.name)}</td>
-        <td>${esc(r[period].busy)}</td>
-        <td>${esc(r[period].waiting)}</td>
-        <td${r[period].blocked === "—" ? "" : ' class="blocked"'}>${esc(r[period].blocked)}</td>
+        <td class="project"><i class="dot" style="background:${colour(r.accent)}"></i>${esc(r.name)}</td>
+        <td>${esc(r.busy)}</td>
+        <td>${esc(r.waiting)}</td>
+        <td${r.blocked === "—" ? "" : ' class="blocked"'}>${esc(r.blocked)}</td>
+        <td>${esc(r.total)}</td>
       </tr>`
         )
         .join("")}
     </table>`;
 
+  // Stops arrive cumulative, so this is a join rather than a running total —
+  // see the comment where they are computed.
+  const wheel = () =>
+    `<div class="pie" style="background:conic-gradient(${pie.slices
+      .map((s) => `${colour(s.accent)} ${Number(s.from) || 0}% ${Number(s.to) || 0}%`)
+      .join(",")})"></div>
+     <div class="pie-total">${esc(pie.total)} of session time</div>`;
+
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
     <style>${STYLE}</style></head><body>
-    <main>
+    <main class="wide">
       <h1>Activity</h1>
       ${nav(token, "/activity")}
       ${periodBar(token, periods, period)}
@@ -232,7 +264,7 @@ function activityPage(token, { period, periods, rows, tokens, sessions, models }
       ${
         rows.length === 0
           ? '<p class="empty">no history recorded yet</p>'
-          : `<h2>Where the time went · today</h2>${table("today")}<h2>Last 7 days</h2>${table("week")}`
+          : `<h2>Where the time went</h2><div class="split">${table()}<div>${wheel()}</div></div>`
       }
     </main>
     </body></html>`;

@@ -548,7 +548,27 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `title` (25 numbers will not fit under 25 columns, and a tooltip needs no
   script) and only every third hour is labelled, anchored on the newest hour so
   the rightmost column is always named and the labels don't shuffle as the
-  window slides. **`PERIODS` in `index.mjs` is the whole window feature** —
+  window slides. **The table follows the same window**, so the page has one
+  time control rather than a picker over the charts and a fixed today/week pair
+  under them — and it is sorted by the pie's own metric rather than by blocked
+  time as it was before the pie existed, because a slice and its row have to be
+  findable from each other and that only works in slice order. The blocked
+  column keeps its colour, which is what drew the eye to it in the first place.
+  The pie is a **`conic-gradient` on one div, not an SVG**: the slices are
+  already percentages by the time they reach the page, so there is no trig and
+  no path to build, and `index.mjs` hands over *cumulative* stops so even the
+  running total stays out of the renderer. Slices wear the project's deck
+  accent and each row carries the same colour as a dot, so the pie needs no
+  legend; `folderAccent` survives restarts, so a project closed since still
+  shows in the colour you remember it by. **An accent reaches a CSS colour slot,
+  which is the boundary `pct` crosses** — `esc()` makes a string safe as text
+  and a colour is not text, and `readAccents` only checks that the stored value
+  is a *string*, so anything that isn't a plain hex becomes the neutral.
+  Idle time is deliberately not in the table or the pie: a session sitting open
+  is not time that went anywhere. Anything under a minute is dropped rather
+  than drawn, because a minute is the floor `dur` can render and below it a row
+  is four em dashes beside a slice too thin to see.
+  **`PERIODS` in `index.mjs` is the whole window feature** —
   24h/7d/30d/all-time, each with the bucket it groups into, chosen to keep the
   column count in the 24–52 band (fewer and a bar chart is a table; more and
   the columns are thinner than the gaps). Every step is a whole number of

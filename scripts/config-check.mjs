@@ -169,14 +169,23 @@ withOrder.server.close();
 // rather than reconstructing a day of transitions and a gigabyte of
 // transcripts.
 const historyRows = [
-  { key: ALPHA, name: "alpha", today: { busy: "3h12m", waiting: "41m", blocked: "18m" }, week: { busy: "9h", waiting: "2h", blocked: "51m" } },
-  { key: NASTY, name: '<script>"x', today: { busy: "—", waiting: "—", blocked: "—" }, week: { busy: "4m", waiting: "—", blocked: "—" } },
+  { key: ALPHA, name: "alpha", accent: "#4fc3f7", busy: "3h12m", waiting: "41m", blocked: "18m", total: "4h11m", pct: 80 },
+  // An accent reaches a CSS colour slot rather than text, so a hostile one is
+  // a fixture rather than a hypothetical: readAccents only checks that the
+  // stored value is a string.
+  { key: NASTY, name: '<script>"x', accent: "red;background:url(evil)", busy: "—", waiting: "—", blocked: "—", total: "51m", pct: 20 },
 ];
 const PERIODS = [{ key: "24h", name: "24 hours" }, { key: "7d", name: "7 days" }, { key: "all", name: "all time" }];
 const activity = {
   period: "24h",
   periods: PERIODS,
   rows: historyRows,
+  pie: {
+    // Cumulative stops, not shares: index.mjs owns that running total.
+    slices: [{ accent: "#4fc3f7", from: 0, to: 80 }, { accent: "red;background:url(evil)", from: 80, to: 100 }],
+    total: "5h02m",
+    label: "24 hours",
+  },
   // The two time series are columns — time on the x axis — and the by-model
   // list stays a row per name, because those are categories rather than a
   // clock.
@@ -220,18 +229,29 @@ eq((await fetch(`${hBase}/activity`)).status, 403, "the activity page is behind 
 const hPage = await fetch(`${hBase}/activity?t=${hToken}`);
 eq(hPage.status, 200, "and is served with it");
 const hHtml = await hPage.text();
-eq(hHtml.includes("3h12m"), true, "today's numbers reach the table");
-eq(hHtml.includes("9h"), true, "and the week's");
-// Both tables render the same rows, so every row appears twice.
-eq(hHtml.split('class="project"').length - 1, 4, "two rows in each of the two tables");
+eq(hHtml.includes("3h12m"), true, "the numbers reach the table");
+eq(hHtml.includes("4h11m"), true, "including the total the pie is a share of");
+// One table now, following the same window picker as the charts above it.
+eq(hHtml.split('class="project"').length - 1, 2, "one row per project, in one table");
+eq(hHtml.includes("5h02m of session time"), true, "the pie says what it is a share of");
+eq(hHtml.includes("conic-gradient(#4fc3f7 0% 80%,"), true, "slices render as cumulative gradient stops");
+// The dot ties a row to its slice, so the pie needs no legend.
+eq(hHtml.split('class="dot"').length - 1, 2, "every row carries its slice's colour");
+// esc() makes a string safe as text, and a colour slot is not text. This is
+// the same boundary `pct` crosses, and it needs the same coercion.
+eq(hHtml.includes("evil"), false, "an accent that is not a plain hex never reaches a background");
+// Scoped to the table-and-pie block: the idle state is drawn in the same
+// neutral up in the sessions chart and its legend.
+const split = hHtml.split('class="split"')[1];
+eq(split.split("#555555").length - 1, 2, "it becomes the neutral, in the row and in the slice");
 // A project name is untrusted here for exactly the reason it is on the other
 // page, and this table is a second place it reaches the document.
 eq(hHtml.split("<script>").length - 1, 0, "a folder named <script> does not reach the activity page as a tag");
 eq(hHtml.includes("&lt;script&gt;"), true, "it is escaped there too");
 // The blocked column is coloured to draw the eye to real blocked time, so a
-// row with none must not wear it. Four blocked cells across the two tables:
-// alpha has a value in both, the second row is an em dash in both.
-eq(hHtml.split('class="blocked"').length - 1, 2, "an em dash in the blocked column is not coloured");
+// row with none must not wear it: alpha has a value, the second row an em
+// dash.
+eq(hHtml.split('class="blocked"').length - 1, 1, "an em dash in the blocked column is not coloured");
 
 // The charts. Widths are the only thing the browser is asked to do, so the
 // percentage has to survive into the attribute — a bar that renders at 0%

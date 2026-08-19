@@ -1001,24 +1001,52 @@ export const configDeps = {
     // column going unlabelled.
     const cols = Math.max(1, Math.ceil((now - from) / step));
 
-    const today = summarise(records, now, startOfDay(now));
-    const week = summarise(records, now, now - 7 * 86400000);
+    // The table follows the window too, so there is one time control on the
+    // page rather than a picker above charts and a fixed today/week pair
+    // below it. Idle is deliberately not in here: a session sitting open is
+    // not time that went anywhere, and the three that remain are what the
+    // question means.
+    const totals = summarise(records, now, from);
     const dur = (ms) => (!ms || ms < 60000 ? "—" : formatAge(ms / 1000));
-    const cell = (states = {}) => ({
-      busy: dur((states.busy ?? 0) + (states.shell ?? 0)),
-      waiting: dur(states.waiting),
-      blocked: dur(states.requires_action),
-    });
-    const rows = [...new Set([...Object.keys(today), ...Object.keys(week)])]
-      .filter(Boolean)
-      .map((key) => ({
+    const spent = (st = {}) => (st.busy ?? 0) + (st.shell ?? 0) + (st.waiting ?? 0) + (st.requires_action ?? 0);
+    const tracked = Object.values(totals).reduce((a, st) => a + spent(st), 0);
+    // Sorted by the pie's own metric, not by blocked time as it was before the
+    // pie existed: a slice and its row have to be findable from each other, and
+    // that only works if the table is in slice order. The blocked column keeps
+    // its colour, which is what drew the eye to it in the first place.
+    const rows = Object.entries(totals)
+      // A minute is the floor `dur` can render, so anything under it is a row
+      // of four em dashes and a slice too thin to see. Same threshold in both
+      // places rather than two that nearly agree.
+      .filter(([key, st]) => key && spent(st) >= 60000)
+      .map(([key, st]) => ({
         key,
         name: liveProjects.get(key)?.name ?? key.split("/").filter(Boolean).pop() ?? key,
-        today: cell(today[key]),
-        week: cell(week[key]),
-        blockedMs: today[key]?.requires_action ?? 0,
+        // The colour it wears on the deck, so the pie needs no legend of its
+        // own — folderAccent survives restarts, so a project that has closed
+        // since still shows in the colour you remember it by. A project this
+        // daemon has never seen gets the neutral, which is the same grey an
+        // idle key is drawn in.
+        accent: folderAccent.get(key) ?? "#555555",
+        busy: dur((st.busy ?? 0) + (st.shell ?? 0)),
+        waiting: dur(st.waiting),
+        blocked: dur(st.requires_action),
+        total: dur(spent(st)),
+        pct: tracked ? (spent(st) / tracked) * 100 : 0,
+        spentMs: spent(st),
       }))
-      .sort((a, b) => b.blockedMs - a.blockedMs);
+      .sort((a, b) => b.spentMs - a.spentMs);
+
+    // Cumulative stops rather than shares: a conic-gradient wants "this colour
+    // from here to there", and doing that running total in the page would put
+    // arithmetic in the one file that is supposed to hold none.
+    let at = 0;
+    const slices = rows.map((r) => {
+      const slice = { accent: r.accent, from: at, to: Math.min(100, at + r.pct) };
+      at = slice.to;
+      return slice;
+    });
+    const pie = { slices, total: dur(tracked), label: PERIODS[p].name };
 
     // Only some columns carry a label — 30 of them under 30 columns is a smear
     // — and the run is anchored on the *newest* bucket rather than on the
@@ -1070,7 +1098,7 @@ export const configDeps = {
       })),
     };
 
-    return { period: p, periods: PERIOD_LINKS, rows, tokens, models, sessions };
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, models, sessions };
   },
 };
 
