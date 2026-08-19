@@ -629,7 +629,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   one set of numbers that is honest at arm's length reads fine at two feet,
   and the reverse was what was wrong.
   **`PERIODS` in `index.mjs` is the whole window feature** —
-  24h/7d/30d/all-time, each with the bucket it groups into, chosen to keep the
+  24h/7d/30d/3mo/all-time, each with the bucket it groups into, chosen to keep the
   column count in the 24–52 band (fewer and a bar chart is a table; more and
   the columns are thinner than the gaps). Every step is a whole number of
   hours because the stored records *are* hourly, so changing window is a
@@ -1395,6 +1395,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   version, blocked-today, the back key, the config key. An eighth stats tile
   would push each of those one along and the last off the board entirely —
   silently, which is what `stats-check`'s count assertion is for.
+  **One of the seven is "Account", not "Active days".** `computeStats()`
+  itself is untouched — the activity page still shows all seven, unfiltered —
+  but the deck drops "Active days" from its own copy and splices an account
+  tile into that same slot (position 3, so the rest of the board doesn't
+  visibly shift), since a 13-key board doesn't have room for both and the
+  identity of who's signed in is more often the thing you want at a glance.
+  The name comes from `getAccountName()` in `usage.mjs`, which reads it from
+  `~/.claude.json`'s `oauthAccount` — not the keychain OAuth credentials
+  `fetchUsage()` already reads, which carry the plan but not a name.
+  **`blocked-today` used to be silently overwritten by the back key.** It was
+  appended to the tile array ahead of the back/config splice, which put it at
+  the exact index `DETAIL_BACK_INDEX` overwrites — so it was built every poll
+  and never once drawn. `BLOCKED_TODAY_INDEX` (12) now assigns it after the
+  splice, the same pattern as `back`/`config` themselves.
 - **A second press means "tell me more".** Tracked as a global "was the
   immediately preceding press" check (`lastPress` against `isRepeatPress`), not
   a timeout — only the press right before this one counts, so a key from

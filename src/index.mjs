@@ -17,7 +17,7 @@ import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, 
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
-import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
+import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
 // One source of truth for the version — read from package.json rather than
@@ -619,22 +619,19 @@ function keyFields(session) {
 export const DETAIL_BACK_INDEX = 10;
 
 // The stats board's way in to the config page, beside the back key on the
-// bottom-left row — the tile list reaches index 9, so 11 is the last button it
-// never fills. Assigned by index rather than spliced, for the same reason the
-// back key is: an unreadable stats cache makes the list short, and the way in
-// must not move.
-//
-// With only the usage and status keys reserved there are 13 session slots, and
-// this board fills all of them exactly: two reset tiles, seven stats, the
-// version, blocked-today, the back key, this one. An eighth stats tile would
-// land under the back key — the invariant stats-check pins.
-//
-// "Blocked today" is back at 12. It was dropped when the free key took that
-// slot and returns now that the status key has handed it over, which is the
-// same trade run backwards. The Activity page still says more (per project,
-// across four windows, beside a pie) — but a number you can read without
-// picking anything up is a different thing from a page you have to open.
+// bottom-left row. Assigned by index rather than spliced, for the same reason
+// the back key is: an unreadable stats cache makes the list short, and the
+// way in must not move.
 export const CONFIG_INDEX = 11;
+
+// "Blocked today" sits on the last physical key, deliberately assigned here
+// rather than appended to the tile list ahead of the back/config splice — it
+// used to be appended there, which put it at the same index DETAIL_BACK_INDEX
+// overwrites, and the tile was silently never drawn. The Activity page still
+// says more (per project, across four windows, beside a pie) — but a number
+// you can read without picking anything up is a different thing from a page
+// you have to open.
+export const BLOCKED_TODAY_INDEX = 12;
 
 /**
  * Does this press mean "tell me more" about the session it lands on?
@@ -1222,18 +1219,17 @@ export const configDeps = {
   // which is the point of the page having a different shape.
   status: async () => {
     const { session, week, sessionResetsAt, weekResetsAt } = await getUsage();
-    const hours = hoursUntil(sessionResetsAt);
-    const days = daysUntil(weekResetsAt);
     return {
       usage: {
         session,
         week,
-        sessionResets: hours === null ? "" : `${hours}h`,
-        weekResets: days === null ? "" : `${days}d`,
+        sessionResets: formatReset(sessionResetsAt, "hours") ?? "",
+        weekResets: formatReset(weekResetsAt, "days") ?? "",
       },
       stats: await getStats(),
       blocked: blockedTodayTile().value,
       version: pkg.version,
+      account: await getAccountName(),
     };
   },
   // One session at length, for the panel the board's second tap opens. The
@@ -1441,6 +1437,9 @@ const PERIODS = {
     format: (d) => d.toLocaleDateString([], { weekday: "short" }),
     title: (d) => d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) },
   "30d": { name: "30 days", span: 30 * 86400000, step: 86400000, unit: "day", every: 5,
+    format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
+    title: (d) => d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) },
+  "3mo": { name: "3 months", span: 90 * 86400000, step: 2 * 86400000, unit: "2d", every: 9,
     format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
     title: (d) => d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) },
   // No span: "all" is however far back the logs go, which is up to a year for
@@ -2028,19 +2027,24 @@ async function run() {
         // all-time totals — these change by the hour/day, the totals barely
         // move. Session in hours (it resets within a day), week in days.
         const { sessionResetsAt, weekResetsAt } = await getUsage();
-        const sessionHours = hoursUntil(sessionResetsAt);
-        const weekDays = daysUntil(weekResetsAt);
         const resetTiles = [
-          { label: "Session reset", value: sessionHours === null ? "—" : `${sessionHours}h` },
-          { label: "Week reset", value: weekDays === null ? "—" : `${weekDays}d` },
+          { label: "Session reset", value: formatReset(sessionResetsAt, "hours") ?? "—" },
+          { label: "Week reset", value: formatReset(weekResetsAt, "days") ?? "—" },
         ];
         const versionTile = { label: "Version", value: pkg.version };
-        const statTiles = [...resetTiles, ...(await getStats()), versionTile, blockedTodayTile()];
+        // "Active days" stays on the activity page (getStats() feeds that too,
+        // unfiltered) — there's room there for it beside everything else. The
+        // deck's 13 keys aren't, so its slot is where the account name lands
+        // instead — same position, so the board's layout doesn't shift.
+        const deckStats = (await getStats()).filter((s) => s.label !== "Active days");
+        deckStats.splice(3, 0, { label: "Account", value: (await getAccountName()) ?? "—" });
+        const statTiles = [...resetTiles, ...deckStats, versionTile];
         // Same fixed slot as the detail board's back key, and assigned by
         // index rather than spliced: with an unreadable stats cache the list
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         statTiles[CONFIG_INDEX] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
+        statTiles[BLOCKED_TODAY_INDEX] = blockedTodayTile();
         await refreshStats(deck, buttons, statTiles);
         const statsSessions = await liveSessions();
         ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, statsSessions, false));

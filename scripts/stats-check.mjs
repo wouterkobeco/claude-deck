@@ -31,13 +31,10 @@ const stats = computeStats({
   firstSessionDate: "2026-08-01T00:00:00.000Z",
   lastComputedDate: "2026-08-08",
 });
-// 7 stats + the 2 reset tiles index.mjs prepends + the version tile it
-// appends = 10, filling indices 0-9 and leaving index 10 (the bottom-left
-// button) for the back key, 11 for the config key and 12 for blocked-today.
-// An eighth stat would push each of those one along and the last off the
-// board entirely — silently, which is what this assertion is for.
-// (13 session slots since the free key folded into the status key; the board
-// fills all of them exactly.)
+// computeStats itself still returns all 7 — the activity page shows every
+// one of them. The deck drops "Active days" from its own copy (below); an
+// eighth tile here would still push the rest of computeStats' own callers
+// out of step, which is what this assertion is for.
 assert.equal(stats.length, 7);
 assert.deepEqual(stats[0], { label: "Favorite model", value: "Opus 4.8" });
 assert.deepEqual(stats[4], { label: "Most active day", value: "Aug 8" });
@@ -52,12 +49,18 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   const written = [];
   const deck = { fillKeyBuffer: (index, buf) => written.push({ index, bytes: buf.length }) };
   const buttons = Array.from({ length: 13 }, (_, i) => ({ index: i, width: 72, height: 72, drawn: null }));
-  // The list index.mjs actually builds: two reset tiles, seven stats, the
-  // version, the back key at 10, the config key at 11, blocked-today at 12.
+  // The list index.mjs actually builds: two reset tiles, six stats ("Active
+  // days" dropped — it stays on the activity page, which has the room this
+  // board doesn't) with an account-name tile spliced back into that same
+  // slot, the version, the back key at 10, the config key at 11, blocked-today
+  // at 12 — the same 13 filled indices as before the swap.
+  const deckStats = stats.filter((s) => s.label !== "Active days");
+  assert.equal(deckStats.length, 6);
+  deckStats.splice(3, 0, { label: "Account", value: "Wouter" });
   const tiles = [
     { label: "Session reset", value: "3h" },
     { label: "Week reset", value: "5d" },
-    ...stats,
+    ...deckStats,
     { label: "Version", value: "9.9.9" },
   ];
   tiles[10] = { kind: "back" };
