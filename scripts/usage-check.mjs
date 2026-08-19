@@ -2,7 +2,7 @@
 // field names above can be confirmed against a real account.
 // Run: node scripts/usage-check.mjs [--live]
 import assert from "node:assert/strict";
-import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil, TTL_MS } from "../src/usage.mjs";
+import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil, formatReset, subscriptionChange, TTL_MS } from "../src/usage.mjs";
 
 assert.deepEqual(
   parseUsage({
@@ -25,6 +25,27 @@ assert.equal(hoursUntil("2026-08-11T15:00:00Z", now), 3);
 assert.equal(hoursUntil("2026-08-11T15:20:00Z", now), 4); // 3.33h away, rounds up
 assert.equal(hoursUntil("2026-08-11T00:00:00Z", now), 0); // already past
 console.log("OK: hoursUntil");
+
+assert.equal(formatReset(null, "hours", now), null);
+assert.equal(formatReset("2026-08-11T15:00:00Z", "hours", now), "3h"); // >= 1h left, coarse unit
+assert.equal(formatReset("2026-08-11T12:45:00Z", "hours", now), "45m"); // < 1h left, drops to minutes
+assert.equal(formatReset("2026-08-14T23:00:00Z", "days", now), "4d");
+assert.equal(formatReset("2026-08-11T12:30:00Z", "days", now), "30m"); // same drop applies to the week tile
+console.log("OK: formatReset");
+
+assert.deepEqual(subscriptionChange(undefined, "max", "default_claude_max_20x"), {
+  key: "max/default_claude_max_20x",
+  message: null, // first read is discovery, not a switch
+});
+assert.deepEqual(subscriptionChange("max/default_claude_max_20x", "max", "default_claude_max_20x"), {
+  key: "max/default_claude_max_20x",
+  message: null,
+});
+assert.deepEqual(subscriptionChange("max/default_claude_max_20x", "pro", "default_claude_pro"), {
+  key: "pro/default_claude_pro",
+  message: "usage: subscription changed (max/default_claude_max_20x -> pro/default_claude_pro)",
+});
+console.log("OK: subscriptionChange");
 
 // The daemon calls getUsage on every 2s poll while the response takes as long
 // as it takes. `cache.at` is only written once a fetch resolves, so a request

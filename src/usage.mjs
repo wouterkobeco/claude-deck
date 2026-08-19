@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { appendFile, readdir } from "node:fs/promises";
+import { appendFile, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 const run = promisify(execFile);
 
@@ -47,10 +48,46 @@ let lastError = null;
 let backoffMs = 0;
 // The request currently in flight, if any — see getUsage.
 let inflight = null;
+// undefined = not read yet (first read is discovery, not a switch); a string
+// once read, so the very next fetch that reads something else is a change.
+let lastSubscription;
 
-async function accessToken() {
+async function credentials() {
   const { stdout } = await run("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
-  return JSON.parse(stdout).claudeAiOauth?.accessToken ?? null;
+  const oauth = JSON.parse(stdout).claudeAiOauth ?? {};
+  return { accessToken: oauth.accessToken ?? null, subscriptionType: oauth.subscriptionType ?? null, rateLimitTier: oauth.rateLimitTier ?? null };
+}
+
+/**
+ * The keychain carries which plan the token belongs to alongside the token
+ * itself, so this rides fetchUsage's own cadence (its TTL/backoff) rather
+ * than a timer of its own — "checked at an interval" for free. Pure so it can
+ * be checked without touching the keychain; the state it compares against
+ * lives in the one caller.
+ */
+export function subscriptionChange(prev, subscriptionType, rateLimitTier) {
+  const key = `${subscriptionType ?? "?"}/${rateLimitTier ?? "?"}`;
+  return { key, message: prev !== undefined && prev !== key ? `usage: subscription changed (${prev} -> ${key})` : null };
+}
+
+// Not in the keychain credentials read above — the CLI's own config carries
+// it instead, in ~/.claude.json (outside ~/.claude/, the one other config
+// file this project reads from). Cached on the same 5-minute TTL as usage:
+// it changes only on a login switch, and that file is 100+KB of unrelated
+// project/session state to reparse on every page load.
+const ACCOUNT_PATH = join(homedir(), ".claude.json");
+let accountCache = { at: 0, value: null };
+
+/** The signed-in account's display name (falling back to its email), or null — best-effort, like every other file read here. */
+export async function getAccountName(now = Date.now()) {
+  if (now - accountCache.at < TTL_MS) return accountCache.value;
+  try {
+    const acct = JSON.parse(await readFile(ACCOUNT_PATH, "utf8"))?.oauthAccount ?? {};
+    accountCache = { at: now, value: acct.displayName || acct.emailAddress || null };
+  } catch {
+    accountCache = { ...accountCache, at: now };
+  }
+  return accountCache.value;
 }
 
 /** Raw response → the two percentages the key shows, plus when each window turns over. */
@@ -72,10 +109,24 @@ function until(iso, unitMs, now) {
 
 export const daysUntil = (iso, now = Date.now()) => until(iso, 86_400_000, now);
 export const hoursUntil = (iso, now = Date.now()) => until(iso, 3_600_000, now);
+export const minutesUntil = (iso, now = Date.now()) => until(iso, 60_000, now);
+
+// The reset tiles' text: coarse unit ("hours" for the 5h window, "days" for
+// the 7d one) until under an hour is left, where "0h" stops being honest and
+// minutes take over. Null through to the caller's own placeholder.
+export function formatReset(iso, unit, now = Date.now()) {
+  if (!iso) return null;
+  const minutes = minutesUntil(iso, now);
+  if (minutes < 60) return `${minutes}m`;
+  return unit === "hours" ? `${hoursUntil(iso, now)}h` : `${daysUntil(iso, now)}d`;
+}
 
 export async function fetchUsage() {
-  const token = await accessToken();
+  const { accessToken: token, subscriptionType, rateLimitTier } = await credentials();
   if (!token) throw new Error("no OAuth token in keychain (API-key login?)");
+  const { key, message } = subscriptionChange(lastSubscription, subscriptionType, rateLimitTier);
+  if (message) console.error(message);
+  lastSubscription = key;
   const at = Date.now();
   const sincePrevMs = lastRequestAt === null ? null : at - lastRequestAt;
   lastRequestAt = at;
