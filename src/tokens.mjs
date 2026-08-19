@@ -33,6 +33,13 @@ const CLAUDE_DIR = join(homedir(), ".claude");
 // as Claude's transcripts and the same answer: read it here, keep it longer
 // than the source does.
 const CODEX_DIR = join(homedir(), ".codex", "sessions");
+// The ship-review skill's own usage ledger, one JSON line per review. It is
+// the only place on this machine that knows what a review *cost*: the metered
+// rung runs under a second CODEX_HOME (`~/.codex-api`) so an API key can never
+// overwrite the ChatGPT login, and no rollout log anywhere records money.
+// KOB_SHIP_LEDGER is the skill's own override, honoured here so the two cannot
+// drift apart.
+const LEDGER_PATH = process.env.KOB_SHIP_LEDGER || join(homedir(), ".kobeco", "ship-reviews.jsonl");
 const logIn = (root) => join(root, "streamdeck-tokens.jsonl");
 const posIn = (root) => join(root, "streamdeck-tokens.pos");
 
@@ -66,6 +73,8 @@ function usageOf(u) {
     think: u.output_tokens_details?.thinking_tokens ?? 0,
     cacheWrite5m: u.cache_creation?.ephemeral_5m_input_tokens ?? 0,
     cacheWrite1h: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+    cacheWrite: 0,
+    costUsd: 0,
     // Pre-`cache_creation` transcripts only carry the flat total. Falling back
     // to it under 5m rather than dropping it keeps old rows countable; the
     // split is simply unknown that far back, and 5m is what it was.
@@ -73,7 +82,14 @@ function usageOf(u) {
   };
 }
 
-const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", "cacheRead"];
+// `cacheWrite` is cache creation with no ttl reported — Codex writes cache and
+// says nothing about how long it lives, and filing that under the 5m column
+// would be a number that reads as a fact and is a guess. Total cache writes are
+// the three of them summed.
+// `costUsd` is the only non-token metric and the only float: money, from the
+// ledger, for the metered rung alone. Every other row is zero by construction,
+// not by accident — a subscription turn is prepaid, not free.
+const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", "cacheWrite", "cacheRead", "costUsd"];
 
 // Which vendor's meter ran. Records written before this field existed are
 // Claude's, so it defaults rather than being required — and it is the seam any
@@ -84,6 +100,10 @@ const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", 
 // column.
 export const CLAUDE = "claude";
 export const CODEX = "codex";
+// The metered rung, and the only one that costs money per run. The ship skill
+// tries the ChatGPT subscription first and falls back to this; `reviewer` in
+// its ledger is what says which one ran.
+export const CODEX_API = "codex-api";
 
 // One bucket per hour per cwd per model per kind. `sub` is whether the
 // transcript sat under a `subagents/` directory — an Agent-tool subagent
@@ -172,6 +192,7 @@ export async function collectTokens({
   root = CLAUDE_DIR,
   projectsRoot = join(root, "projects"),
   codexRoot = CODEX_DIR,
+  ledgerPath = LEDGER_PATH,
 } = {}) {
   const previous = readPositions(root);
   // Rebuilt from the paths that exist *now* rather than mutated in place: Claude
@@ -226,6 +247,7 @@ export async function collectTokens({
   }
 
   if (await collectCodex(codexRoot, previous, positions, buckets)) moved = true;
+  if (await collectLedger(ledgerPath, previous, positions, buckets)) moved = true;
 
   if (!moved) return 0;
   try {
@@ -263,6 +285,32 @@ export async function collectTokens({
  * Bookmarks are namespaced, because both trees are keyed by a relative path
  * into one map and only the prefix says which tree a name belongs to.
  */
+/**
+ * Codex's token fields in this file's shape.
+ *
+ * **`input_tokens` there is the whole prompt**, with the cached read and the
+ * cache write as *subsets* of it — where Claude's `input_tokens` counts only
+ * what was neither. Storing Codex's raw figure under the same name would make
+ * the two vendors' columns mean different things in one table, so the subsets
+ * come off. Clamped at zero rather than trusted: these come from another tool's
+ * arithmetic, and a negative would sum silently into every total above it.
+ */
+function codexUsage(t) {
+  const cached = t.cached_input_tokens ?? 0;
+  const written = t.cache_write_input_tokens ?? 0;
+  return {
+    calls: 1,
+    in: Math.max(0, (t.input_tokens ?? 0) - cached - written),
+    out: t.output_tokens ?? 0,
+    think: t.reasoning_output_tokens ?? 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    cacheWrite: written,
+    cacheRead: cached,
+    costUsd: 0,
+  };
+}
+
 async function collectCodex(codexRoot, previous, positions, buckets) {
   let moved = false;
   let names = [];
@@ -317,18 +365,7 @@ async function collectCodex(codexRoot, previous, positions, buckets) {
       const last = info?.last_token_usage;
       const ts = Date.parse(rec?.timestamp ?? "");
       if (!last || Number.isNaN(ts)) continue;
-      const usage = {
-        calls: 1,
-        in: last.input_tokens ?? 0,
-        out: last.output_tokens ?? 0,
-        think: last.reasoning_output_tokens ?? 0,
-        // Codex reports no ttl split and no separate write counter — cached
-        // input is a read. Leaving the write fields at zero is the honest
-        // shape: absent, not zero-because-nothing-was-written.
-        cacheWrite5m: 0,
-        cacheWrite1h: 0,
-        cacheRead: last.cached_input_tokens ?? 0,
-      };
+      const usage = codexUsage(last);
       if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
       addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, cwd, model, false, usage, CODEX);
     }
@@ -336,6 +373,65 @@ async function collectCodex(codexRoot, previous, positions, buckets) {
     moved = true;
   }
   return moved;
+}
+
+/**
+ * The ship-review skill's usage ledger: one line per review, and the only
+ * record anywhere of what the metered rung cost.
+ *
+ * **Only `codex-api` rows are read.** The other rungs are already counted from
+ * their own logs — a `codex` row's tokens are in `~/.codex/sessions` and a
+ * `fable` row's are a Claude subagent's transcript — so ingesting those would
+ * count the same review twice. The metered rung is the one nothing else here
+ * can see: it runs under a second CODEX_HOME (`~/.codex-api`) precisely so an
+ * API key cannot land in the ChatGPT login, and that tree is deliberately not
+ * scanned. The ledger is the source of record for it, which is also what keeps
+ * these numbers agreeing with the `review-usage` skill rather than being a
+ * second opinion about the same money.
+ *
+ * The cost of that choice, worth stating because it is the same one
+ * `review-usage` documents: a review abandoned mid-triage writes no ledger
+ * row, so its tokens and its money are invisible here. A missing row is not a
+ * missing review.
+ */
+async function collectLedger(path, previous, positions, buckets) {
+  const key = "ledger/ship-reviews.jsonl";
+  let size;
+  try {
+    ({ size } = await stat(path));
+  } catch {
+    return false; // the ship-review skill has never run here
+  }
+  const seen = previous.get(key) ?? 0;
+  const from = seen > size ? 0 : seen;
+  positions.set(key, from);
+  if (from >= size) return false;
+
+  const slice = await newLines(path, from, size);
+  if (!slice) return false;
+  for (const line of slice.lines) {
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (rec?.reviewer !== CODEX_API) continue;
+    const ts = Date.parse(rec.ts ?? "");
+    if (Number.isNaN(ts)) continue;
+    // `tokens` is null when the rollout lookup failed, and the row still
+    // carries a cost. Counting it for its money alone is right: the review
+    // happened and it was billed.
+    const usage = { ...codexUsage(rec.tokens ?? {}), costUsd: typeof rec.cost_usd === "number" ? rec.cost_usd : 0 };
+    if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
+    // `repo` is `owner/name`, not a path — it is what the ledger records and
+    // the only locator a review has. It sits in the same field a cwd does
+    // because both answer "which project", which is all anything downstream
+    // asks of it.
+    addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, rec.repo ?? "", rec.model ?? "", false, usage, CODEX_API);
+  }
+  positions.set(key, slice.at);
+  return true;
 }
 
 /** Every parseable bucket, in file order. A bad line is skipped, not fatal. */
@@ -380,7 +476,7 @@ export function summariseTokens(records, from, to, step = HOUR_MS) {
     // `outBy` is the same output split by whose meter ran, so a stacked bar
     // needs no second pass over the records — one chart, two vendors, and a
     // bucket that predates the field counts as Claude's.
-    buckets.set(h, Object.fromEntries([["hour", h], ["subCalls", 0], ["outBy", {}], ...METRICS.map((m) => [m, 0])]));
+    buckets.set(h, Object.fromEntries([["hour", h], ["subCalls", 0], ["apiCalls", 0], ["outBy", {}], ...METRICS.map((m) => [m, 0])]));
   }
   for (const rec of records) {
     const row = buckets.get(Math.floor(rec.hour / size) * size);
@@ -389,6 +485,9 @@ export function summariseTokens(records, from, to, step = HOUR_MS) {
     if (rec.sub) row.subCalls += rec.calls ?? 0;
     const p = rec.provider ?? CLAUDE;
     row.outBy[p] = (row.outBy[p] ?? 0) + (rec.out ?? 0);
+    // One ledger row is one review, so calls on the metered rung count runs
+    // rather than turns — the unit anyone asking about cost is thinking in.
+    if (p === CODEX_API) row.apiCalls += rec.calls ?? 0;
   }
   return [...buckets.values()];
 }

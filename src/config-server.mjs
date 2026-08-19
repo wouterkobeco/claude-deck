@@ -105,6 +105,9 @@ const STYLE = `
   .legend { display:flex; gap:14px; font-size:11px; color:#757575; margin:8px 0 0 }
   .legend i { display:inline-block; width:9px; height:9px; border-radius:2px;
               margin-right:5px; vertical-align:-1px }
+  /* Money, not tokens — its own line rather than another number crowding the
+     heading, and in the metered rung's own amber. */
+  .cost { font-size:12px; color:#ffb300; margin:10px 0 0 }
   /* Time series run left to right, so their bars stand up: one column per
      hour, height as a percentage of the busiest one. The horizontal .chart
      above stays for the by-model list, where the categories are names rather
@@ -171,6 +174,9 @@ const STATE_FILL = {
   // column: Claude keeps the page's own blue, Codex the vendor's green.
   claude: "#4fc3f7",
   codex: "#66bb6a",
+  // Amber, and deliberately not another cool hue: this is the rung that costs
+  // money per run, and it should not blend into the two that are prepaid.
+  "codex-api": "#ffb300",
   busy: "#43a047",
   shell: "#43a047",
   requires_action: "#e53935",
@@ -255,7 +261,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
           ? ""
           : `<h2>Output tokens<span class="peak">peak ${esc(tokens.peak)}</span></h2>${columns(tokens)}${
               tokens.providers.length > 1 ? legend(tokens.providers) : ""
-            }`
+            }${tokens.cost ? `<p class="cost">${esc(tokens.cost)}</p>` : ""}`
       }
       ${
         models.length === 0

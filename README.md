@@ -49,6 +49,12 @@ The page's **Activity** tab is everything a 72px key can't carry:
   second opinion, so that work shows beside Claude's rather than going
   uncounted; the columns only stack (and the legend only appears) if more than
   one vendor actually ran in the window.
+- **What the metered reviews cost.** That skill falls back from the ChatGPT
+  subscription to the paid OpenAI API, and those runs are the only ones on the
+  machine that cost money per run. The dollar figure comes from the skill's own
+  ledger (`~/.kobeco/ship-reviews.jsonl`, the same file the `review-usage`
+  skill reads), so the two always agree. A window with no paid review says
+  nothing rather than `$0.00` — the other rungs are prepaid, not free.
 - **Sessions in parallel**, the peak per bucket, coloured by what they were doing.
   Open is not the same as working, and this is the difference. An hour the
   daemon wasn't running is drawn striped rather than empty — a sleeping
@@ -65,7 +71,8 @@ follows it. Hover any column for its bucket and its number.
 
 The state history is `~/.claude/streamdeck-history.jsonl`, kept 30 days; the
 token totals are `~/.claude/streamdeck-tokens.jsonl`, kept a year, read from
-Claude Code's transcripts and from the Codex CLI's session logs. That second
+Claude Code's transcripts, the Codex CLI's session logs, and the ship-review
+ledger. That second
 file exists because both tools delete their own history — Claude Code after 30
 days (`cleanupPeriodDays`) — so the numbers have to be copied out while
 they're there. Both are read-only history — delete either and the charts start again

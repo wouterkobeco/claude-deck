@@ -1064,8 +1064,15 @@ export const configDeps = {
     // entry — a machine that has never run the ship review must not grow a
     // legend explaining a colour it will never see.
     const providers = [...new Set(perBucket.flatMap((r) => Object.keys(r.outBy)))].sort();
+    // Money is its own line, not another number in the heading: every rung but
+    // the metered one is zero by construction — prepaid, not free — so a total
+    // that is zero says "no API review ran in this window" and is worth not
+    // printing at all.
+    const spend = perBucket.reduce((a, r) => a + (r.costUsd ?? 0), 0);
+    const reviews = perBucket.reduce((a, r) => a + (r.apiCalls ?? 0), 0);
     const tokens = {
       peak: `${compactCount(peakOut)}/${unit}`,
+      cost: spend > 0 ? `$${spend.toFixed(2)} billed to the metered API · ${reviews} review${reviews === 1 ? "" : "s"}` : null,
       providers,
       cols: perBucket.map((r, i) => ({
         label: title(new Date(r.hour)),

@@ -195,6 +195,9 @@ const activity = {
     // a legend. A machine that never runs the ship review reports one provider
     // and gets neither.
     providers: ["claude", "codex"],
+    // Money is its own line rather than another number in the heading: every
+    // rung but the metered one is zero by construction.
+    cost: "$5.75 billed to the metered API · 17 reviews",
     cols: [
       { label: "09:00", tick: "9h", bars: [{ state: "claude", pct: 70 }, { state: "codex", pct: 30 }], value: "claude 630k · codex 270k" },
       { label: "10:00", tick: "", bars: [{ state: "claude", pct: 40 }], value: "claude 360k" },
@@ -280,6 +283,16 @@ eq(hHtml.includes("peak 900k"), true, "and the scale is stated, since no column 
 // legend only because more than one of them ran.
 eq(hHtml.includes("background:#4fc3f7"), true, "claude keeps the page's blue");
 eq(hHtml.includes("background:#66bb6a"), true, "codex gets its own");
+eq(hHtml.includes("$5.75 billed to the metered API · 17 reviews"), true, "and the metered rung's cost is stated as money, not tokens");
+const free = await createConfigServer({
+  projects,
+  setAccent: () => {},
+  reorder: () => {},
+  activity: () => ({ ...activity, tokens: { ...activity.tokens, cost: null } }),
+});
+const nocost = await (await fetch(free.url.replace("/?", "/activity?"))).text();
+eq(nocost.includes('class="cost"'), false, "a window with no API review says nothing rather than $0.00");
+free.server.close();
 const oneVendor = await createConfigServer({
   projects,
   setAccent: () => {},

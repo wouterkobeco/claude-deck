@@ -24,7 +24,11 @@ const HOUR = Date.parse("2026-08-18T09:00:00.000Z");
 // machine happens to have logged.
 const codex = join(root, "codex-sessions");
 await mkdir(join(codex, "2026", "08", "18"), { recursive: true });
-const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex });
+// ledgerPath the same way, and for the same reason: left to default it reads
+// this machine's real ship-review ledger and every count below is whatever
+// happens to be on disk.
+const ledger = join(root, "ship-reviews.jsonl");
+const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, ledgerPath: ledger });
 
 // One assistant message, in the shape Claude Code writes it.
 const msg = (minute, usage, { model = "claude-opus-5", cwd = "/Users/me/thing" } = {}) =>
@@ -144,8 +148,9 @@ assert.equal(await collect(), 1, "a shrunk transcript is re-read from zero");
 // Nothing here may throw. This runs on the daemon's own timer, and a home
 // directory it cannot read is a quiet zero, not a crash.
 assert.deepEqual(readTokens(join(root, "nope")), [], "an unreadable log reads as nothing collected");
-assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex") }), 0, "a missing projects tree collects nothing");
-assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex") }), 0, "and a machine with no Codex CLI is not an error either");
+const nowhere = { root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex"), ledgerPath: join(root, "no-ledger") };
+assert.equal(await collectTokens(nowhere), 0, "a missing projects tree collects nothing");
+assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI or ship ledger is not an error either");
 
 // --- Codex -----------------------------------------------------------------
 
@@ -188,7 +193,10 @@ assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects")
   // machine this was written on that inflated all-time output from 6.8M to
   // 79.6M, a factor of twelve, and nothing about the number looked wrong.
   assert.equal(b.out, 500, "per-turn usage is summed, never the cumulative total");
-  assert.equal(b.in, 150, "input likewise");
+  // Codex's input_tokens is the whole prompt with the cached read as a subset,
+  // where Claude's counts only what was neither — so the subset comes off, or
+  // one column in one table means two different things.
+  assert.equal(b.in, 90, "input net of the cached part, to match Claude's meaning");
   assert.equal(b.cacheRead, 60, "codex's cached input is a read");
   assert.equal(b.cacheWrite5m, 0, "and it reports no cache writes at all");
   assert.equal(b.calls, 2, "two turns");
@@ -214,6 +222,58 @@ assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects")
   assert.deepEqual(byProvider.map((r) => `${r.provider}:${r.out}`), ["codex:507", "claude:214"], "and they are separable");
 }
 
+// --- the ship-review ledger ------------------------------------------------
+
+// The metered rung is the one nothing else here can see: it runs under a
+// second CODEX_HOME so an API key can never land in the ChatGPT login, and
+// that tree is deliberately not scanned. The ledger is its source of record —
+// and the only place on the machine that knows what a review cost.
+{
+  const review = (minute, reviewer, cost, tokens) =>
+    JSON.stringify({
+      ts: new Date(HOUR + minute * 60000).toISOString(),
+      repo: "wouterkobeco/thing",
+      reviewer,
+      model: "gpt-5.6-terra",
+      cost_usd: cost,
+      tokens,
+    });
+  writeFileSync(
+    ledger,
+    [
+      review(10, "codex-api", 0.43, { input_tokens: 1000, cached_input_tokens: 600, cache_write_input_tokens: 100, output_tokens: 4108, reasoning_output_tokens: 2139 }),
+      // Already counted from ~/.codex/sessions: ingesting it here would count
+      // the same review twice.
+      review(11, "codex", 0, { input_tokens: 900, cached_input_tokens: 0, output_tokens: 999 }),
+      // A Fable review is a Claude subagent, already in its own transcript,
+      // and the ledger records no tokens for it at all.
+      review(12, "fable", 0, null),
+    ].join("\n") + "\n"
+  );
+
+  assert.equal(await collect(), 1, "only the metered rung earns a bucket");
+  const b = readTokens(root).at(-1);
+  assert.equal(b.provider, "codex-api", "tagged as the rung that costs money");
+  assert.equal(b.costUsd, 0.43, "with the money the ledger recorded");
+  assert.equal(b.out, 4108, "and its output");
+  assert.equal(b.calls, 1, "one ledger row is one review, not one turn");
+  // input_tokens in both Codex sources is the whole prompt, with the cached
+  // read and the cache write as subsets — where Claude's counts neither. The
+  // subsets come off, or one table's column means two things.
+  assert.equal(b.in, 300, "the prompt is stored net of its cached and written parts");
+  assert.equal(b.cacheRead, 600, "which are kept as their own figures");
+  assert.equal(b.cacheWrite, 100, "under the no-ttl-reported column, not the 5m one");
+  assert.equal(b.cacheWrite5m, 0, "since Codex says nothing about how long its cache lives");
+  assert.equal(await collect(), 0, "and the ledger is read incrementally like everything else");
+
+  // A rollout lookup that failed writes `tokens: null` and still records the
+  // money. The review happened and it was billed.
+  appendFileSync(ledger, review(20, "codex-api", 1.5, null) + "\n");
+  assert.equal(await collect(), 1, "a row with no tokens still counts for its cost");
+  assert.equal(readTokens(root).at(-1).costUsd, 1.5, "which is the number that matters");
+  assert.equal(readTokens(root).at(-1).out, 0, "and it claims no tokens it does not have");
+}
+
 // The bookmark drops transcripts that no longer exist rather than remembering
 // every one this machine has ever written.
 {
@@ -224,9 +284,10 @@ assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects")
       "-Users-me-thing/parent-id/subagents/agent-abc.jsonl",
       "-Users-me-thing/session-a.jsonl",
       "codex/2026/08/18/rollout-2026-08-18T09-00-00-abc.jsonl",
+      "ledger/ship-reviews.jsonl",
     ],
     "one bookmark per live file, relative to its own tree and namespaced by which tree that is"
   );
 }
 
-console.log("OK: token extraction, incremental reads, codex, grouping, compaction");
+console.log("OK: token extraction, incremental reads, codex, the review ledger, grouping, compaction");
