@@ -208,14 +208,13 @@ the name **Claude Deck**.
   than behind them, so the gear closes what the gear opened.
 - **The gear also picks project colours**, the same accents the config page
   sets, on the same keys.
-- **The bar-chart icon** is the Activity page — tokens per hour, the same split
-  by model, sessions in parallel, and where the time went, sized to be read
-  from a tablet rather than squinted at.
-- **The ⓘ icon**, or tapping the usage tile, is the status page: both rate-limit
-  windows as meters with when each one turns over, today's blocked time, the
-  all-time totals and the version. The deck spends two whole keys saying
-  "Session reset 3h" because 72px can't hold a percentage and its window at
-  once; a page can put them next to each other.
+- **The bar-chart icon**, or tapping the usage tile, is the Activity page. It
+  opens on both rate-limit windows as meters with when each one turns over,
+  today's blocked time and the all-time totals — the deck spends two whole keys
+  saying "Session reset 3h" because 72px can't hold a percentage and its window
+  at once, and a page can put them side by side. Under that, everything the
+  window picker governs: tokens per hour, the same split by model, sessions in
+  parallel, and where the time went.
 - **It says when it can't see the daemon.** Three missed polls and the board
   greys out rather than leaving a plausible frozen picture up.
 

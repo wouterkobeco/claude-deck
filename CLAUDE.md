@@ -609,6 +609,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   is not time that went anywhere. Anything under a minute is dropped rather
   than drawn, because a minute is the floor `dur` can render and below it a row
   is four em dashes beside a slice too thin to see.
+  **The stats board's numbers live on top of it** — the two rate-limit windows
+  as meters with their resets, today's blocked time, the all-time totals, the
+  version. They had a page of their own for three commits and it was one page
+  too many: it duplicated this page's header, its shape and its purpose, while
+  splitting "how am I doing" across two taps. They sit **above the window
+  picker** because no window applies to them — a 5-hour rate limit is not a
+  thing you look at "over 30 days" — and they come from `deps.status()` rather
+  than `deps.activity()`, kept apart because the two are cached on completely
+  different clocks (`getUsage` 5m, `getStats` and blocked-today 30s, against a
+  regroup of records the picker drives).
   **Its type is sized for a tablet, not for a laptop it is leaning on.** The
   page was 760px of 13px table in whatever window it opened in, which is fine
   on a Mac two feet away and a column of small print on an iPad — and the iPad
@@ -764,19 +774,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   on a tablet and 11% on a phone (whose key is half the size and so needs a
   bigger share of it), which fits five lines and four — and it is a slider,
   because how far away the thing is sitting is not something this can know.
-  **`statusPage` is the stats board with the constraint taken off.** Same
-  numbers the deck draws — the two rate-limit windows, the all-time totals,
-  today's blocked time, the version — but the deck has to spend two separate
-  keys on "Session reset 3h" and "Week reset 5d", because a 72px key cannot
-  hold a percentage and the window it is a percentage *of* at the same time,
-  and 81% twenty minutes before a reset means something quite different from
-  81% on day one of seven. Here they are one meter each. Reached from the
-  header's own icon and from the usage tile, which is a plain anchor rather
-  than a click handler: it is a navigation, so it needs nothing from `SCRIPT`
-  and the poll's markup diffing treats it like any other tile. It deliberately
-  does **not** poll — everything on it is cached upstream for minutes
-  (`getUsage` 5m, `getStats` 30s, blocked-today 30s) and moves at the speed of
-  an hour, so a 2s refresh would be traffic in exchange for nothing.
+  **The usage tile is a plain anchor to the activity page**, not a click
+  handler: it is a navigation, the way the deck's usage key opens the stats
+  board on a press, so it needs nothing from `SCRIPT` and the poll's markup
+  diffing treats it like any other tile.
   **A saved icon has to open a board, not a 403.** The page ships a manifest
   and PNG icons (`renderIcon`, in `render.mjs` with the rest of the SVG→sharp
   work rather than as a checked-in file — the palette is already there, and a

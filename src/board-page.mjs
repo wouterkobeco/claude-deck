@@ -66,14 +66,10 @@ const ICONS = {
     <rect x="1" y="9" width="3" height="6" rx="1" fill="currentColor"/>
     <rect x="6.5" y="5" width="3" height="10" rx="1" fill="currentColor"/>
     <rect x="12" y="1" width="3" height="14" rx="1" fill="currentColor"/></svg>`,
-  status: `<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">
-    <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/>
-    <circle cx="8" cy="4.3" r="1" fill="currentColor"/>
-    <rect x="7.1" y="6.6" width="1.8" height="5.6" rx=".9" fill="currentColor"/></svg>`,
 };
 
 /**
- * `here` is one of "board" | "activity" | "status" | "accents".
+ * `here` is one of "board" | "activity" | "accents".
  *
  * **Every icon means the same thing on every page, including the gear.**
  * Settings are the board's sheet — layout, font, colours — and that is where
@@ -93,7 +89,6 @@ export function iconHeader(token, here, title = "Deck") {
     <span class="spacer"></span>
     ${link("board", "/board", "board")}
     ${link("activity", "/activity", "activity")}
-    ${link("status", "/status", "status")}
     ${
       here === "board"
         ? `<button class="icon" id="gear" title="settings">⚙</button>`
@@ -378,7 +373,7 @@ function tile(k, token) {
     // usage key opens the stats board on a press for the same reason. Native
     // means it needs nothing from SCRIPT and survives the poll's diffing
     // unchanged, since the markup is what gets compared either way.
-    return `<a class="key dark tile" href="/status?t=${esc(token)}"${id}><div class="usage">${usageHalf(
+    return `<a class="key dark tile" href="/activity?t=${esc(token)}"${id}><div class="usage">${usageHalf(
       "Session",
       k.session
     )}${usageHalf("Week", k.week)}</div></a>`;
@@ -503,91 +498,6 @@ export function detailPanel(d) {
       </div>
     </div>`;
 }
-
-/**
- * The stats board, as a page rather than thirteen squares.
- *
- * Same numbers the deck shows — the two rate-limit windows and when they
- * reset, the all-time totals, today's blocked time, the daemon's version — but
- * laid out for something that is not 72px: the two limits get real meters with
- * the reset beside them, because a percentage whose window resets in twenty
- * minutes means something quite different from the same percentage on day one
- * of seven, and the deck has to spend two separate keys to say so.
- *
- * Deliberately not auto-refreshing. Everything on it is cached upstream for
- * minutes (`getUsage` 5m, `getStats` 30s, blocked-today 30s) and moves at the
- * speed of an hour, so a page that quietly re-fetched itself every 2s would be
- * traffic in exchange for nothing. Reload it.
- */
-export function statusPage(token, { usage, stats, blocked, version }) {
-  const meter = (caps, pct, resets) => `
-    <div class="limit">
-      <div class="lrow"><span class="lcap">${esc(caps)}</span>
-        <span class="lpct">${typeof pct === "number" ? Math.round(pct) + "%" : "—"}</span></div>
-      <div class="ltrack"><i style="width:${
-        typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
-      }%;background:${usageColor(pct ?? 0)}"></i></div>
-      <div class="lsub">${resets ? `resets in ${esc(resets)}` : "reset time unknown"}</div>
-    </div>`;
-
-  return `<!doctype html><html><head><meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>Claude Deck</title><style>${HEADER_CSS}${STATUS_STYLE}</style></head><body>
-  ${iconHeader(token, "status", "Status")}
-  <main>
-    <h2>Rate limits</h2>
-    <div class="limits">
-      ${meter("Session · 5 hours", usage.session, usage.sessionResets)}
-      ${meter("Week · 7 days", usage.week, usage.weekResets)}
-    </div>
-
-    <h2>Today</h2>
-    <dl class="facts">
-      <dt>Blocked on you</dt><dd>${esc(blocked)}</dd>
-    </dl>
-
-    <h2>All time</h2>
-    <dl class="facts">
-      ${stats.map((t) => `<dt>${esc(t.label)}</dt><dd>${esc(t.value)}</dd>`).join("")}
-    </dl>
-
-    <p class="ver">Claude Deck v${esc(version)}</p>
-  </main>
-  </body></html>`;
-}
-
-const STATUS_STYLE = `
-  :root { color-scheme: dark; --page-bg: #0b0b0b }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent }
-  body { margin: 0; background: #0b0b0b; color: #e0e0e0;
-         font-family: -apple-system, system-ui, sans-serif }
-  main { max-width: 720px; margin: 0 auto;
-         padding: 26px calc(20px + var(--safe-right)) calc(48px + var(--safe-bottom))
-                  calc(20px + var(--safe-left)) }
-  h2 { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: #757575;
-       font-weight: 600; margin: 30px 0 12px }
-  h2:first-child { margin-top: 6px }
-  /* Side by side where there is room, stacked on a phone. */
-  .limits { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) }
-  .limit { background: #161616; border-radius: 8px; padding: 16px 18px }
-  .lrow { display: flex; align-items: baseline; gap: 12px }
-  .lcap { flex: 1; font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
-          color: #9e9e9e; font-weight: 700 }
-  .lpct { font-size: 30px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums;
-          line-height: 1 }
-  .ltrack { height: 8px; border-radius: 4px; background: #ffffff1a; overflow: hidden; margin: 12px 0 8px }
-  .ltrack i { display: block; height: 100% }
-  /* The half the deck needs a second key for: a percentage means one thing
-     twenty minutes before the window turns over and another on day one. */
-  .lsub { font-size: 12px; color: #757575 }
-  .facts { display: grid; grid-template-columns: 1fr auto; gap: 0; margin: 0;
-           background: #161616; border-radius: 8px; overflow: hidden }
-  .facts dt { padding: 12px 18px; font-size: 14px; color: #9e9e9e; border-top: 1px solid #202020 }
-  .facts dd { padding: 12px 18px; margin: 0; font-size: 15px; font-weight: 600; color: #fff;
-              text-align: right; font-variant-numeric: tabular-nums; border-top: 1px solid #202020 }
-  .facts dt:first-of-type, .facts dt:first-of-type + dd { border-top: 0 }
-  /* Centred, to match where the settings sheet puts the same line. */
-  .ver { margin: 30px 0 0; text-align: center; font-size: 12px; color: #616161 }`;
 
 /**
  * The grid's children on their own — what the 2s poll fetches and diffs.

@@ -232,6 +232,14 @@ const withHistory = await createConfigServer({
     askedFor = p;
     return { ...activity, period: p === "7d" ? "7d" : "24h" };
   },
+  // The activity page absorbed the rate-limit block, so every server that
+  // renders it needs both formatters.
+  status: async () => ({
+    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    stats: [{ label: "Sessions", value: "4.4k" }],
+    blocked: "41m",
+    version: "9.9.9",
+  }),
 });
 const hBase = new URL(withHistory.url).origin;
 const hToken = new URL(withHistory.url).searchParams.get("t");
@@ -270,10 +278,10 @@ eq(hHtml.split('class="blocked"').length - 1, 1, "an em dash in the blocked colu
 eq(hHtml.includes("height:70%"), true, "the tallest column fills the plot");
 eq(hHtml.includes("height:40%"), true, "and a shorter one is scaled against it");
 eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row per name");
-// Two token columns, one model bar, two session segments, four legend swatches.
 // Three token segments, one model bar, two session segments, two token-legend
-// swatches, four state-legend swatches.
-eq(hHtml.split("<i style=").length - 1, 12, "one element per bar segment, plus the legend swatches");
+// swatches, four state-legend swatches — and the two rate-limit meters that
+// moved onto the top of this page, which are one fill each.
+eq(hHtml.split("<i style=").length - 1, 14, "one element per bar segment, plus the legend swatches and the two meters");
 eq(hHtml.split('class="col unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.
@@ -293,6 +301,14 @@ const free = await createConfigServer({
   setAccent: () => {},
   reorder: () => {},
   activity: () => ({ ...activity, tokens: { ...activity.tokens, cost: null } }),
+  // The activity page absorbed the rate-limit block, so every server that
+  // renders it needs both formatters.
+  status: async () => ({
+    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    stats: [{ label: "Sessions", value: "4.4k" }],
+    blocked: "41m",
+    version: "9.9.9",
+  }),
 });
 const nocost = await (await fetch(free.url.replace("/?", "/activity?"))).text();
 eq(nocost.includes('class="cost"'), false, "a window with no API review says nothing rather than $0.00");
@@ -302,6 +318,14 @@ const oneVendor = await createConfigServer({
   setAccent: () => {},
   reorder: () => {},
   activity: () => ({ ...activity, tokens: { ...activity.tokens, providers: ["claude"] } }),
+  // The activity page absorbed the rate-limit block, so every server that
+  // renders it needs both formatters.
+  status: async () => ({
+    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    stats: [{ label: "Sessions", value: "4.4k" }],
+    blocked: "41m",
+    version: "9.9.9",
+  }),
 });
 const solo = await (await fetch(oneVendor.url.replace("/?", "/activity?"))).text();
 eq(solo.split('class="legend"').length - 1, 1, "one vendor earns no legend of its own — only the states chart keeps hers");
@@ -344,6 +368,12 @@ const emptyHistory = await createConfigServer({
   setAccent: () => {},
   reorder: () => {},
   activity: () => ({ period: "24h", periods: PERIODS, rows: [], tokens: { peak: "—", cols: [] }, models: [], sessions: { peak: "—", cols: [] } }),
+  status: async () => ({
+    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    stats: [{ label: "Sessions", value: "4.4k" }],
+    blocked: "41m",
+    version: "9.9.9",
+  }),
 });
 eq(
   (await (await fetch(new URL(emptyHistory.url).origin + "/activity?t=" + new URL(emptyHistory.url).searchParams.get("t"))).text()).includes("no history recorded yet"),
@@ -489,40 +519,43 @@ eq(gone.includes("class=\"task"), false, "and shows nothing stale");
 // question a board on a wall cannot otherwise answer.
 eq(board.includes('<p class="sver">Claude Deck v9.9.9</p>'), true, "the sheet carries the version");
 
-// The status page: the stats board's numbers, reached from the usage tile and
-// from the header's own icon. Formatted differently on purpose — the deck
-// spends two whole keys saying "Session reset 3h" because a 72px key cannot
-// hold a percentage and its window at once.
-eq((await fetch(`${bBase}/status`)).status, 403, "the status page is behind the token gate");
-const status = await (await fetch(`${bBase}/status?t=${bToken}`)).text();
-eq(status.includes("82%"), true, "the session window's percentage is on it");
-eq(status.includes("resets in 2h"), true, "beside when that window turns over");
-eq(status.includes("resets in 7d"), true, "and the same for the week");
-eq(status.includes("41m"), true, "today's blocked time, which the deck lost a slot for once");
-eq(status.includes("9.9.9"), true, "and the daemon's own version");
-eq(status.split("<script>").length - 1, 0, "a stat label named <script> does not reach it as a tag");
+// The rate-limit windows and the all-time totals sit on top of the activity
+// page rather than on a page of their own. Formatted unlike a key on purpose:
+// the deck spends two whole keys saying "Session reset 3h", because 72px
+// cannot hold a percentage and the window it is a percentage *of* at once.
+eq((await fetch(`${bBase}/status?t=${bToken}`)).status, 404, "the page they used to live on is gone");
+const act = await (await fetch(`${bBase}/activity?t=${bToken}`)).text();
+eq(act.includes("82%"), true, "the session window's percentage is on the activity page");
+eq(act.includes("resets in 2h"), true, "beside when that window turns over");
+eq(act.includes("resets in 7d"), true, "and the same for the week");
+eq(act.includes("41m"), true, "today's blocked time, which the deck lost a slot for once");
+eq(act.includes("9.9.9"), true, "and the daemon's own version");
+eq(act.split("<script>").length - 1, 0, "a stat label named <script> does not reach it as a tag");
+// Above the picker, because no window applies to them: a 5-hour rate limit is
+// not a thing you look at "over 30 days".
+eq(act.indexOf("Rate limits") < act.indexOf('class="periods"'), true,
+   "they sit above the window picker, which does not govern them");
 
 // The usage tile is the other way in. An anchor rather than a click handler:
 // it is a navigation, so it needs nothing from SCRIPT and survives the poll's
 // diffing unchanged.
-eq(board.includes(`<a class="key dark tile" href="/status?t=${bToken}"`), true,
-   "the usage tile links to it, carrying the token");
-eq(grid.includes(`href="/status?t=${bToken}"`), true, "and so does the tile the poll swaps in");
+eq(board.includes(`<a class="key dark tile" href="/activity?t=${bToken}"`), true,
+   "the usage tile links there, carrying the token");
+eq(grid.includes(`href="/activity?t=${bToken}"`), true, "and so does the tile the poll swaps in");
 
 // One header on all three views. It was icons on the board and text links on
 // the config pages, which made "where am I and how do I get back" a different
 // question depending on where you already were.
-for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/status", "status"], ["/", "accents"]]) {
+for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/", "accents"]]) {
   const html = await (await fetch(`${bBase}${path}?t=${bToken}`)).text();
   const head = html.split('class="head"')[1].split("</header>")[0];
-  eq(head.split('class="icon').length - 1, 4, `${path} carries all four destinations`);
+  eq(head.split('class="icon').length - 1, 3, `${path} carries all three destinations`);
   // The accents page is not one of the three destinations — it is where the
   // deck's own config key lands, and it keeps drag-to-reorder — so nothing is
   // marked there rather than something being marked arbitrarily.
   eq(head.split('class="icon on"').length - 1, here === "accents" ? 0 : 1, `${path} marks the right icon current`);
   eq(head.includes(`href="/board?t=${bToken}"`), true, `${path} links the board with the token`);
   eq(head.includes(`href="/activity?t=${bToken}"`), true, `${path} links activity with the token`);
-  eq(head.includes(`href="/status?t=${bToken}"`), true, `${path} links status with the token`);
   // The gear ends in the same place from every page: the board's settings
   // sheet. On the board it toggles it; elsewhere it links to the board with
   // the sheet already open. It pointed at the accents page from the config
@@ -652,4 +685,4 @@ eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }] 
 eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }], en0: [{ family: "IPv6", address: "fe80::1", internal: false }, { family: "IPv4", address: "192.168.2.28", internal: false }] }), "192.168.2.28", "the first non-internal IPv4 wins");
 eq(lanAddress({}), null, "no interfaces at all is null, not a throw");
 
-console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts, board page, detail panel, status page, shared header, focus and lanAddress");
+console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts, board page, detail panel, shared header, focus and lanAddress");

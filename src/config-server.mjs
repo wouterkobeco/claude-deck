@@ -17,8 +17,8 @@ import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
 import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
-import { boardGrid, boardPage, detailPanel, statusPage, iconHeader, HEADER_CSS } from "./board-page.mjs";
-import { renderIcon } from "./render.mjs";
+import { boardGrid, boardPage, detailPanel, iconHeader, HEADER_CSS } from "./board-page.mjs";
+import { renderIcon, usageColor } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
 
 // A form POST of one folder key and one hex value. Anything approaching this
@@ -140,7 +140,35 @@ const STYLE = `
                color:#757575; margin-top:10px }
   /* Ties a row to its slice, so the pie needs no legend. */
   .dot { display:inline-block; width:11px; height:11px; border-radius:2px;
-         margin-right:9px; vertical-align:-1px }`;
+         margin-right:9px; vertical-align:-1px }
+  /* The rate-limit meters and the all-time totals, which moved here off a page
+     of their own. Side by side where there is room, stacked on a phone. */
+  h2.first { margin-top:6px }
+  .limits { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)) }
+  .limit { background:#1b1b1b; border-radius:8px; padding:16px 18px }
+  .lrow { display:flex; align-items:baseline; gap:12px }
+  .lcap { flex:1; font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+          color:#9e9e9e; font-weight:700 }
+  .lpct { font-size:30px; font-weight:700; color:#fff; line-height:1;
+          font-variant-numeric:tabular-nums }
+  .ltrack { height:8px; border-radius:4px; background:#ffffff1a; overflow:hidden; margin:12px 0 8px }
+  .ltrack i { display:block; height:100% }
+  /* The half a key has no room for: a percentage means one thing twenty
+     minutes before its window turns over and another on day one of seven. */
+  .lsub { font-size:12px; color:#757575 }
+  /* A grid rather than the seven stacked rows these were on their own page:
+     they sit above the charts now, and a column of them would push the thing
+     you came for below the fold.
+     Each one its own card, like the meters above — separating them with the
+     container's colour showing through 1px gaps left the *unfilled* end of the
+     last row as one lighter block, which reads as a missing tile. */
+  .facts { display:grid; gap:10px; margin:14px 0 0;
+           grid-template-columns:repeat(auto-fit,minmax(190px,1fr)) }
+  .fact { background:#1b1b1b; border-radius:8px; padding:12px 16px;
+          display:flex; flex-direction:column; gap:4px }
+  .fl { font-size:11px; color:#757575 }
+  .fv { font-size:17px; font-weight:600; color:#fff; font-variant-numeric:tabular-nums }
+  .ver { margin:36px 0 0; text-align:center; font-size:12px; color:#616161 }`;
 
 // Every number arrives formatted and every bar arrives as a percentage.
 // index.mjs owns the summarising, the clock and the units; this file owns the
@@ -203,7 +231,38 @@ const periodBar = (token, periods, here) =>
     )
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, sessions, models }) {
+// The two rate-limit windows, as meters. The deck has to spend two whole keys
+// saying "Session reset 3h" and "Week reset 5d", because a 72px key cannot
+// hold a percentage and the window it is a percentage *of* at once — and 81%
+// twenty minutes before a reset means something quite different from 81% on
+// day one of seven. Here each window is one meter with its own reset under it.
+const limits = (usage) =>
+  `<div class="limits">${[
+    ["Session · 5 hours", usage.session, usage.sessionResets],
+    ["Week · 7 days", usage.week, usage.weekResets],
+  ]
+    .map(
+      ([caps, pct, resets]) => `<div class="limit">
+        <div class="lrow"><span class="lcap">${esc(caps)}</span>
+          <span class="lpct">${typeof pct === "number" ? Math.round(pct) + "%" : "—"}</span></div>
+        <div class="ltrack"><i style="width:${
+          typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
+        }%;background:${usageColor(pct ?? 0)}"></i></div>
+        <div class="lsub">${resets ? `resets in ${esc(resets)}` : "reset time unknown"}</div>
+      </div>`
+    )
+    .join("")}</div>`;
+
+// Today's blocked time and the all-time totals, as a grid that reflows rather
+// than the seven-row list they were on a page of their own — they sit above
+// the charts now, and nine stacked rows would push the thing you came for
+// below the fold.
+const facts = (blocked, stats) =>
+  `<div class="facts">${[{ label: "Blocked on you today", value: blocked }, ...stats]
+    .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
+    .join("")}</div>`;
+
+function activityPage(token, { period, periods, rows, pie, tokens, sessions, models }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
@@ -233,6 +292,10 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
     <style>${HEADER_CSS}${STYLE}</style></head><body>
     ${iconHeader(token, "activity", "Activity")}
     <main class="wide">
+      <h2 class="first">Rate limits</h2>
+      ${limits(status.usage)}
+      ${facts(status.blocked, status.stats)}
+      <h2>Where the tokens went</h2>
       ${periodBar(token, periods, period)}
       ${
         tokens.cols.length === 0
@@ -256,6 +319,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
           ? '<p class="empty">no history recorded yet</p>'
           : `<h2>Where the time went</h2><div class="split">${table()}<div>${wheel()}</div></div>`
       }
+      <p class="ver">Claude Deck v${esc(status.version)}</p>
     </main>
     </body></html>`;
 }
@@ -504,12 +568,6 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         return send(res, 200, boardGrid((await deps.board()).keys, token), "text/html; charset=utf-8");
       }
 
-      // The stats board as a page: what the deck's usage key opens, reached
-      // here from that same tile and from the header's own icon.
-      if (req.method === "GET" && url.pathname === "/status") {
-        return send(res, 200, statusPage(token, await deps.status()), "text/html; charset=utf-8");
-      }
-
       // One session at length, for the panel a second tap opens. `deps.detail`
       // answers null for an id it doesn't know — which is both "you made that
       // up" and "it ended while you were looking at it", and the panel says
@@ -540,7 +598,16 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         // default for anything it doesn't recognise and echoes back which one
         // it actually used, so an edited URL can't render a page whose picker
         // disagrees with its charts.
-        return send(res, 200, activityPage(token, deps.activity(url.searchParams.get("p"))), "text/html; charset=utf-8");
+        // Two formatters, one page: `status` is the rate-limit windows and the
+        // all-time totals, which no window picker applies to, and `activity`
+        // is everything the picker governs. Kept apart in index.mjs because
+        // they are cached on completely different clocks.
+        return send(
+          res,
+          200,
+          activityPage(token, deps.activity(url.searchParams.get("p")), await deps.status()),
+          "text/html; charset=utf-8"
+        );
       }
 
       if (req.method === "POST" && url.pathname === "/accent") {
