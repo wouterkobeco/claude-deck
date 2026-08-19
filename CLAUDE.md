@@ -1286,10 +1286,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   extra one, and AXRaise needs Accessibility permission. The reasoning is in the
   comment above `focusWindow()` — read it before proposing an alternative.
 - **MK.2 hardcoded-ish**: 15 keys, 72×72, macOS only, exclusive HID (the Elgato
-  app cannot run alongside). The **whole bottom-right run of three is
-  reserved** — key 14 is the usage readout and the stats toggle, key 13 the
-  attention key, key 12 the free-capacity key — leaving **12 session slots**.
-  Extra sessions past that get no key, by design.
+  app cannot run alongside). **Two keys are reserved** — key 14 is the usage
+  readout and the stats toggle, key 13 the status key — leaving **13 session
+  slots**. Extra sessions past that get no key, by design.
+  **The status key is two keys folded into one, and the fold is the point.**
+  It was an attention key and a free-capacity key side by side, which spent a
+  slot saying two things that are never both the answer: "10 sessions free" is
+  not what you want to read while two are blocked on you, and once nothing is
+  blocked the blocked count is a zero nobody needs a key for. `statusKey` picks
+  — attention whenever that queue has anything, free otherwise — and a press
+  opens whichever board the key is currently *showing*, so it can never open
+  something the key never mentioned. It is exported and pure for the reason
+  `detailLayout` is: it is written into two boards (this deck and the web one)
+  and neither is visible without the hardware or a browser, so the fold is a
+  rule rather than a branch each board decides for itself.
+  Only the attention side caches `renderParams`; the free side nulls it, since
+  only one of them pulses and stale params would let `pulse()` redraw an
+  attention frame over a free key.
   **The board page is where that cap does not apply** (`board-page.mjs`): an
   iPad is not this device, so it shows every session and scrolls. That is not a
   second answer to "what falls off the end" — the two queues are still the
@@ -1306,6 +1319,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   full board is at-a-glance familiarity, never something you could have acted
   on — which is what lets the board stop having to fit rather than growing
   paging or collapsing projects into group keys.
+  The slot that fold gave back went to the sessions, and the stats board's
+  freed tile went to **"Blocked today"** — which is the same trade run
+  backwards, since that tile is what was dropped when the free key first took
+  the slot. It is cached 30s: `readHistory()` reads the whole log and that
+  board polls every 2s while it is up.
   `freeQueue` folds nested state exactly as `refresh` does
   (`mostUrgent([own, ...nested])`), or a session whose Agent-tool subagent is
   still running would be offered as free while its own key two rows up reads
@@ -1313,17 +1331,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   other, but ordered longest-idle first rather than by first-seen, so what
   survives truncation is the most obviously spare — a defensible cut, unlike
   the sessions board's arbitrary tail.
-  The free key is **never coloured and never pulses**: green already means
+  The free side is **never coloured and never pulses**: green already means
   "working" everywhere here, so a green key for "not working" would fight the
   palette, and nothing on it is wrong. Dark with a big white number, like the
-  usage key it sits beside. `drawFree` therefore caches no `renderParams` —
-  that cache exists only so `pulse()` can redraw between polls.
-  The slot it cost came out of the stats board, which used to fill all 13 and
-  now fills all 12 exactly (two reset tiles, seven stats, the version, the back
-  key, the config key). The **"Blocked today" tile went with it**, and that is
-  the right thing to have lost: the Activity page now carries blocked time per
-  project across four windows beside a pie, which is strictly more than one
-  number could say.
+  usage key it sits beside — which is also what makes the fold read cleanly,
+  since the attention side going red is then the only colour that key ever
+  shows.
+  The stats board fills all 13 slots exactly: two reset tiles, seven stats, the
+  version, blocked-today, the back key, the config key. An eighth stats tile
+  would push each of those one along and the last off the board entirely —
+  silently, which is what `stats-check`'s count assertion is for.
 - **A second press means "tell me more".** Tracked as a global "was the
   immediately preceding press" check (`lastPress` against `isRepeatPress`), not
   a timeout — only the press right before this one counts, so a key from

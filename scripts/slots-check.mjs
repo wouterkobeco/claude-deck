@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, loadAccents, attentionQueue, freeQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, loadAccents, attentionQueue, freeQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
@@ -702,7 +702,7 @@ eq(
 
 // ---------------------------------------------------------------------------
 // boardTiles: the same grouping the deck's slots get, without the deck's cap.
-// The board page is the one view with no 12-slot truncation, so what has to
+// The board page is the one view with no slot truncation at all, so what has to
 // hold here is that nothing *else* changed — order, the primary-key rule, and
 // the state folding all still come out as the keys beside it.
 {
@@ -761,4 +761,30 @@ eq(
   eq(mixed[1].label, "pi offline 4m", "and says which host, and for how long");
 }
 
-console.log("OK: project grouping, board tiles");
+
+// ---------------------------------------------------------------------------
+// The status key: two queues on one key, because they are never both the
+// answer. "10 free" is not what you want to read while two sessions are
+// blocked on you, and once nothing is blocked the blocked count is a zero
+// nobody needs a key for. Invisible without the hardware, which is why the
+// fold is a pure function rather than a branch inside a draw call.
+{
+  const NOW = 1000;
+  const q = (n, age) => Array.from({ length: n }, (_, i) => ({ session_id: `q${i}`, ts: NOW - age + i }));
+
+  eq(statusKey(q(2, 360), q(9, 3000), NOW), { kind: "attention", count: 2, longest: "6m" },
+     "anything blocked wins, however much capacity is free");
+  eq(statusKey([], q(9, 3000), NOW), { kind: "free", count: 9, longest: "50m" },
+     "nothing blocked falls back to the free queue");
+  eq(statusKey([], [], NOW), { kind: "free", count: 0, longest: "" },
+     "neither is a dark key that opens nothing, not a missing one");
+  // The age is the *oldest* of that queue, which is what both renderers put
+  // under the count — attentionQueue and freeQueue each sort longest-first, so
+  // it is the head either way.
+  eq(statusKey(q(3, 7200), [], NOW).longest, "2h00m", "the age comes off the head of whichever queue is showing");
+  // A queue entry with no usable timestamp draws no age rather than one
+  // counted from the epoch, same rule keyFields follows.
+  eq(statusKey([{ session_id: "x", ts: 0 }], [], NOW).longest, "", "a session with no timestamp reports no age");
+}
+
+console.log("OK: project grouping, board tiles, status key");

@@ -32,8 +32,11 @@ const stats = computeStats({
 });
 // 7 stats + the 2 reset tiles index.mjs prepends + the version tile it
 // appends = 10, filling indices 0-9 and leaving index 10 (the bottom-left
-// button) for the back key. An eighth stat would be overwritten by it and
-// never seen, silently — this assertion is what tells you.
+// button) for the back key, 11 for the config key and 12 for blocked-today.
+// An eighth stat would push each of those one along and the last off the
+// board entirely — silently, which is what this assertion is for.
+// (13 session slots since the free key folded into the status key; the board
+// fills all of them exactly.)
 assert.equal(stats.length, 7);
 assert.deepEqual(stats[0], { label: "Favorite model", value: "Opus 4.8" });
 assert.deepEqual(stats[4], { label: "Most active day", value: "Aug 8" });

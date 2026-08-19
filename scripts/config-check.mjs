@@ -382,8 +382,9 @@ const boardKeys = [
   { id: "s-2", kind: "session", project: "beta", accent: ACCENTS[1], state: "idle", shell: true, label: "", context: null, squares: [], nested: [] },
   { id: "pi:/x", kind: "offline", project: "x", accent: ACCENTS[2], label: "pi offline 4m" },
   { id: "__usage", kind: "usage", session: 46, week: null },
-  { id: "__attention", kind: "attention", count: 1, longest: "6m" },
-  { id: "__free", kind: "free", count: 0, longest: "" },
+  // One status tile, not two: attention and free are never both the answer, so
+  // the deck and the page both fold them onto one key.
+  { id: "__status", kind: "attention", count: 1, longest: "6m" },
 ];
 // One session at length. Everything here is another machine's string for a
 // remote project, so the panel escapes the same way the tiles do.
@@ -433,11 +434,14 @@ eq(board.includes("background:#555555"), true, "it becomes the neutral instead")
 // The session tile alone is tappable; the reserved three and an unreachable
 // stand-in carry no data-session, so they are inert by construction.
 eq(board.split("data-session=").length - 1, 2, "only the two session tiles are tappable");
+// The status tile keeps one id across the fold, so a poll sees it change
+// rather than one tile vanishing and another taking its place.
+eq(board.includes('data-id="__status"'), true, "the two queues share one tile");
 eq(board.includes("CLEAR"), true, "a session with nothing said in it reads CLEAR, as on the deck");
 
 const grid = await (await fetch(`${bBase}/board/grid?t=${bToken}`)).text();
 eq(grid.startsWith("<div class=\"key"), true, "the poll fragment is the tiles alone, no page around them");
-eq(grid.includes("data-id=\"__free\""), true, "and it is the same list the page was built from");
+eq(grid.includes("data-id=\"__status\""), true, "and it is the same list the page was built from");
 
 const bPost = (path, body) =>
   fetch(`${bBase}${path}?t=${bToken}`, {

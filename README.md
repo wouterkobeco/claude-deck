@@ -21,22 +21,25 @@ window.
 | green + blue dot | `shell` | turn's over, but a shell it started in the background is still running |
 | gray | `idle` | idle |
 
-The bottom-right three keys leave the rotation, so 12 are session keys:
+The bottom-right two keys leave the rotation, so 13 are session keys:
 
 - **Usage** (bottom-right) — how much of your session and weekly rate limits is
   spent. Press it for the stats board.
-- **Attention** (next to it) — how many sessions are blocked on you and how long
-  the worst one has waited. Dark and quiet when there's nothing to do. Press it
-  for the queue, worst first.
-- **Free** (next to that) — how many sessions are idle and could take work now,
-  and how long the longest-idle one has been spare. Press it for that queue,
-  longest-idle first. Dark and reading `BUSY` when everything is working.
+- **Status** (next to it) — one key answering whichever question is live. When
+  anything is blocked on you it goes red with the count and how long the worst
+  one has waited; when nothing is, it shows how many sessions are idle and
+  could take work now, and how long the longest-idle one has been spare.
+  Pressing it opens the queue it's showing — worst-first when blocked,
+  longest-idle-first when free.
 
-Run more than 12 sessions and the extras get no key — but nothing you can act
+  They share a key because they're never both the answer: "10 free" isn't what
+  you want to read while two sessions are waiting on you, and once nothing is
+  blocked the blocked count is a zero that doesn't need a key.
+
+Run more than 13 sessions and the extras get no key — but nothing you can act
 on disappears with them. Both queues are built from every session, not just the
-ones on the board, so a session that's blocked still shows on the attention key
-and one that's free still shows on the free key. What a full board loses is the
-glance, not the reach.
+ones on the board, so a session that's blocked or free still reaches the status
+key. What a full board loses is the glance, not the reach.
 
 Each project gets a colour bar naming it, and keeps that colour — across the
 session and across restarts. It's remembered in
@@ -117,7 +120,8 @@ depends on the extension — see Known limits.
 ![The detail board](docs/img/board-detail.png)
 
 **Stats** — the usage key's second press: time until each rate-limit window
-resets, then all-time totals, and the daemon's own version. `BACK` returns, as
+resets, then all-time totals, how long today was spent blocked on you, and the
+daemon's own version. `BACK` returns, as
 does the usage key.
 
 ![The stats board](docs/img/board-stats.png)
@@ -139,8 +143,8 @@ board: http://192.168.2.28:58790/board?t=2805846b-…
 
 What it does that the deck can't:
 
-- **No 12-key limit.** Every session gets a tile and the page scrolls. The
-  three reserved keys — usage, blocked, free — trail the sessions.
+- **No slot limit.** Every session gets a tile and the page scrolls. The
+  two reserved keys — usage and status — trail the sessions.
 - **Rows, columns and font size are yours**, from the gear top right or the
   grip in the corner (drag left/right for columns, up/down for rows). The whole
   key scales with the font, so one number keeps a key proportional. Your
