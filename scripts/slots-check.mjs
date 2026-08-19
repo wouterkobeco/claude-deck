@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, loadAccents, attentionQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, loadAccents, attentionQueue, freeQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
@@ -279,7 +279,7 @@ eq(accentFor(R) !== ACCENTS[2], true, "and the returning folder takes something 
 // of waiting, longest-stuck first inside each group. Nested sessions are
 // included — they have no key of their own, so this is the only view that can
 // give them a title.
-const q = (id, state, ts, nested = false) => ({ session_id: id, folder: "/projects/q", state, ts, nested });
+const q = (id, state, ts, nested = false, extra = {}) => ({ session_id: id, folder: "/projects/q", state, ts, nested, ...extra });
 const ids = (list) => list.map((x) => x.session_id);
 
 eq(
@@ -309,6 +309,36 @@ eq(
   "ties broken stably"
 );
 eq(attentionQueue([], 1000).length, 0, "nothing waiting");
+
+// --- the free queue --------------------------------------------------------
+
+// The mirror: attentionQueue answers "who needs me", freeQueue answers "where
+// can I put the next thing". Longest-idle first, because a session that
+// finished twenty minutes ago is more obviously spare than one that stopped
+// ten seconds ago and may be mid-thought.
+eq(ids(freeQueue([q("new", "idle", 900), q("old", "idle", 100)], 1000)), ["old", "new"], "longest idle first");
+eq(
+  ids(freeQueue([q("b", "busy", 100), q("w", "waiting", 100), q("i", "idle", 100), q("s", "shell", 100)], 1000)),
+  ["i"],
+  "only idle is free — a background shell it started is still running"
+);
+eq(ids(freeQueue([q("b", "idle", 100), q("a", "idle", 100)], 1000)), ["a", "b"], "ties broken stably");
+eq(freeQueue([], 1000).length, 0, "nothing free");
+
+// The one that makes this queue agree with the board it sits beside. `refresh`
+// colours a key mostUrgent([own, ...nested]), so a session whose Agent-tool
+// subagent is still running reads busy on the deck; offering it here as free
+// would contradict the key two rows up. The fold has to happen in both places.
+{
+  const parent = q("p", "idle", 100);
+  const agent = q("a1", "busy", 100, true, { parent: "p" });
+  eq(ids(freeQueue([parent, agent], 1000)), [], "a session whose subagent is working is not free");
+  const done = q("a2", "idle", 100, true, { parent: "p" });
+  eq(ids(freeQueue([parent, done], 1000)), ["p"], "and is free again once it finishes");
+}
+// A subagent is never itself an answer to "where can I put work": it has no
+// window of its own and nobody opened it.
+eq(ids(freeQueue([q("n", "idle", 100, true, { parent: "x" })], 1000)), [], "nested sessions are not offered as capacity");
 // ts: 0 means the registry carried no timestamp at all (sessions.mjs's
 // fallback), not "began at the Unix epoch". The sort's `a.ts || nowSeconds`
 // guard must treat it as "now", so it must not leapfrog a session with a

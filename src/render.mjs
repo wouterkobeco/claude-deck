@@ -672,6 +672,45 @@ export async function renderTask({ width, height, number, subject, status }) {
 }
 
 /**
+ * The free-capacity key: how many sessions are sitting idle and could take
+ * work now, with how long the longest-idle one has been waiting.
+ *
+ * **Deliberately not coloured.** Green already means "working" everywhere else
+ * on this deck, so a green key for "not working" would fight the palette; and
+ * this is a readout rather than an alarm — nothing here is wrong, and nothing
+ * here pulses. Dark with a big white number, like the usage key it sits
+ * beside, which is also the most scannable thing a 72px key can be.
+ *
+ * Mirrors renderAttention's shape exactly, down to the quiet state: CLEAR
+ * there means nothing is waiting on you, BUSY here means nothing is free.
+ */
+export async function renderFree({ width, height, count, longest }) {
+  const capSize = Math.round(height * 0.11);
+  const countSize = Math.round(height * 0.34);
+  const quiet = count === 0;
+
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="#1b1b1b" />
+      <text x="50%" y="${height * 0.38}" font-family="sans-serif" font-size="${quiet ? capSize : countSize}"
+            font-weight="bold" fill="${quiet ? "#ffffff55" : "#ffffff"}" text-anchor="middle"
+            dominant-baseline="middle">${quiet ? "BUSY" : count}</text>
+      ${
+        quiet
+          ? ""
+          : `<text x="50%" y="${height * 0.66}" font-family="sans-serif" font-size="${capSize}"
+                   font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffffcc" text-anchor="middle"
+                   dominant-baseline="middle">FREE</text>
+             <text x="50%" y="${height * 0.85}" font-family="sans-serif" font-size="${capSize}"
+                   fill="#ffffff99" text-anchor="middle"
+                   dominant-baseline="middle">${escapeXml(longest ?? "")}</text>`
+      }
+    </svg>`;
+
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
+/**
  * A session mid-compaction: a ring that sweeps round with the word under it.
  *
  * `phase` is 0..1 and comes from the pulse loop's tick, not from any real

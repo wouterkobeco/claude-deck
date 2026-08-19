@@ -21,13 +21,22 @@ window.
 | green + blue dot | `shell` | turn's over, but a shell it started in the background is still running |
 | gray | `idle` | idle |
 
-The last two keys leave the rotation, so 13 are session keys. Extra sessions
-past 13 are dropped.
+The bottom-right three keys leave the rotation, so 12 are session keys:
 
 - **Usage** (bottom-right) — how much of your session and weekly rate limits is
   spent. Press it for the stats board.
 - **Attention** (next to it) — how many sessions are blocked on you and how long
-  the worst one has waited. Dark and quiet when there's nothing to do.
+  the worst one has waited. Dark and quiet when there's nothing to do. Press it
+  for the queue, worst first.
+- **Free** (next to that) — how many sessions are idle and could take work now,
+  and how long the longest-idle one has been spare. Press it for that queue,
+  longest-idle first. Dark and reading `BUSY` when everything is working.
+
+Run more than 12 sessions and the extras get no key — but nothing you can act
+on disappears with them. Both queues are built from every session, not just the
+ones on the board, so a session that's blocked still shows on the attention key
+and one that's free still shows on the free key. What a full board loses is the
+glance, not the reach.
 
 Each project gets a colour bar naming it, and keeps that colour — across the
 session and across restarts. It's remembered in

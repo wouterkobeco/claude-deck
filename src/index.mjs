@@ -15,7 +15,7 @@ import { concurrency, readHistory, recordStates, recordTick, startOfDay, summari
 import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 
@@ -277,6 +277,29 @@ export function attentionQueue(sessions, nowSeconds) {
         (a.ts || nowSeconds) - (b.ts || nowSeconds) ||
         a.session_id.localeCompare(b.session_id)
     );
+}
+
+// The mirror of the attention queue, and the other half of what the board is
+// actually read for. `attentionQueue` answers "who needs me"; this answers
+// "where can I put the next thing" — the question a deck full of idle keys is
+// being scanned for, and the one that had no complete answer anywhere once
+// there were more sessions than slots.
+//
+// **Free is the folded state, not the session's own.** `refresh` colours a key
+// `mostUrgent([own, ...nested])`, so a session whose Agent-tool subagent is
+// still running reads busy on the board; if this queue asked `s.state` alone
+// it would offer you that session as free and contradict the key beside it.
+// `shell` is likewise not free — a background shell it started is still going.
+//
+// Ranked by activity like the attention queue, and allowed to be for the same
+// reason: transient triage you read, act on, and leave. Longest-idle first,
+// because a session that finished twenty minutes ago is more obviously spare
+// capacity than one that stopped ten seconds ago and may be mid-thought.
+export function freeQueue(sessions, nowSeconds) {
+  const nested = sessions.filter((s) => s.nested);
+  return sessions
+    .filter((s) => !s.nested && mostUrgent([s.state, ...nestedFor(s, nested, true).map((n) => n.state)]) === "idle")
+    .sort((a, b) => (a.ts || nowSeconds) - (b.ts || nowSeconds) || a.session_id.localeCompare(b.session_id));
 }
 
 // Picks one stable file inside a folder to use as the focus target. Stable
@@ -588,30 +611,21 @@ function keyFields(session) {
 export const DETAIL_BACK_INDEX = 10;
 
 // The stats board's way in to the config page, beside the back key on the
-// bottom-left row — the tile list reaches index 9, so 11 and 12 are the two
-// buttons it never fills. Assigned by index rather than spliced, for the same
-// reason the back key is: an unreadable stats cache makes the list short, and
-// the way in must not move.
+// bottom-left row — the tile list reaches index 9, so 11 is the last button it
+// never fills. Assigned by index rather than spliced, for the same reason the
+// back key is: an unreadable stats cache makes the list short, and the way in
+// must not move.
+//
+// With the free key taking index 12 there are 12 session slots, and this board
+// fills all of them exactly: two reset tiles, seven stats, the version, the
+// back key, this one. An eighth stats tile would land under the back key — the
+// same invariant stats-check pins, one slot tighter.
+//
+// A "Blocked today" tile used to sit at 12. It went with the slot rather than
+// pushing something else off, and it is the right thing to have lost: the
+// Activity page now carries blocked time per project across four windows,
+// beside a pie, which is strictly more than one number could say.
 export const CONFIG_INDEX = 11;
-
-// The stats board's last free slot. With this, all 13 are spoken for — an
-// eighth stats tile would now land under the config key rather than merely
-// under the back key.
-export const BLOCKED_TODAY_INDEX = 12;
-
-/**
- * Today's total time blocked on you, across every project, as a stat value.
- *
- * Read per stats-board poll rather than kept live: the board refreshes every
- * 2s and the file is a few hundred KB at most, against a 30-day cap. If that
- * stops being true it wants a cache, not a different source.
- */
-function blockedToday() {
-  const now = Date.now();
-  const totals = summarise(readHistory(), now, startOfDay(now));
-  const ms = Object.values(totals).reduce((sum, states) => sum + (states.requires_action ?? 0), 0);
-  return ms < 60000 ? "0m" : formatAge(ms / 1000);
-}
 
 /**
  * Does this press mean "tell me more" about the session it lands on?
@@ -812,6 +826,62 @@ export function holdTiles(held, fresh, tasks, sessions) {
     const f = fresh[i];
     return f?.kind === "nested" && pinned.has(f.session.session_id) ? null : f ?? null;
   });
+}
+
+// The free-capacity key, beside the attention key it mirrors. Same
+// drawn-signature diffing as everything else; unlike the attention key it
+// never pulses, so it caches no renderParams — nothing writes to it without
+// updating `drawn`, which is the only reason that cache exists.
+async function drawFree(deck, btn, sessions) {
+  const queue = freeQueue(sessions, Date.now() / 1000);
+  const longest = queue.length && queue[0].ts ? formatAge(Date.now() / 1000 - queue[0].ts) : "";
+  const drawn = `free ${queue.length} ${longest}`;
+  if (btn.drawn !== drawn) {
+    await deck.fillKeyBuffer(btn.index, await renderFree({ ...btn, count: queue.length, longest }), { format: "rgba" });
+    btn.drawn = drawn;
+  }
+  // Returned for the same reason drawAttention returns its count: a press
+  // needs to know whether there is anything to open, and reading that back
+  // out of a render-diffing signature string would couple the two.
+  return queue.length;
+}
+
+// The free queue as a board, the same shape refreshAttention has. Idle keys
+// carry no urgency, so this one draws them exactly as the sessions board would
+// — the point is to recognise the project and pick one, not to be alarmed.
+async function refreshFree(deck, buttons, freeButton) {
+  const sessions = await liveSessions();
+  const queue = freeQueue(sessions, Date.now() / 1000);
+  const count = await drawFree(deck, freeButton, sessions);
+
+  await Promise.all(
+    buttons.map(async (btn, i) => {
+      const session = queue[i] ?? null;
+      btn.assigned = session;
+      btn.renderParams = null; // see refreshDetail: keeps pulse off stale data
+
+      if (!session) {
+        if (btn.drawn !== null) {
+          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
+          btn.drawn = null;
+        }
+        return;
+      }
+      const { label, project } = keyFields(session);
+      const accent = accentFor(folderKeyFor(session));
+      // One object renders and signs, like every other refresh*. Deliberately
+      // the same fields the attention queue draws: renderKey has nowhere to
+      // put an age, and adding one for this board alone would mean a second
+      // key layout to keep in step. The ordering is explained by the free
+      // key's own longest-idle readout, not by each tile repeating it.
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress };
+      const drawn = `free-tile ${JSON.stringify(params)}`;
+      if (btn.drawn === drawn) return;
+      await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...params }), { format: "rgba" });
+      btn.drawn = drawn;
+    })
+  );
+  return count;
 }
 
 // The bottom-right key is the usage readout rather than a session, so it is
@@ -1504,15 +1574,22 @@ async function run() {
       assigned: null,
       drawn: null,
     }));
-  // Keys are row-major, so the highest index is the bottom-right one, and the
-  // one before it is bottom-row-second-from-right. Both are reserved, leaving
-  // 13 session slots.
+  // Keys are row-major, so the bottom row is the last three indices. All three
+  // are reserved, leaving 12 session slots: usage/stats at 14, attention at 13,
+  // free capacity at 12.
+  //
+  // The third one costs a slot and is worth it. The two questions a press can
+  // answer — "who needs me" and "where can I put the next thing" — are now both
+  // answered *completely*, from the whole session list rather than the visible
+  // one. That is what lets the board stop having to fit: with more sessions
+  // than slots, what falls off the end is at-a-glance familiarity, never
+  // something you could have acted on.
   const usageButton = allButtons.pop();
   const attentionButton = allButtons.pop();
-  // The detail board takes over the entire deck, usage and attention keys
-  // included, so it needs the full list — every other board draws only the
-  // session keys.
-  const allKeys = [...allButtons, attentionButton, usageButton].sort((a, b) => a.index - b.index);
+  const freeButton = allButtons.pop();
+  // The detail board takes over the entire deck, so it needs the full list —
+  // every other board draws only the session keys.
+  const allKeys = [...allButtons, freeButton, attentionButton, usageButton].sort((a, b) => a.index - b.index);
   const buttons = allButtons;
   const slots = new Array(buttons.length).fill(null);
   const nestedBySlot = new Array(buttons.length).fill(null);
@@ -1524,6 +1601,7 @@ async function run() {
   //   { kind: "sessions" }
   //   { kind: "stats" }
   //   { kind: "attention" }
+  //   { kind: "free" }
   //   { kind: "detail", session_id, tiles }
   // `tiles` is filled in by the first refreshDetail after the view opens and
   // then held, so the board's shape stays put while its content updates.
@@ -1532,6 +1610,9 @@ async function run() {
   // without a second query — drawAttention returns it on every call, this
   // just holds the most recent value.
   let attentionCount = 0;
+  // The same, for the free key. Read by its press handler so a dark key with
+  // nothing free opens nothing rather than an empty board.
+  let freeCount = 0;
   // The immediately preceding key-down, updated on every press regardless of
   // what it did — this is what makes a second press within one project mean
   // "again", and any key outside it break that chain.
@@ -1576,7 +1657,8 @@ async function run() {
     if (control.type !== "button") return;
     const isUsage = control.index === usageButton.index;
     const isAttention = control.index === attentionButton.index;
-    const btn = isUsage || isAttention ? null : buttons[control.index];
+    const isFree = control.index === freeButton.index;
+    const btn = isUsage || isAttention || isFree ? null : buttons[control.index];
     const sessionId = btn?.assigned?.session_id ?? null;
     const folder = btn?.assigned?.folder ?? null;
     const host = btn?.assigned?.host ?? null;
@@ -1596,8 +1678,8 @@ async function run() {
       lastPress = null;
       return;
     }
-    // The queue is the opposite: it's transient triage, so any press leaves.
-    if (view.kind === "attention") {
+    // Both queues are the opposite: transient triage, so any press leaves.
+    if (view.kind === "attention" || view.kind === "free") {
       setView({ kind: "sessions" });
       // A session key still focuses its window on the way out — that's the
       // whole point of pressing one there.
@@ -1616,6 +1698,12 @@ async function run() {
       if (attentionCount > 0) setView({ kind: "attention" });
       // Pressed while dark it changes no view, so it clears the chain itself:
       // a key that does nothing must still count as "something else in between".
+      lastPress = null;
+      return;
+    }
+    if (isFree) {
+      // Same rule as the attention key: BUSY means there is nothing to open.
+      if (freeCount > 0) setView({ kind: "free" });
       lastPress = null;
       return;
     }
@@ -1675,12 +1763,23 @@ async function run() {
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         statTiles[CONFIG_INDEX] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
-        // The last free slot. Today's blocked total is the one history number
-        // worth a glance — the rest is a table, and a table belongs on the
-        // config page.
-        statTiles[BLOCKED_TODAY_INDEX] = { label: "Blocked today", value: blockedToday() };
         await refreshStats(deck, buttons, statTiles);
-        attentionCount = await drawAttention(deck, attentionButton, await liveSessions(), false);
+        const statsSessions = await liveSessions();
+        attentionCount = await drawAttention(deck, attentionButton, statsSessions, false);
+        freeCount = await drawFree(deck, freeButton, statsSessions);
+      } else if (view.kind === "free") {
+        freeCount = await refreshFree(deck, buttons, freeButton);
+        // Same exit as the attention board, for the same reason: a drained
+        // queue is twelve dark keys and a dim BUSY key, which at a glance is
+        // the daemon having died. Guarded on the view still being this one —
+        // refreshFree just awaited a live read, and a press during that await
+        // can already have moved elsewhere.
+        if (freeCount === 0 && view.kind === "free") {
+          setView({ kind: "sessions" });
+          const sessions = await refresh(deck, buttons, slots, nestedBySlot);
+          attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+          freeCount = await drawFree(deck, freeButton, sessions);
+        }
       } else if (view.kind === "attention") {
         attentionCount = await refreshAttention(deck, buttons, attentionButton);
         // The queue re-sorts while it's up so an unblocked session leaves it;
@@ -1702,6 +1801,7 @@ async function run() {
           // reuse its return rather than querying again.
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
           attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+          freeCount = await drawFree(deck, freeButton, sessions);
         }
       } else if (view.kind === "detail") {
         const detailSessions = await refreshDetail(deck, allKeys, view);
@@ -1714,15 +1814,17 @@ async function run() {
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
           attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+          freeCount = await drawFree(deck, freeButton, sessions);
         }
-        // No drawAttention here, and no drawUsage below: the detail board owns
-        // all 15 keys, so anything else painting keys 13 and 14 fights it for
-        // them and both flip back and forth on every poll. `attentionCount`
+        // No drawAttention, no drawFree, and no drawUsage below: the detail board owns
+        // all 15 keys, so anything else painting keys 12, 13 and 14 fights it
+        // for them and both flip back and forth on every poll. `attentionCount`
         // going stale while the board is up is harmless — the only press it
         // gates is on the attention key, which is a detail tile right now.
       } else {
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
         attentionCount = await drawAttention(deck, attentionButton, sessions, false);
+        freeCount = await drawFree(deck, freeButton, sessions);
         // One read serves both: the coverage log below, and `everActive` —
         // `isRepeatPress` needs a session ever reported active by *some* poll,
         // not just this one, so it's accumulated rather than replaced.

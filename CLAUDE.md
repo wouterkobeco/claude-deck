@@ -140,9 +140,9 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `import.meta.url === argv[1]` guard at the bottom is what keeps importing it
   from starting a daemon. Also owns **which board is showing**: one `view`
   value local to `run()`, never a flag per board, so "stats and detail are both
-  somehow on" isn't representable. Its four kinds — `sessions`, `stats`,
-  `attention`, `detail` — each have one branch in the poll loop and one
-  `refresh*` function, and the same 13 session keys are redrawn by whichever is
+  somehow on" isn't representable. Its five kinds — `sessions`, `stats`,
+  `attention`, `free`, `detail` — each have one branch in the poll loop and one
+  `refresh*` function, and the same 12 session keys are redrawn by whichever is
   current. The `drawn`-signature diffing does the switching for free: signatures
   never match across boards, so a mode change redraws everything once and needs
   no explicit invalidation. The stats board's top-left pair ("Session reset" /
@@ -157,7 +157,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - **One session across the whole deck: the detail view.** A second press on a
   session key (see the repeat-press rule below) opens `refreshDetail`, which
   takes over **all 15 keys** — usage and attention included, unlike every other
-  board, which draws only the 13 session keys. `detailLayout` lays out a
+  board, which draws only the 12 session keys. `detailLayout` lays out a
   the session's own key again — same label, same caps bar, `keyFields` verbatim,
   so the key you pressed is the key you land on; it was split across two keys
   first, which said the same thing twice and cost a task slot —
@@ -353,7 +353,8 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   validated against a real screenshot of the source tool's own output; don't
   change the formatting helpers without re-checking against a real cache file.
   It returns exactly seven tiles — `index.mjs` brackets them with the reset
-  pair, the version tile and the back key to fill all 13 buttons, so an eighth
+  pair, the version tile, the back key and the config key to fill all 12
+  buttons, so an eighth
   would land under the back key and never be seen (`stats-check` pins the
   count).
 - `src/vscode-state.mjs` — best-effort reader of VS Code's `state.vscdb` via the
@@ -1099,10 +1100,39 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   extra one, and AXRaise needs Accessibility permission. The reasoning is in the
   comment above `focusWindow()` — read it before proposing an alternative.
 - **MK.2 hardcoded-ish**: 15 keys, 72×72, macOS only, exclusive HID (the Elgato
-  app cannot run alongside). The last two are reserved — key 14 (bottom-right)
-  is the usage readout and the stats toggle, key 13 the attention key — leaving
-  **13 session slots**. Extra sessions past that are dropped silently, by
-  design.
+  app cannot run alongside). The **whole bottom-right run of three is
+  reserved** — key 14 is the usage readout and the stats toggle, key 13 the
+  attention key, key 12 the free-capacity key — leaving **12 session slots**.
+  Extra sessions past that get no key, by design.
+  **The third reserved key is what makes that "by design" honest.** With 14
+  sessions on this machine the board stopped fitting, and the thing being
+  scanned for turned out not to be alarms — 9 of 14 sessions were idle, 0
+  blocked. A deck full of idle keys is being read as *capacity*: "that one is
+  free, I can start the next piece of work there". So the two questions a press
+  can answer are "who needs me" (`attentionQueue`) and "where can I put the
+  next thing" (`freeQueue`), and both are now answered **completely**, from the
+  whole session list rather than the visible one. What falls off the end of a
+  full board is at-a-glance familiarity, never something you could have acted
+  on — which is what lets the board stop having to fit rather than growing
+  paging or collapsing projects into group keys.
+  `freeQueue` folds nested state exactly as `refresh` does
+  (`mostUrgent([own, ...nested])`), or a session whose Agent-tool subagent is
+  still running would be offered as free while its own key two rows up reads
+  busy. `shell` is likewise not free. Its own board truncates at 12 like every
+  other, but ordered longest-idle first rather than by first-seen, so what
+  survives truncation is the most obviously spare — a defensible cut, unlike
+  the sessions board's arbitrary tail.
+  The free key is **never coloured and never pulses**: green already means
+  "working" everywhere here, so a green key for "not working" would fight the
+  palette, and nothing on it is wrong. Dark with a big white number, like the
+  usage key it sits beside. `drawFree` therefore caches no `renderParams` —
+  that cache exists only so `pulse()` can redraw between polls.
+  The slot it cost came out of the stats board, which used to fill all 13 and
+  now fills all 12 exactly (two reset tiles, seven stats, the version, the back
+  key, the config key). The **"Blocked today" tile went with it**, and that is
+  the right thing to have lost: the Activity page now carries blocked time per
+  project across four windows beside a pie, which is strictly more than one
+  number could say.
 - **A second press means "tell me more".** Tracked as a global "was the
   immediately preceding press" check (`lastPress` against `isRepeatPress`), not
   a timeout — only the press right before this one counts, so a key from

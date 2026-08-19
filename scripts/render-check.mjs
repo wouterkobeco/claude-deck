@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderTask, renderStat, renderBack, renderCompacting, wrapLabel, wrapWords, ellipsize, measureText } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, wrapLabel, wrapWords, ellipsize, measureText } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -315,6 +315,25 @@ for (const [name, count, longest, pulse] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
+// The free key, which mirrors the attention key's shape and inverts its
+// meaning: BUSY when nothing is spare, a count when something is. Never
+// coloured and never pulsed — green already means "working" everywhere else
+// here, so a green key for "not working" would fight the palette, and there is
+// nothing wrong to alarm about.
+for (const [name, count, longest] of [
+  ["free-busy", 0, ""],
+  ["free-nine", 9, "42m"],
+]) {
+  const buf = await renderFree({ width, height, count, longest });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+
 // One task tile per status — the three must be tellable apart at arm's length.
 for (const status of ["completed", "in_progress", "pending"]) {
   const buf = await renderTask({ width, height, number: 3, subject: "serialize client-block mutations", status });
@@ -430,4 +449,4 @@ await sharp(configBuf, { raw: { width, height, channels: 4 } })
   .png()
   .toFile(new URL("./render-check-config.png", import.meta.url).pathname);
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, back key, compacting spinner");
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, free key, back key, compacting spinner");
