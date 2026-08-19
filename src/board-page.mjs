@@ -257,6 +257,11 @@ const STYLE = `
   .swatches i { width: 20px; height: 20px; border-radius: 4px; display: block;
                 border: 2px solid transparent; cursor: pointer }
   .swatches i.on { border-color: #fff }
+  /* margin-top:auto rather than a fixed position: the sheet is a flex column,
+     so this sits under the last section on a short list and at the bottom of
+     the panel on a tall one, without ever overlapping what is above it. */
+  .sver { margin: auto 0 0; padding-top: 8px; text-align: center;
+          font-size: 12px; color: #616161 }
 
   /* The detail panel. Deliberately not twelve squares: the deck's version of
      this view exists inside a 5×3 grid of 72px keys and spends most of its
@@ -603,7 +608,7 @@ const sheetProjects = (projects, palette) =>
     )
     .join("");
 
-export function boardPage(token, { keys, projects, palette }) {
+export function boardPage(token, { keys, projects, palette, version }) {
   return `<!doctype html><html><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
@@ -646,6 +651,7 @@ export function boardPage(token, { keys, projects, palette }) {
       <h2>Colours</h2>
       <div id="projects">${sheetProjects(projects, palette)}</div>
     </div>
+    ${version ? `<p class="sver">Claude Deck v${esc(version)}</p>` : ""}
   </aside>
 
   <aside class="panel" id="panel"></aside>

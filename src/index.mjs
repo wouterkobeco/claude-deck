@@ -1209,7 +1209,7 @@ export const configDeps = {
   // The board and the palette its settings sheet offers. One call rather than
   // two so the page and the fragment its poll fetches can never be rendered
   // from two different reads.
-  board: async () => ({ keys: await boardKeys(), projects: configDeps.projects(), palette: ACCENTS }),
+  board: async () => ({ keys: await boardKeys(), projects: configDeps.projects(), palette: ACCENTS, version: pkg.version }),
   // The stats board's numbers, for the page the usage tile and the header's
   // info icon both open. Formatted here rather than in the page, the same
   // split every other route follows: index.mjs owns the clock and the units,

@@ -409,7 +409,7 @@ const detail = {
 const boardSrv = await createConfigServer({
   projects,
   setAccent: (...args) => calls.push(args),
-  board: async () => ({ keys: boardKeys, projects: projects(), palette: ACCENTS }),
+  board: async () => ({ keys: boardKeys, projects: projects(), palette: ACCENTS, version: "9.9.9" }),
   focus: (id) => focused.push(id),
   detail: async (id) => (id === "s-1" ? detail : null),
   // All three views share one header, so this server has to be able to render
@@ -484,6 +484,10 @@ eq(panel.includes("blocked on you"), true, "requires_action is spelled out where
 const gone = await (await fetch(`${bBase}/session?t=${bToken}&id=../../etc/passwd`)).text();
 eq(gone.includes("has ended"), true, "an id nothing matches says the session has ended");
 eq(gone.includes("class=\"task"), false, "and shows nothing stale");
+
+// The settings sheet says which build you are looking at, which is the one
+// question a board on a wall cannot otherwise answer.
+eq(board.includes('<p class="sver">Claude Deck v9.9.9</p>'), true, "the sheet carries the version");
 
 // The status page: the stats board's numbers, reached from the usage tile and
 // from the header's own icon. Formatted differently on purpose — the deck
