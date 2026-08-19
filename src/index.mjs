@@ -14,7 +14,7 @@ import { openConfig } from "./config-server.mjs";
 import { concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
 import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
-import { countVsCodeWindows, readWindowStates } from "./window-state.mjs";
+import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, daysUntil, hoursUntil } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
@@ -1853,7 +1853,19 @@ async function run() {
           // take the reload-the-rest branch forever, on a machine that's
           // already fully covered.
           if (withExt < total) {
-            console.log(`vscode terminal focus: ${coverage} windows have the extension — reload the rest (Developer: Reload Window)`);
+            // Which ones, not just how many. The join is on folders — every IDE
+            // lock reports VS Code's shared main-process pid, so there is no
+            // per-window identity to match the extension host's — which means
+            // two windows on one folder can only be reported as a count. It
+            // says "1 of 2" there rather than naming a window it cannot tell
+            // apart from its twin.
+            const stale = staleWindows(undefined, windowStates);
+            const which = stale
+              .map((w) => (w.open > 1 ? `${w.name} (${w.covered} of ${w.open} windows)` : w.name))
+              .join(", ");
+            console.log(
+              `vscode terminal focus: ${coverage} windows have the extension — reload ${which || "the rest"} (Developer: Reload Window)`
+            );
           }
         }
       }

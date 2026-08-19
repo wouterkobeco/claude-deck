@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ancestorChain, parseProcessTable } from "../src/terminal-focus.mjs";
 import { requestFocus } from "../src/terminal-focus.mjs";
-import { countVsCodeWindows, readWindowStates } from "../src/window-state.mjs";
+import { countVsCodeWindows, readWindowStates, staleWindows } from "../src/window-state.mjs";
 
 // The real shape, from the roadmap doc's own measurement:
 //   99684 claude  <-  92021 zsh  <-  2433 ptyHost  <-  1316 Code  <-  1
@@ -194,6 +194,69 @@ assert.equal(countVsCodeWindows(join(idedir, "missing")), 0);
 // try-catch must swallow this and not affect the count of valid locks.
 await writeFile(join(idedir, "4.lock"), "{\"ideName\":");
 assert.equal(countVsCodeWindows(idedir), 2, "corrupt .lock files are skipped, not a fatal error");
+
+// Which windows still need reloading, not just how many. The join can only be
+// on folders: every IDE lock reports VS Code's shared main-process pid and the
+// lock's filename is its websocket port, so there is no per-window identity on
+// that side to match the extension-host pid the states are keyed by.
+await rm(idedir, { recursive: true, force: true });
+await rm(wdir, { recursive: true, force: true });
+await mkdir(idedir, { recursive: true });
+await mkdir(wdir, { recursive: true });
+await lock("a.lock", { workspaceFolders: ["/proj/alpha"] });
+await lock("b.lock", { workspaceFolders: ["/proj/beta"] });
+await lock("c.lock", { ideName: "PhpStorm", workspaceFolders: ["/proj/gamma"] });
+await writeFile(join(wdir, `${process.pid}.json`), JSON.stringify({ folders: ["/proj/alpha"] }));
+{
+  const states = readWindowStates(wdir);
+  const stale = staleWindows(idedir, states);
+  assert.deepEqual(stale.map((w) => w.name), ["beta"], "the window without the extension is named");
+  assert.equal(stale[0].folders[0], "/proj/beta", "with its full path for a caller that wants it");
+  // JetBrains can never run this extension, so it is not something to reload —
+  // the same filter that keeps it out of the denominator.
+  assert.equal(stale.some((w) => w.name === "gamma"), false, "a JetBrains window is not a window to reload");
+}
+
+// The ambiguity this cannot resolve, reported as a count rather than guessed
+// at: two windows on one folder are indistinguishable from here. Live on the
+// machine this was written on, with two locks on kob/kob-backend.
+await lock("d.lock", { workspaceFolders: ["/proj/alpha"] });
+{
+  const stale = staleWindows(idedir, readWindowStates(wdir));
+  const alpha = stale.find((w) => w.name === "alpha");
+  assert.deepEqual([alpha.open, alpha.covered], [2, 1], "two windows on one folder, one covered");
+}
+
+// A multi-root window is one window, not one per folder — keyed by its whole
+// sorted folder list, or it would look half-covered forever.
+await rm(join(idedir, "d.lock"));
+await lock("e.lock", { workspaceFolders: ["/proj/two", "/proj/one"] });
+{
+  const before = staleWindows(idedir, readWindowStates(wdir));
+  assert.equal(before.filter((w) => w.name.includes("+")).length, 1, "a multi-root window is one entry");
+  assert.equal(before.find((w) => w.name.includes("+")).name, "one + two", "named by every folder it holds");
+  await writeFile(join(wdir, "999999.json"), JSON.stringify({ folders: ["/proj/one", "/proj/two"] }));
+  // 999999 is almost certainly not a live pid, so readWindowStates drops it —
+  // which is the point: an entry that cannot be proven live must not silently
+  // mark a window as covered.
+  const after = staleWindows(idedir, readWindowStates(wdir));
+  assert.equal(after.some((w) => w.name === "one + two"), true, "a dead window's state does not cover anything");
+  await rm(join(wdir, "999999.json"));
+}
+
+// A remote window can never be the stale one: its IDE lock lives on the other
+// host, so it is never in this directory, and its published state is the only
+// reason it is counted at all. Comparing only host-less states is also what
+// stops a remote path coincidentally matching a local lock.
+await writeFile(join(wdir, `${process.ppid}.json`), JSON.stringify({ folders: ["/proj/beta"], host: "pi" }));
+assert.deepEqual(
+  staleWindows(idedir, readWindowStates(wdir)).map((w) => w.name).includes("beta"),
+  true,
+  "a remote window's state does not cover a local folder of the same path"
+);
+
+assert.deepEqual(staleWindows(join(idedir, "missing"), []), [], "no ide directory is nothing to reload, not a throw");
+assert.deepEqual(staleWindows(idedir, readWindowStates(join(wdir, "missing"))).length > 0, true, "and no states means every window is stale");
 
 await rm(idedir, { recursive: true, force: true });
 await rm(wdir, { recursive: true, force: true });

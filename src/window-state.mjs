@@ -91,6 +91,34 @@ export function readWindowStates(dir = WINDOWS_DIR) {
 
 const IDE_DIR = join(homedir(), ".claude", "ide");
 
+// Every VS Code IDE lock in `dir`, as its list of workspace folders.
+//
+// JetBrains writes the same lock shape with its own `ideName` and can never run
+// this extension, so it is filtered out here rather than by every caller: left
+// in, it would permanently overstate the denominator and make a fully-reloaded
+// machine still look incomplete. A lock with no `ideName` counts as VS Code —
+// the same normalisation `focusWindow` already applies, and the common case.
+function readIdeLocks(dir) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const locks = [];
+  for (const name of names) {
+    if (!name.endsWith(".lock")) continue;
+    try {
+      const { ideName, workspaceFolders } = JSON.parse(readFileSync(join(dir, name), "utf8"));
+      if ((ideName ?? "Visual Studio Code") !== "Visual Studio Code") continue;
+      locks.push(Array.isArray(workspaceFolders) ? workspaceFolders.filter((f) => typeof f === "string") : []);
+    } catch {
+      // mid-write or corrupt — not countable
+    }
+  }
+  return locks;
+}
+
 /**
  * How many VS Code windows are open, from the IDE locks Claude Code writes.
  *
@@ -99,12 +127,6 @@ const IDE_DIR = join(homedir(), ".claude", "ide");
  * reloaded, and a window that silently behaves like the old build is the one
  * failure this feature reliably produces. Comparing this against
  * `readWindowStates().length` is the whole diagnostic.
- *
- * JetBrains writes the same lock shape with its own `ideName` and can never run
- * this extension, so counting it would permanently overstate the denominator
- * and make a fully-reloaded machine still look incomplete. A lock with no
- * `ideName` counts as VS Code — that's the same normalisation `focusWindow`
- * already applies, and it's the common case.
  *
  * A remote window's IDE lock lives on the remote host, not in `dir` — so it is
  * missing from the count above while its published state (`states`, what
@@ -116,21 +138,62 @@ const IDE_DIR = join(homedir(), ".claude", "ide");
  * numerator counts a remote window as.
  */
 export function countVsCodeWindows(dir = IDE_DIR, states = []) {
-  let names;
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return 0;
+  return readIdeLocks(dir).length + new Set(states.filter((s) => s.host).map((s) => s.pid)).size;
+}
+
+/**
+ * Which windows are the ones still to reload, named by the folders they hold.
+ *
+ * "4 of 5 windows have the extension" tells you to go reload something and not
+ * which something, on a machine with five windows open. This is the same
+ * comparison, kept as a difference rather than collapsed to two integers.
+ *
+ * **The join can only be on folders.** Every IDE lock on this machine reports
+ * the same `pid` — VS Code's *main* process, shared by every window — and the
+ * lock's filename is its websocket port, so there is no per-window identity on
+ * that side to match against the extension-host pid this file is otherwise
+ * keyed by. Windows are therefore compared by their folder list, sorted and
+ * joined so a multi-root window is one key rather than several.
+ *
+ * That leaves one thing it cannot resolve, and it says so rather than guessing:
+ * two windows open on the *same* folder are indistinguishable here, so the
+ * answer is a count — "1 of 2 windows" — not a pointer at one of them. That is
+ * live on this machine (two locks on `kob/kob-backend`) and is the same
+ * duplicate-folder ambiguity `focusWindow` has never been able to solve either.
+ *
+ * Remote windows are left out of both sides: their IDE lock lives on the other
+ * host so it is never in `dir`, and their published state is the only reason
+ * they are counted at all — so they can never be the stale ones. Comparing
+ * only `host === null` states keeps a remote folder path from coincidentally
+ * matching a local one.
+ */
+export function staleWindows(dir = IDE_DIR, states = []) {
+  const key = (folders) => [...folders].sort().join("\n");
+  const have = new Map();
+  for (const s of states) {
+    if (s.host) continue;
+    const k = key(s.folders);
+    have.set(k, (have.get(k) ?? 0) + 1);
   }
-  let count = 0;
-  for (const name of names) {
-    if (!name.endsWith(".lock")) continue;
-    try {
-      const { ideName } = JSON.parse(readFileSync(join(dir, name), "utf8"));
-      if ((ideName ?? "Visual Studio Code") === "Visual Studio Code") count++;
-    } catch {
-      // mid-write or corrupt — not countable
-    }
+
+  const stale = [];
+  const open = new Map();
+  for (const folders of readIdeLocks(dir)) {
+    const k = key(folders);
+    open.set(k, (open.get(k) ?? 0) + 1);
   }
-  return count + new Set(states.filter((s) => s.host).map((s) => s.pid)).size;
+  for (const [k, total] of open) {
+    const covered = have.get(k) ?? 0;
+    if (covered >= total) continue;
+    const folders = k ? k.split("\n") : [];
+    stale.push({
+      // The basename is what anyone reading a log line recognises; the full
+      // paths ride along for a caller that wants to be precise.
+      name: folders.map((f) => f.split("/").filter(Boolean).pop() ?? f).join(" + ") || "(no folder)",
+      folders,
+      open: total,
+      covered,
+    });
+  }
+  return stale.sort((a, b) => a.name.localeCompare(b.name));
 }

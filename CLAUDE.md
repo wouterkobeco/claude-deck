@@ -400,7 +400,25 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   on ssh, and walking the local table for a remote pid is worse than walking
   nothing, because it finds unrelated local processes rather than none.
 - `src/window-state.mjs` — the reverse of `terminal-focus.mjs`: the daemon asks
-  for a terminal there and learns what actually happened here. Reads
+  for a terminal there and learns what actually happened here.
+  **`staleWindows` names the windows still to reload**, rather than leaving
+  "4 of 5 windows have the extension" to send you round five of them. It is the
+  same comparison kept as a difference instead of collapsed to two integers.
+  **The join can only be on folders**: every IDE lock on this machine reports
+  the same `pid` — VS Code's *main* process, shared by every window — and a
+  lock's filename is its websocket port, so there is no per-window identity on
+  that side to match the extension-host pid this file is otherwise keyed by.
+  Windows are compared by their folder list, sorted and joined, so a multi-root
+  window is one key rather than several (keyed by one folder it would look
+  half-covered forever). That leaves exactly one thing it cannot resolve and it
+  reports rather than guesses: two windows on the *same* folder are
+  indistinguishable here, so the answer is `1 of 2 windows`, not a pointer at
+  one of them — the same duplicate-folder ambiguity `focusWindow` has never
+  solved, live on this machine with two locks on `kob/kob-backend`. Remote
+  windows are excluded from both sides: their lock is on the other host so it
+  is never in `ide/`, their published state is the only reason they are counted
+  at all, and comparing only `host === null` states is what stops a remote path
+  coincidentally covering a local one. Reads
   `~/.claude/streamdeck-windows/<extension host pid>.json`, one per open VS Code
   window, carrying that window's folders, whether it's focused, and which
   session's terminal is in front. **Synchronous on purpose** — its only caller
