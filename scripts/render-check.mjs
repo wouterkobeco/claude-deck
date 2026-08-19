@@ -334,6 +334,23 @@ for (const [name, count, longest] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
+// The status key's busy leg reuses the same shape with label/quietWord
+// swapped — WORKING/FREE rather than FREE/BUSY, the same cross-referential
+// idiom run the other way.
+for (const [name, count, longest] of [
+  ["busy-free", 0, ""],
+  ["busy-four", 4, "9m"],
+]) {
+  const buf = await renderFree({ width, height, count, longest, label: "WORKING", quietWord: "FREE" });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+
 // One task tile per status — the three must be tellable apart at arm's length.
 for (const status of ["completed", "in_progress", "pending"]) {
   const buf = await renderTask({ width, height, number: 3, subject: "serialize client-block mutations", status });

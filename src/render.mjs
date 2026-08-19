@@ -683,8 +683,13 @@ export async function renderTask({ width, height, number, subject, status }) {
  *
  * Mirrors renderAttention's shape exactly, down to the quiet state: CLEAR
  * there means nothing is waiting on you, BUSY here means nothing is free.
+ *
+ * `label`/`quietWord` default to that pair but are overridable — the status
+ * key's busy leg reuses this same shape rather than a near-duplicate function,
+ * with WORKING/FREE in their place (FREE there means nothing is busy, the
+ * same cross-referential idiom running the other way).
  */
-export async function renderFree({ width, height, count, longest }) {
+export async function renderFree({ width, height, count, longest, label = "FREE", quietWord = "BUSY" }) {
   const capSize = Math.round(height * 0.11);
   const countSize = Math.round(height * 0.34);
   const quiet = count === 0;
@@ -694,13 +699,13 @@ export async function renderFree({ width, height, count, longest }) {
       <rect width="${width}" height="${height}" fill="#1b1b1b" />
       <text x="50%" y="${height * 0.38}" font-family="sans-serif" font-size="${quiet ? capSize : countSize}"
             font-weight="bold" fill="${quiet ? "#ffffff55" : "#ffffff"}" text-anchor="middle"
-            dominant-baseline="middle">${quiet ? "BUSY" : count}</text>
+            dominant-baseline="middle">${quiet ? quietWord : count}</text>
       ${
         quiet
           ? ""
           : `<text x="50%" y="${height * 0.66}" font-family="sans-serif" font-size="${capSize}"
                    font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffffcc" text-anchor="middle"
-                   dominant-baseline="middle">FREE</text>
+                   dominant-baseline="middle">${label}</text>
              <text x="50%" y="${height * 0.85}" font-family="sans-serif" font-size="${capSize}"
                    fill="#ffffff99" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(longest ?? "")}</text>`

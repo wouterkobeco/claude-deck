@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, statusKey, loadAccents, attentionQueue, freeQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, loadAccents, attentionQueue, freeQueue, busyQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
@@ -339,6 +339,25 @@ eq(freeQueue([], 1000).length, 0, "nothing free");
 // A subagent is never itself an answer to "where can I put work": it has no
 // window of its own and nobody opened it.
 eq(ids(freeQueue([q("n", "idle", 100, true, { parent: "x" })], 1000)), [], "nested sessions are not offered as capacity");
+
+// --- the busy queue ----------------------------------------------------
+
+// The status key's third leg: same fold as freeQueue, same longest-first
+// instinct run the other way — the one that's been at it longest is the one
+// most likely to have been forgotten about.
+eq(ids(busyQueue([q("new", "busy", 900), q("old", "busy", 100)], 1000)), ["old", "new"], "longest busy first");
+eq(
+  ids(busyQueue([q("b", "busy", 100), q("w", "waiting", 100), q("i", "idle", 100), q("s", "shell", 100)], 1000)),
+  ["b"],
+  "only busy is busy — waiting, idle and shell are all something else"
+);
+eq(busyQueue([], 1000).length, 0, "nothing busy");
+{
+  const parent = q("p", "idle", 100);
+  const agent = q("a1", "busy", 100, true, { parent: "p" });
+  eq(ids(busyQueue([parent, agent], 1000)), ["p"], "a subagent still running reads busy on its parent's own key");
+}
+eq(ids(busyQueue([q("n", "busy", 100, true, { parent: "x" })], 1000)), [], "nested sessions are not offered here either");
 // ts: 0 means the registry carried no timestamp at all (sessions.mjs's
 // fallback), not "began at the Unix epoch". The sort's `a.ts || nowSeconds`
 // guard must treat it as "now", so it must not leapfrog a session with a

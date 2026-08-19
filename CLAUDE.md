@@ -1394,6 +1394,23 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Only the attention side caches `renderParams`; the free side nulls it, since
   only one of them pulses and stale params would let `pulse()` redraw an
   attention frame over a free key.
+  **The free board has a third leg the fold itself doesn't cover: busy.**
+  `statusKey`'s pick is unchanged — attention if anything's waiting, free
+  otherwise — but pressing the key *while the free board is up* now continues
+  a small cycle instead of exiting like every other key on that board: free
+  board → the key relabels to a busy count (`drawBusyOnStatus`, reusing
+  `renderFree`'s shape with WORKING/FREE swapped in for FREE/BUSY) → a second
+  press opens `busyQueue`'s own board → any press there exits, same as
+  attention/free always have. `busyQueue` mirrors `freeQueue` exactly (same
+  fold over own state plus nested subagents', same longest-first ranking, just
+  filtered on `"busy"` instead of `"idle"`) for the same reason: a session
+  whose Agent-tool subagent is still running must read the same on both queues
+  as it does on the board. `drawQueueTiles` is the one function all three
+  boards' key-drawing now goes through — extracting it is what surfaced
+  `refreshAttention` returning an undefined `count` (a stray singular where
+  `counts` was meant) instead of the counts the poll loop needs to know when
+  to leave a drained board; that had been silently breaking the attention
+  board's own empty-queue exit since whenever it was introduced.
   **The board page is where that cap does not apply** (`board-page.mjs`): an
   iPad is not this device, so it shows every session and scrolls. That is not a
   second answer to "what falls off the end" — the two queues are still the

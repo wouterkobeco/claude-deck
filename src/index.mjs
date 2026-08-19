@@ -310,6 +310,21 @@ export function freeQueue(sessions, nowSeconds) {
     .sort((a, b) => (a.ts || nowSeconds) - (b.ts || nowSeconds) || a.session_id.localeCompare(b.session_id));
 }
 
+// The status key's third leg, reached by continuing past free rather than
+// picked from the fold like attention/free are: sessions actually at work,
+// not blocked and not idle. Same fold as freeQueue (own state plus its
+// nested subagents' most urgent) for the same reason — a session whose
+// subagent is still running must not read free here just because its own
+// state is idle, and the mirror of that holds for busy.
+// Longest-busy first: the one that's been at it the longest is the one most
+// likely to have been forgotten about, same instinct as free's longest-idle.
+export function busyQueue(sessions, nowSeconds) {
+  const nested = sessions.filter((s) => s.nested);
+  return sessions
+    .filter((s) => !s.nested && mostUrgent([s.state, ...nestedFor(s, nested, true).map((n) => n.state)]) === "busy")
+    .sort((a, b) => (a.ts || nowSeconds) - (b.ts || nowSeconds) || a.session_id.localeCompare(b.session_id));
+}
+
 // Picks one stable file inside a folder to use as the focus target. Stable
 // matters: opening the *same* file on every press reuses its existing tab
 // instead of accumulating a new one each time.
@@ -906,14 +921,12 @@ export function statusKey(attention, free, now) {
     : { kind: "free", count: free.length, longest: oldest(free) };
 }
 
-// The free queue as a board, the same shape refreshAttention has. Idle keys
-// carry no urgency, so this one draws them exactly as the sessions board would
-// — the point is to recognise the project and pick one, not to be alarmed.
-async function refreshFree(deck, buttons, statusButton) {
-  const sessions = await liveSessions();
-  const queue = freeQueue(sessions, Date.now() / 1000);
-  const counts = await drawStatus(deck, statusButton, sessions, false);
-
+// One queue drawn across the session keys, the shape attention/free/busy all
+// share: recognise the project and pick one, no age readout per tile (the
+// status key's own longest-* line already says that once for the board
+// rather than fourteen times). `kind` only reaches the drawn signature, to
+// keep each board's own change-detection separate from the others'.
+async function drawQueueTiles(deck, buttons, queue, kind) {
   await Promise.all(
     buttons.map(async (btn, i) => {
       const session = queue[i] ?? null;
@@ -929,19 +942,64 @@ async function refreshFree(deck, buttons, statusButton) {
       }
       const { label, project } = keyFields(session);
       const accent = accentFor(folderKeyFor(session));
-      // One object renders and signs, like every other refresh*. Deliberately
-      // the same fields the attention queue draws: renderKey has nowhere to
-      // put an age, and adding one for this board alone would mean a second
-      // key layout to keep in step. The ordering is explained by the free
-      // key's own longest-idle readout, not by each tile repeating it.
+      // One object drives both the render call and the drawn signature, so a
+      // field drawn but not signed can't happen — that's what left a tile's
+      // gauge frozen once already, and dropped its task counter a second time.
       const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress };
-      const drawn = `free-tile ${JSON.stringify(params)}`;
+      const drawn = `${kind} ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...params }), { format: "rgba" });
       btn.drawn = drawn;
     })
   );
-  return counts;
+}
+
+// The free queue as a board, the same shape refreshAttention has. Idle keys
+// carry no urgency, so this one draws them exactly as the sessions board would
+// — the point is to recognise the project and pick one, not to be alarmed.
+//
+// The status key shows what continuing the cycle (to busy) would open, not
+// the ordinary attention/free fold `drawStatus` computes — its job here is to
+// say what pressing it does next, not to re-litigate priority. See
+// `drawBusyOnStatus` just below.
+async function refreshFree(deck, buttons, statusButton) {
+  const sessions = await liveSessions();
+  const now = Date.now() / 1000;
+  const queue = freeQueue(sessions, now);
+  const attention = attentionQueue(sessions, now);
+  await drawBusyOnStatus(deck, statusButton, busyQueue(sessions, now), now);
+  await drawQueueTiles(deck, buttons, queue, "free-tile");
+  return { attention: attention.length, free: queue.length };
+}
+
+// The status key mid-cycle, showing the busy count it would open next rather
+// than the ordinary fold — never pulses, like the free side it continues
+// from, since nothing here is urgent enough to alarm about.
+async function drawBusyOnStatus(deck, btn, busy, now) {
+  const oldest = busy.length && busy[0].ts ? formatAge(now - busy[0].ts) : "";
+  btn.lastCount = 0;
+  btn.renderParams = null;
+  const drawn = `busy-status ${busy.length} ${oldest}`;
+  if (btn.drawn !== drawn) {
+    await deck.fillKeyBuffer(
+      btn.index,
+      await renderFree({ ...btn, count: busy.length, longest: oldest, label: "WORKING", quietWord: "FREE" }),
+      { format: "rgba" }
+    );
+    btn.drawn = drawn;
+  }
+}
+
+// The busy board: sessions actually at work, reached by continuing past free
+// rather than picked by the fold — the third and last leg of the status key's
+// own cycle. Its status key shows the ordinary attention/free readout here,
+// since any press (including its own) leaves to exactly that.
+async function refreshBusy(deck, buttons, statusButton) {
+  const sessions = await liveSessions();
+  const queue = busyQueue(sessions, Date.now() / 1000);
+  const counts = await drawStatus(deck, statusButton, sessions, false);
+  await drawQueueTiles(deck, buttons, queue, "busy-tile");
+  return { ...counts, busy: queue.length };
 }
 
 // The bottom-right key is the usage readout rather than a session, so it is
@@ -1004,40 +1062,11 @@ async function refreshAttention(deck, buttons, statusButton) {
   const sessions = await liveSessions();
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const counts = await drawStatus(deck, statusButton, sessions, false);
-
-  await Promise.all(
-    buttons.map(async (btn, i) => {
-      const session = queue[i] ?? null;
-      btn.assigned = session;
-      btn.renderParams = null; // see refreshDetail: keeps pulse off stale data
-
-      if (!session) {
-        if (btn.drawn !== null) {
-          await deck.fillKeyBuffer(btn.index, await renderBlank(btn), { format: "rgba" });
-          btn.drawn = null;
-        }
-        return;
-      }
-      const { label, project } = keyFields(session);
-      const accent = accentFor(folderKeyFor(session));
-
-      // One object drives both the render call and the drawn signature (the
-      // shape refreshDetail set and refresh() now also follows) so a field
-      // drawn but not signed can't happen — that's what left this same
-      // tile's gauge frozen once already, and dropped its task counter a
-      // second time.
-      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress };
-      const drawn = `queue ${JSON.stringify(params)}`;
-      if (btn.drawn === drawn) return;
-      const buf = await renderKey({ ...btn, ...params });
-      await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
-      btn.drawn = drawn;
-    })
-  );
+  await drawQueueTiles(deck, buttons, queue, "queue");
   // Returned like drawStatus() so the poll loop can keep both counts live
   // from this branch too — this view's own call to drawStatus is
   // buried inside here rather than at the loop's call site.
-  return count;
+  return counts;
 }
 
 // How long today has been spent waiting on you, across every project. It sat
@@ -1845,6 +1874,9 @@ async function run() {
   // The same, for the free key. Read by its press handler so a dark key with
   // nothing free opens nothing rather than an empty board.
   let freeCount = 0;
+  // The same again, for the busy board the status key reaches by continuing
+  // past free rather than exiting — the third leg of its own cycle.
+  let busyCount = 0;
   // The immediately preceding key-down, updated on every press regardless of
   // what it did — this is what makes a second press within one project mean
   // "again", and any key outside it break that chain.
@@ -1958,11 +1990,27 @@ async function run() {
       lastPress = null;
       return;
     }
-    // Both queues are the opposite: transient triage, so any press leaves.
-    if (view.kind === "attention" || view.kind === "free") {
+    // Attention and busy are the terminal legs of their own cycles: any press
+    // leaves, the way this board always has.
+    if (view.kind === "attention" || view.kind === "busy") {
       setView({ kind: "sessions" });
       // A session key still focuses its window on the way out — that's the
       // whole point of pressing one there.
+      if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
+      lastPress = press;
+      return;
+    }
+    // Free is the one board with a next step: the status key continues its
+    // own cycle (free -> busy) here instead of exiting like every other key
+    // on this board — the same "press opens what it's showing" rule the key
+    // already follows on the sessions board, carried one step further. Any
+    // other key still exits and focuses, same as attention/busy.
+    if (view.kind === "free") {
+      if (isStatus) {
+        setView({ kind: "busy" });
+        return;
+      }
+      setView({ kind: "sessions" });
       if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
       lastPress = press;
       return;
@@ -2056,6 +2104,16 @@ async function run() {
         // refreshFree just awaited a live read, and a press during that await
         // can already have moved elsewhere.
         if (freeCount === 0 && view.kind === "free") {
+          setView({ kind: "sessions" });
+          const sessions = await refresh(deck, buttons, slots, nestedBySlot);
+          ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
+        }
+      } else if (view.kind === "busy") {
+        ({ attention: attentionCount, free: freeCount, busy: busyCount } = await refreshBusy(deck, buttons, statusButton));
+        // Same exit as attention/free, for the same reason: a drained queue
+        // reads as the daemon having died, not as "nothing's running right
+        // now". Guarded the same way — refreshBusy just awaited a live read.
+        if (busyCount === 0 && view.kind === "busy") {
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
           ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
