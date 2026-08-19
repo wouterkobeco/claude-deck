@@ -1,8 +1,12 @@
-# claude-streamdeck
+# Claude Deck
 
 Your running Claude Code sessions, on a Stream Deck MK.2. One key per session,
 coloured by what that session is doing right now; press a key to jump to its
 VS Code window.
+
+The same board is also a web page on your LAN — scan the QR `npm start` prints
+and it's on your phone or iPad, with a layout you can set and no fifteen-key
+limit. See [the same board, on a phone or an iPad](#the-same-board-on-a-phone-or-an-ipad).
 
 ![The sessions board](docs/img/board-sessions.png)
 
@@ -97,10 +101,14 @@ one block, so you're only ever ordering projects. Anything you haven't dragged
 keeps arriving in the order it first appeared, and the order survives restarts
 alongside the colours.
 
-The daemon is read-only: it polls the files Claude Code already writes under
-`~/.claude/` every two seconds and redraws what changed. No hooks, no config
-file, nothing written back except its own notes to itself and to the VS Code
-extension.
+The daemon is read-only about your sessions: it polls the files Claude Code
+already writes under `~/.claude/` every two seconds and redraws what changed.
+No hooks, no config file, nothing written back except its own notes to itself
+(colours and order, the state and token history above, and the board's address)
+and to the VS Code extension.
+
+The one thing it does beyond reading and drawing is listen: the board page below
+is served from this machine on your LAN. `STREAMDECK_NO_BOARD=1` turns that off.
 
 ## The other three boards
 
@@ -129,68 +137,90 @@ does the usage key.
 > The screenshots are rendered by `npm run board-shot`, which draws made-up
 > sessions through the same code the daemon draws with.
 
-## The same board, on an iPad
+## The same board, on a phone or an iPad
 
-`npm start` prints a URL and a QR code. Point an iPad's camera at it and you
-get the whole board as a web page — same data, same colours, same 2s beat.
+`npm start` prints a URL and a QR code. Point a camera at it and the whole
+board is a web page on your LAN — same sessions, same colours, same 2s beat as
+the deck.
 
 ```
-board: http://192.168.2.28:58790/board?t=2805846b-…
+board: http://192.168.2.28:8765/board?t=40968304-…
 █ ▄▄▄▄▄ █▀ █▀▀█▀▀▄▀▀▄▀█▀▄▀█ ▄▄▄▄▄ █
 █ █   █ █▀ ▄ █▀▄ ▄▀▀▀▄▄ ▄ █ █   █ █
 …
 ```
 
-What it does that the deck can't:
+![The board as a web page](docs/img/board-web.png)
 
-- **No slot limit.** Every session gets a tile and the page scrolls. The
-  two reserved keys — usage and status — trail the sessions.
-- **Rows, columns and font size are yours**, from the gear top right or the
-  grip in the corner (drag left/right for columns, up/down for rows). The whole
-  key scales with the font, so one number keeps a key proportional. Your
-  choices live in that browser, so an iPad and a phone can each have their own.
-- **It works on a phone too.** A key is never taller than square, however the
-  rows and columns divide the screen, and a first visit picks a shape and a
-  text size from the width it landed on — three columns on a phone, five on a
-  landscape iPad, with the font set so the words come out about the same size
-  on both.
-- **Tap a key** and it raises that session's VS Code window, exactly as a first
-  press on the deck does. **Tap it again** and a panel slides in with that one
-  session at length: state, context, model, where it's running, its *whole*
-  task list, and every subagent it has going. The deck's detail board windows
-  that list to what twelve buttons hold; a page that scrolls doesn't have to.
-- **The gear also picks project colours** — the same accents the config page
-  sets, on the same keys.
+**The address stays put across restarts** — port 8765, and the token is
+remembered beside it — so a page left open reconnects on its own and a
+bookmark or a home-screen icon keeps working. If something else holds the port
+the board comes up on a spare one and says so above the QR; `STREAMDECK_PORT`
+picks a different one.
+
+### What it does that fifteen keys can't
+
+- **No slot limit.** Every session gets a tile and the page scrolls, so nothing
+  falls off the end. The two reserved keys — usage and status — trail the
+  sessions.
+- **The layout is yours.** Columns, rows and text size from the gear, or drag
+  the grip in the bottom corner (left/right for columns, up/down for rows).
+  Everything inside a key scales with one number, so a key stays proportional
+  instead of just growing its body text. The choice lives in that browser, so
+  a phone and an iPad each keep their own.
+- **Tap a key** to raise that session's VS Code window, exactly as a first
+  press on the deck does.
+- **Tap it again** for the whole session at length: state, context, model,
+  where it's running, its *entire* task list, and every subagent it has going.
+  The deck's detail board has to window that list to what twelve buttons hold;
+  a page that scrolls doesn't.
+
+![A session's detail panel](docs/img/board-web-detail.png)
+
+### On a phone
+
+![The board on a phone](docs/img/board-web-phone.png)
+
+A key is never taller than square, however the rows and columns divide the
+screen — five columns of a 390px phone against a third of its height would
+otherwise be a key three times taller than it is wide. A first visit picks its
+shape and text size from the width it landed on: three columns on a phone,
+five on a landscape iPad, with the font set so the words come out about the
+same size on both. There is no device sniffing anywhere in it — iPadOS Safari
+reports a Mac user-agent by default, so "is this a phone" is a question the
+browser will lie about, while the width is the thing that was actually wrong.
+
+### Save it to the home screen
+
+It opens as an app: its own icon, no browser chrome, straight to the board,
+and it keeps clear of the status bar, the notch and the home indicator.
+
+Neither platform lets a page install itself. On Android the gear offers a
+one-tap button; on iPhone and iPad it is **Share → Add to Home Screen**, which
+Safari will not let a site trigger. The gear says so either way. It'll offer
+the name **Claude Deck**.
+
+### The rest of it
+
 - **One header everywhere** — board, activity, settings — where every icon
   lands in the same place whichever page you press it from. It stays put while
   you scroll, and sits above the settings sheet and the detail panel rather
   than behind them, so the gear closes what the gear opened.
-- **Save it to the home screen** and it opens as an app — its own icon, no
-  browser chrome, straight to the board. Neither platform lets a page install
-  itself: on Android the gear offers a one-tap button, on iPhone and iPad it is
-  **Share → Add to Home Screen**, which Safari will not let a site trigger. The
-  gear says so either way.
+- **The gear also picks project colours**, the same accents the config page
+  sets, on the same keys.
+- **The bar-chart icon** is the Activity page — tokens per hour, the same split
+  by model, sessions in parallel, and where the time went, sized to be read
+  from a tablet rather than squinted at.
+- **It says when it can't see the daemon.** Three missed polls and the board
+  greys out rather than leaving a plausible frozen picture up.
 
-It says when it can't see the daemon: three missed polls and the board greys
-out rather than leaving a plausible frozen picture up.
+The server binds to your LAN so a phone can reach it, gated on the token in the
+URL — anyone on your network holding that URL can see the board and change
+accents. `STREAMDECK_NO_BOARD=1 npm start` skips it entirely; the deck's config
+key still opens the same pages on loopback.
 
-**The address stays the same across restarts**, so a page left open on the iPad
-reconnects on its own and a bookmark keeps working — port 8765 by default, and
-the token is remembered alongside it in `~/.claude/streamdeck-board.json`
-(owner-only; delete it to mint a new one). If something else already holds the
-port, the board comes up on a spare one and says so above the QR:
-
-```
-board: port 8765 is in use — the board is on 61147 this run,
-       so an old bookmark or QR will not reach it
-```
-
-`STREAMDECK_PORT=9000 npm start` picks a different one.
-
-The server binds to your LAN so the iPad can reach it, gated on that token in
-the URL — anyone on your network holding the URL can see the board and change
-accents. `STREAMDECK_NO_BOARD=1 npm start` skips it entirely; the config key
-still opens the same pages on loopback.
+> The three shots above are the real page, driven by the same invented sessions
+> `npm run board-shot` draws the deck with.
 
 ## Nice details
 
@@ -258,8 +288,8 @@ fi
 
 Skip it and everything else still works; the gauge just never draws.
 
-`npm start` also prints a QR code for the board on your iPad — see above, or
-`STREAMDECK_NO_BOARD=1` to turn it off.
+`npm start` also prints a QR code for the board on your phone or iPad — see
+above, or `STREAMDECK_NO_BOARD=1` to turn it off.
 
 ### Reveal the right terminal
 
@@ -314,6 +344,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
+| `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
 | `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |
 
 A session whose folder isn't open in a VS Code window is dropped: there'd be
@@ -365,12 +396,13 @@ npm run remote-install-check # what remote:install decides before it writes
 npm run extension-check      # whose window a focus request is for
 npm run remote-check    # remote source: host validation, tar/tail framing, matches a local source's output
 npm run config-check    # config + board pages: token gate, validation, escaping, focus
-npm run board-shot      # re-render the screenshots above
+npm run board-shot      # re-render the deck screenshots above
 ```
 
 ## Known limits
 
-- MK.2 only (15 keys, 72×72), macOS only.
+- MK.2 only (15 keys, 72×72), macOS only. The web board has no such limit and
+  runs anywhere with a browser, but the daemon it reads from is still macOS.
 - Auto-triggered compactions aren't detected; only `/compact` is.
 - **Terminal focus needs the extension installed** — see "Reveal the right
   terminal" under Setup, above. Without it, a press still raises the right
