@@ -1060,16 +1060,29 @@ export const configDeps = {
 
     const perBucket = summariseTokens(buckets, from, now, step);
     const peakOut = scale(perBucket.map((r) => r.out));
+    // Only vendors that actually ran in this window get a colour and a legend
+    // entry — a machine that has never run the ship review must not grow a
+    // legend explaining a colour it will never see.
+    const providers = [...new Set(perBucket.flatMap((r) => Object.keys(r.outBy)))].sort();
     const tokens = {
       peak: `${compactCount(peakOut)}/${unit}`,
+      providers,
       cols: perBucket.map((r, i) => ({
         label: title(new Date(r.hour)),
         tick: tickAt(i),
-        bars: [{ state: "tokens", pct: (r.out / peakOut) * 100 }],
-        value: compactCount(r.out),
+        bars: providers
+          .filter((v) => r.outBy[v])
+          .map((v) => ({ state: v, pct: (r.outBy[v] / peakOut) * 100 })),
+        value: providers.length > 1
+          ? providers.filter((v) => r.outBy[v]).map((v) => `${v} ${compactCount(r.outBy[v])}`).join(" · ") || "—"
+          : compactCount(r.out),
       })),
     };
 
+    // A model belongs to exactly one vendor, so one pass builds the lookup and
+    // each bar wears the colour its meter has in the chart above — rather than
+    // every model reading as one pool.
+    const vendorOf = new Map(buckets.map((b) => [b.model ?? "", b.provider ?? "claude"]));
     const byModel = groupTokens(buckets, "model", from, now);
     const peakModel = scale(byModel.map((r) => r.out));
     const models = byModel.slice(0, 6).map((r) => ({
@@ -1077,7 +1090,7 @@ export const configDeps = {
       // strips it, and a dated id (haiku-4-5-20251001) is mostly date; "" is
       // what a transcript line without a model reads as.
       label: (r.model || "unknown").replace(/^claude-/, "").replace(/-\d{8}$/, ""),
-      bars: [{ state: "tokens", pct: (r.out / peakModel) * 100 }],
+      bars: [{ state: vendorOf.get(r.model) ?? "tokens", pct: (r.out / peakModel) * 100 }],
       value: compactCount(r.out),
     }));
 

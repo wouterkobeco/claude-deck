@@ -191,9 +191,13 @@ const activity = {
   // clock.
   tokens: {
     peak: "900k",
+    // Two meters ran in this window, so the columns stack and the chart earns
+    // a legend. A machine that never runs the ship review reports one provider
+    // and gets neither.
+    providers: ["claude", "codex"],
     cols: [
-      { label: "09:00", tick: "9h", bars: [{ state: "tokens", pct: 100 }], value: "900k" },
-      { label: "10:00", tick: "", bars: [{ state: "tokens", pct: 40 }], value: "360k" },
+      { label: "09:00", tick: "9h", bars: [{ state: "claude", pct: 70 }, { state: "codex", pct: 30 }], value: "claude 630k · codex 270k" },
+      { label: "10:00", tick: "", bars: [{ state: "claude", pct: 40 }], value: "claude 360k" },
     ],
   },
   models: [{ label: "opus-5", bars: [{ state: "tokens", pct: 100 }], value: "1.1M" }],
@@ -256,11 +260,13 @@ eq(hHtml.split('class="blocked"').length - 1, 1, "an em dash in the blocked colu
 // The charts. Widths are the only thing the browser is asked to do, so the
 // percentage has to survive into the attribute — a bar that renders at 0%
 // is a chart that silently draws nothing.
-eq(hHtml.includes("height:100%"), true, "the tallest column fills the plot");
+eq(hHtml.includes("height:70%"), true, "the tallest column fills the plot");
 eq(hHtml.includes("height:40%"), true, "and a shorter one is scaled against it");
 eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row per name");
 // Two token columns, one model bar, two session segments, four legend swatches.
-eq(hHtml.split("<i style=").length - 1, 9, "one element per bar segment, plus the legend swatches");
+// Three token segments, one model bar, two session segments, two token-legend
+// swatches, four state-legend swatches.
+eq(hHtml.split("<i style=").length - 1, 12, "one element per bar segment, plus the legend swatches");
 eq(hHtml.split('class="col unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.
@@ -268,8 +274,21 @@ eq(hHtml.split('<div class="xaxis">')[1].split("</div>")[0].split("<span>").leng
 eq(hHtml.includes(">9h<"), true, "a labelled hour prints its label");
 // The value has nowhere to go under a column, so it rides in a title —
 // a tooltip needs no script.
-eq(hHtml.includes('title="09:00 · 900k"'), true, "a column names itself on hover");
+eq(hHtml.includes('title="09:00 · claude 630k · codex 270k"'), true, "a column names itself on hover");
 eq(hHtml.includes("peak 900k"), true, "and the scale is stated, since no column can carry it");
+// Two vendors on one chart: stacked segments in the vendor's own colour, and a
+// legend only because more than one of them ran.
+eq(hHtml.includes("background:#4fc3f7"), true, "claude keeps the page's blue");
+eq(hHtml.includes("background:#66bb6a"), true, "codex gets its own");
+const oneVendor = await createConfigServer({
+  projects,
+  setAccent: () => {},
+  reorder: () => {},
+  activity: () => ({ ...activity, tokens: { ...activity.tokens, providers: ["claude"] } }),
+});
+const solo = await (await fetch(oneVendor.url.replace("/?", "/activity?"))).text();
+eq(solo.split('class="legend"').length - 1, 1, "one vendor earns no legend of its own — only the states chart keeps hers");
+oneVendor.server.close();
 
 // The window picker. Links rather than a select, because a select needs a
 // script and this page decides everything on the server.

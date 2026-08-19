@@ -167,6 +167,10 @@ const HEX = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
 const colour = (c) => (HEX.test(String(c)) ? String(c) : "#555555");
 
 const STATE_FILL = {
+  // The two meters, told apart by hue rather than by a label under every
+  // column: Claude keeps the page's own blue, Codex the vendor's green.
+  claude: "#4fc3f7",
+  codex: "#66bb6a",
   busy: "#43a047",
   shell: "#43a047",
   requires_action: "#e53935",
@@ -249,7 +253,9 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
       ${
         tokens.cols.length === 0
           ? ""
-          : `<h2>Output tokens<span class="peak">peak ${esc(tokens.peak)}</span></h2>${columns(tokens)}`
+          : `<h2>Output tokens<span class="peak">peak ${esc(tokens.peak)}</span></h2>${columns(tokens)}${
+              tokens.providers.length > 1 ? legend(tokens.providers) : ""
+            }`
       }
       ${
         models.length === 0

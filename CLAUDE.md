@@ -533,6 +533,28 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   11s against 2GB, measured — so `index.mjs` fires it without awaiting and
   guards it in-flight, the shape `remote-hosts.mjs` uses and for the same
   reason: the bookmark is written when a pass *finishes*.
+  **It reads a second vendor's log, and that is what `provider` is for.** The
+  ship-review skill drives `codex exec` for a second opinion, so part of the
+  cost of a review lands in `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and
+  nothing above could see it. Same file, same buckets, told apart by
+  `provider`; a record written before the field existed is Claude's, which is
+  why it defaults rather than being required. **`last_token_usage`, never
+  `total_token_usage`** — Codex emits both on every turn and the total is
+  *cumulative for the session*, so summing it counts every turn once per turn
+  that follows: on this machine that inflated all-time output from 6.8M to
+  79.6M, a factor of twelve, and nothing about the number would have looked
+  wrong. The per-turn field sums to exactly the final total, verified against
+  the longest session on disk. `cwd` and `model` live in the session header and
+  in `turn_context`, which a byte cursor has usually already passed, so the
+  head of the file is re-read for them rather than carried in the bookmark; and
+  bookmarks are namespaced `codex/…` because both trees are keyed by a relative
+  path into one map. Codex reports no cache-write counter and no ttl split, so
+  those stay zero — absent, not zero-because-nothing-was-written.
+  **What is still not captured is Claude billed to the API rather than the
+  subscription.** Nothing in a transcript says which: no `costUSD`, no
+  `apiKeySource`, and `service_tier` is `"standard"` on all of it. When that
+  becomes findable it is another `provider` value, not another column — which
+  is the whole reason the split is keyed that way rather than by a boolean.
 - `src/config-server.mjs` — the config page: a local web UI, served by the
   daemon on loopback and opened from the stats board's config key, for setting
   which accent each live project wears, and — on its second tab, **Activity** —

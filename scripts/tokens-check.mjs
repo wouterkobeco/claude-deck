@@ -11,7 +11,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectTokens, compactTokens, groupTokens, readTokens, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
+import { CLAUDE, CODEX, collectTokens, compactTokens, groupTokens, readTokens, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "streamdeck-tokens-check-"));
 const projects = join(root, "projects");
@@ -19,7 +19,12 @@ const slug = join(projects, "-Users-me-thing");
 await mkdir(join(slug, "parent-id", "subagents"), { recursive: true });
 
 const HOUR = Date.parse("2026-08-18T09:00:00.000Z");
-const collect = () => collectTokens({ root, projectsRoot: projects });
+// codexRoot is pointed at the fixture tree explicitly, never left to default:
+// without it every assertion here counts whatever the real Codex CLI on this
+// machine happens to have logged.
+const codex = join(root, "codex-sessions");
+await mkdir(join(codex, "2026", "08", "18"), { recursive: true });
+const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex });
 
 // One assistant message, in the shape Claude Code writes it.
 const msg = (minute, usage, { model = "claude-opus-5", cwd = "/Users/me/thing" } = {}) =>
@@ -51,6 +56,7 @@ assert.equal(await collect(), 1, "two messages in one hour are one bucket");
   assert.equal(b.cacheRead, 900, "and cache reads separately again");
   assert.equal(b.calls, 2, "calls counts the messages");
   assert.equal(b.sub, false, "a top-level transcript is not a subagent's");
+  assert.equal(b.provider, CLAUDE, "and it is Claude's meter that ran");
 }
 
 // The incremental contract: a pass counts bytes, not files. Re-reading the two
@@ -138,13 +144,89 @@ assert.equal(await collect(), 1, "a shrunk transcript is re-read from zero");
 // Nothing here may throw. This runs on the daemon's own timer, and a home
 // directory it cannot read is a quiet zero, not a crash.
 assert.deepEqual(readTokens(join(root, "nope")), [], "an unreadable log reads as nothing collected");
-assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects") }), 0, "a missing projects tree collects nothing");
+assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex") }), 0, "a missing projects tree collects nothing");
+assert.equal(await collectTokens({ root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex") }), 0, "and a machine with no Codex CLI is not an error either");
+
+// --- Codex -----------------------------------------------------------------
+
+// The ship-review skill drives `codex exec` for a second opinion, on another
+// vendor's meter entirely. Same log, told apart by `provider`.
+{
+  const rollout = join(codex, "2026", "08", "18", "rollout-2026-08-18T09-00-00-abc.jsonl");
+  const at = (minute) => new Date(HOUR + minute * 60000).toISOString();
+  // A turn's usage, in the shape the Codex CLI writes it: `total_token_usage`
+  // is cumulative for the session and `last_token_usage` is this turn's.
+  const turn = (minute, out, { input = 100, cached = 40, reasoning = 0 }, totals) =>
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: at(minute),
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: totals,
+          last_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: out, reasoning_output_tokens: reasoning },
+        },
+      },
+    });
+  writeFileSync(
+    rollout,
+    [
+      JSON.stringify({ type: "session_meta", timestamp: at(0), payload: { cwd: "/Users/me/thing", model_provider: "openai" } }),
+      JSON.stringify({ type: "turn_context", timestamp: at(0), payload: { model: "gpt-5.5" } }),
+      turn(1, 300, {}, { output_tokens: 300 }),
+      turn(2, 200, { input: 50, cached: 20 }, { output_tokens: 500 }),
+    ].join("\n") + "\n"
+  );
+
+  assert.equal(await collect(), 1, "a codex session is one bucket for the hour");
+  const b = readTokens(root).at(-1);
+  assert.equal(b.provider, CODEX, "tagged as the other vendor's meter");
+  assert.equal(b.model, "gpt-5.5", "with the model turn_context named");
+  assert.equal(b.cwd, "/Users/me/thing", "and the cwd from the session header");
+  // The one that matters. total_token_usage is cumulative and re-emitted every
+  // turn, so summing it counts every turn once per turn that follows: on the
+  // machine this was written on that inflated all-time output from 6.8M to
+  // 79.6M, a factor of twelve, and nothing about the number looked wrong.
+  assert.equal(b.out, 500, "per-turn usage is summed, never the cumulative total");
+  assert.equal(b.in, 150, "input likewise");
+  assert.equal(b.cacheRead, 60, "codex's cached input is a read");
+  assert.equal(b.cacheWrite5m, 0, "and it reports no cache writes at all");
+  assert.equal(b.calls, 2, "two turns");
+
+  // Codex sessions are appended to for as long as the review runs, so the same
+  // incremental contract applies — and its bookmarks share one map with the
+  // transcripts', namespaced so a relative path from one tree cannot be read
+  // as a path into the other.
+  assert.equal(await collect(), 0, "a second pass over an unchanged session counts nothing");
+  appendFileSync(rollout, turn(3, 7, {}, { output_tokens: 507 }) + "\n");
+  assert.equal(await collect(), 1, "an appended turn is picked up");
+  assert.equal(readTokens(root).at(-1).out, 7, "as its own delta, not the running total");
+
+  // The two providers are separate buckets in the same hour, never merged.
+  // Claude's side of this hour is re-established here on purpose: the
+  // retention case above deliberately empties the log, so anything asserted
+  // across both vendors has to put both of them back first.
+  appendFileSync(transcript, msg(8, usage(214)) + "\n");
+  assert.equal(await collect(), 1, "and a claude message in the same hour is its own bucket");
+  const hour = summariseTokens(readTokens(root), HOUR, HOUR + HOUR_MS)[0];
+  assert.equal(hour.out, 214 + 507, "one hour's total spans both vendors");
+  const byProvider = groupTokens(readTokens(root), "provider", HOUR, HOUR + HOUR_MS);
+  assert.deepEqual(byProvider.map((r) => `${r.provider}:${r.out}`), ["codex:507", "claude:214"], "and they are separable");
+}
 
 // The bookmark drops transcripts that no longer exist rather than remembering
 // every one this machine has ever written.
 {
   const pos = JSON.parse(await readFile(join(root, "streamdeck-tokens.pos"), "utf8"));
-  assert.deepEqual(Object.keys(pos).sort(), ["-Users-me-thing/parent-id/subagents/agent-abc.jsonl", "-Users-me-thing/session-a.jsonl"], "one bookmark per live transcript, keyed relative to the projects root");
+  assert.deepEqual(
+    Object.keys(pos).sort(),
+    [
+      "-Users-me-thing/parent-id/subagents/agent-abc.jsonl",
+      "-Users-me-thing/session-a.jsonl",
+      "codex/2026/08/18/rollout-2026-08-18T09-00-00-abc.jsonl",
+    ],
+    "one bookmark per live file, relative to its own tree and namespaced by which tree that is"
+  );
 }
 
-console.log("OK: token extraction, incremental reads, grouping, compaction");
+console.log("OK: token extraction, incremental reads, codex, grouping, compaction");

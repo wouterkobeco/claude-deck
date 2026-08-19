@@ -44,8 +44,11 @@ the token in the URL it just opened.
 
 The page's **Activity** tab is everything a 72px key can't carry:
 
-- **Output tokens**, one column per bucket — and the same total split by
-  model.
+- **Output tokens**, one column per bucket, stacked by whose meter ran — and
+  the same total split by model. The ship-review skill runs `codex exec` for a
+  second opinion, so that work shows beside Claude's rather than going
+  uncounted; the columns only stack (and the legend only appears) if more than
+  one vendor actually ran in the window.
 - **Sessions in parallel**, the peak per bucket, coloured by what they were doing.
   Open is not the same as working, and this is the difference. An hour the
   daemon wasn't running is drawn striped rather than empty — a sleeping
@@ -61,10 +64,11 @@ follows it. Hover any column for its bucket and its number.
   sitting open isn't time that went anywhere.
 
 The state history is `~/.claude/streamdeck-history.jsonl`, kept 30 days; the
-token totals are `~/.claude/streamdeck-tokens.jsonl`, kept a year. That second
-one exists because Claude Code deletes its own transcripts after 30 days
-(`cleanupPeriodDays`), so the numbers have to be copied out while they're
-there. Both are read-only history — delete either and the charts start again
+token totals are `~/.claude/streamdeck-tokens.jsonl`, kept a year, read from
+Claude Code's transcripts and from the Codex CLI's session logs. That second
+file exists because both tools delete their own history — Claude Code after 30
+days (`cleanupPeriodDays`) — so the numbers have to be copied out while
+they're there. Both are read-only history — delete either and the charts start again
 from empty. Today's total blocked time also gets a tile on the stats board.
 
 The same page reorders the board. Drag a project by its **⠿** handle and drop

@@ -27,6 +27,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
+// The Codex CLI's own session log. The ship-review skill drives `codex exec`
+// for a second opinion, and that work is invisible to everything above —
+// different vendor, different plan, its own rate limit. Same shape of problem
+// as Claude's transcripts and the same answer: read it here, keep it longer
+// than the source does.
+const CODEX_DIR = join(homedir(), ".codex", "sessions");
 const logIn = (root) => join(root, "streamdeck-tokens.jsonl");
 const posIn = (root) => join(root, "streamdeck-tokens.pos");
 
@@ -69,18 +75,52 @@ function usageOf(u) {
 
 const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", "cacheRead"];
 
+// Which vendor's meter ran. Records written before this field existed are
+// Claude's, so it defaults rather than being required — and it is the seam any
+// future split goes through, including the one this cannot yet see: nothing in
+// a transcript says whether a turn was billed to the subscription or to the
+// API (no costUSD, no apiKeySource, service_tier is "standard" on all of it),
+// so when that becomes findable it is another provider value here, not another
+// column.
+export const CLAUDE = "claude";
+export const CODEX = "codex";
+
 // One bucket per hour per cwd per model per kind. `sub` is whether the
 // transcript sat under a `subagents/` directory — an Agent-tool subagent
 // writes there and nowhere else, and it turned out to be 38% of all calls on
 // this machine, which is exactly the split the deck cannot show you.
-const keyOf = (b) => `${b.hour}|${b.cwd}|${b.model}|${b.sub ? 1 : 0}`;
+const keyOf = (b) => `${b.hour}|${b.cwd}|${b.model}|${b.sub ? 1 : 0}|${b.provider ?? CLAUDE}`;
 
-function addTo(buckets, hour, cwd, model, sub, usage) {
-  const b = { hour, cwd, model, sub };
+function addTo(buckets, hour, cwd, model, sub, usage, provider = CLAUDE) {
+  const b = { hour, cwd, model, sub, provider };
   const key = keyOf(b);
   const found = buckets.get(key) ?? Object.assign(b, Object.fromEntries(METRICS.map((m) => [m, 0])));
   for (const m of METRICS) found[m] += usage[m];
   buckets.set(key, found);
+}
+
+/**
+ * The bytes of one file past `from`, and where the last complete line ends.
+ *
+ * Shared by both collectors because both read files another process is
+ * appending to, where the last line is routinely half-written: the cursor may
+ * only advance over bytes that ended in a newline.
+ */
+async function newLines(path, from, size) {
+  let fh;
+  try {
+    fh = await open(path);
+    const buf = Buffer.alloc(size - from);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+    const text = buf.subarray(0, bytesRead).toString("utf8");
+    const complete = text.lastIndexOf("\n");
+    if (complete < 0) return null; // nothing but a partial line so far
+    return { lines: text.slice(0, complete).split("\n"), at: from + Buffer.byteLength(text.slice(0, complete + 1), "utf8") };
+  } catch {
+    return null;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
 }
 
 /**
@@ -127,7 +167,12 @@ function readPositions(root) {
  * Returns how many buckets were appended. Best-effort throughout, like every
  * other reader here: one unreadable transcript is skipped, not fatal.
  */
-export async function collectTokens({ now = Date.now(), root = CLAUDE_DIR, projectsRoot = join(root, "projects") } = {}) {
+export async function collectTokens({
+  now = Date.now(),
+  root = CLAUDE_DIR,
+  projectsRoot = join(root, "projects"),
+  codexRoot = CODEX_DIR,
+} = {}) {
   const previous = readPositions(root);
   // Rebuilt from the paths that exist *now* rather than mutated in place: Claude
   // Code deletes transcripts past its cleanup period, and a map that only ever
@@ -150,23 +195,10 @@ export async function collectTokens({ now = Date.now(), root = CLAUDE_DIR, proje
     positions.set(name, from);
     if (from >= size) continue;
 
-    let text;
-    let fh;
-    try {
-      fh = await open(path);
-      const buf = Buffer.alloc(size - from);
-      const { bytesRead } = await fh.read(buf, 0, buf.length, from);
-      text = buf.subarray(0, bytesRead).toString("utf8");
-    } catch {
-      continue;
-    } finally {
-      await fh?.close().catch(() => {});
-    }
-
-    const complete = text.lastIndexOf("\n");
-    if (complete < 0) continue; // nothing but a partial line so far
+    const slice = await newLines(path, from, size);
+    if (!slice) continue;
     const sub = name.includes("/subagents/");
-    for (const line of text.slice(0, complete).split("\n")) {
+    for (const line of slice.lines) {
       // Cheap pre-filter, then the line's own parsed JSON decides — the same
       // rule readTranscriptSignals lives by, and for the same reason: a
       // transcript quotes tool output verbatim, so "usage" appears inside
@@ -187,11 +219,13 @@ export async function collectTokens({ now = Date.now(), root = CLAUDE_DIR, proje
       // bucket per hour per session saying nothing happened, which is a third
       // of the rows on this machine's first backfill.
       if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
-      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, rec.cwd ?? "", rec.message?.model ?? "", sub, usage);
+      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, rec.cwd ?? "", rec.message?.model ?? "", sub, usage, CLAUDE);
     }
-    positions.set(name, from + Buffer.byteLength(text.slice(0, complete + 1), "utf8"));
+    positions.set(name, slice.at);
     moved = true;
   }
+
+  if (await collectCodex(codexRoot, previous, positions, buckets)) moved = true;
 
   if (!moved) return 0;
   try {
@@ -208,6 +242,100 @@ export async function collectTokens({ now = Date.now(), root = CLAUDE_DIR, proje
     return 0;
   }
   return buckets.size;
+}
+
+/**
+ * The same pass over the Codex CLI's session logs, into the same buckets.
+ *
+ * **`last_token_usage`, never `total_token_usage`.** Codex emits a
+ * `token_count` event per turn carrying both, and the total is *cumulative for
+ * the session* — re-emitted, larger, on every turn. Summing those counts every
+ * turn once per turn that follows it; on this machine that inflated the
+ * all-time figure from 6.8M output tokens to 79.6M, a factor of twelve, and
+ * nothing about the number would have looked wrong. The per-turn field sums to
+ * exactly the final total, verified against the longest session on disk.
+ *
+ * `cwd` and `model` live in the session header and in `turn_context`, which a
+ * byte cursor has usually already passed, so the head of the file is re-read
+ * for them rather than remembered — one small read per changed file, against
+ * carrying a second kind of value in the bookmark.
+ *
+ * Bookmarks are namespaced, because both trees are keyed by a relative path
+ * into one map and only the prefix says which tree a name belongs to.
+ */
+async function collectCodex(codexRoot, previous, positions, buckets) {
+  let moved = false;
+  let names = [];
+  try {
+    names = (await readdir(codexRoot, { recursive: true })).filter((n) => n.endsWith(".jsonl"));
+  } catch {
+    return false; // no Codex CLI on this machine
+  }
+
+  for (const name of names) {
+    const key = `codex/${name}`;
+    const path = join(codexRoot, name);
+    let size;
+    try {
+      ({ size } = await stat(path));
+    } catch {
+      continue;
+    }
+    const seen = previous.get(key) ?? 0;
+    const from = seen > size ? 0 : seen;
+    positions.set(key, from);
+    if (from >= size) continue;
+
+    let cwd = "";
+    let model = "";
+    const head = await newLines(path, 0, Math.min(size, 65536));
+    for (const line of head?.lines ?? []) {
+      if (!line.includes('"cwd"') && !line.includes('"model"')) continue;
+      try {
+        const rec = JSON.parse(line);
+        cwd = rec?.payload?.cwd ?? cwd;
+        model = rec?.payload?.model ?? model;
+      } catch {
+        // truncated head — the bucket falls back to an empty cwd or model
+      }
+    }
+
+    const slice = await newLines(path, from, size);
+    if (!slice) continue;
+    for (const line of slice.lines) {
+      if (!line.includes('"token_count"') && !line.includes('"model"')) continue;
+      let rec;
+      try {
+        rec = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      // A turn can switch model mid-session, and turn_context is where it says
+      // so — read it as the lines go by rather than trusting the header.
+      if (rec?.type === "turn_context") model = rec.payload?.model ?? model;
+      const info = rec?.payload?.type === "token_count" ? rec.payload.info : null;
+      const last = info?.last_token_usage;
+      const ts = Date.parse(rec?.timestamp ?? "");
+      if (!last || Number.isNaN(ts)) continue;
+      const usage = {
+        calls: 1,
+        in: last.input_tokens ?? 0,
+        out: last.output_tokens ?? 0,
+        think: last.reasoning_output_tokens ?? 0,
+        // Codex reports no ttl split and no separate write counter — cached
+        // input is a read. Leaving the write fields at zero is the honest
+        // shape: absent, not zero-because-nothing-was-written.
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
+        cacheRead: last.cached_input_tokens ?? 0,
+      };
+      if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
+      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, cwd, model, false, usage, CODEX);
+    }
+    positions.set(key, slice.at);
+    moved = true;
+  }
+  return moved;
 }
 
 /** Every parseable bucket, in file order. A bad line is skipped, not fatal. */
@@ -249,13 +377,18 @@ export function summariseTokens(records, from, to, step = HOUR_MS) {
   const start = Math.floor(from / size) * size;
   const buckets = new Map();
   for (let h = start; h < to; h += size) {
-    buckets.set(h, Object.fromEntries([["hour", h], ["subCalls", 0], ...METRICS.map((m) => [m, 0])]));
+    // `outBy` is the same output split by whose meter ran, so a stacked bar
+    // needs no second pass over the records — one chart, two vendors, and a
+    // bucket that predates the field counts as Claude's.
+    buckets.set(h, Object.fromEntries([["hour", h], ["subCalls", 0], ["outBy", {}], ...METRICS.map((m) => [m, 0])]));
   }
   for (const rec of records) {
     const row = buckets.get(Math.floor(rec.hour / size) * size);
     if (!row) continue;
     for (const m of METRICS) row[m] += rec[m] ?? 0;
     if (rec.sub) row.subCalls += rec.calls ?? 0;
+    const p = rec.provider ?? CLAUDE;
+    row.outBy[p] = (row.outBy[p] ?? 0) + (rec.out ?? 0);
   }
   return [...buckets.values()];
 }
@@ -273,7 +406,9 @@ export function groupTokens(records, field, from, to) {
   const groups = new Map();
   for (const rec of records) {
     if (rec.hour < from || rec.hour >= to) continue;
-    const key = rec[field] ?? "";
+    // Same defaulting as everywhere else: a record written before `provider`
+    // existed is Claude's, and grouping by it must not invent a "" vendor.
+    const key = (field === "provider" ? rec.provider ?? CLAUDE : rec[field]) ?? "";
     const row = groups.get(key) ?? Object.fromEntries([[field, key], ...METRICS.map((m) => [m, 0])]);
     for (const m of METRICS) row[m] += rec[m] ?? 0;
     groups.set(key, row);
