@@ -586,7 +586,8 @@ const STATUS_STYLE = `
   .facts dd { padding: 12px 18px; margin: 0; font-size: 15px; font-weight: 600; color: #fff;
               text-align: right; font-variant-numeric: tabular-nums; border-top: 1px solid #202020 }
   .facts dt:first-of-type, .facts dt:first-of-type + dd { border-top: 0 }
-  .ver { margin: 30px 0 0; font-size: 12px; color: #616161 }`;
+  /* Centred, to match where the settings sheet puts the same line. */
+  .ver { margin: 30px 0 0; text-align: center; font-size: 12px; color: #616161 }`;
 
 /**
  * The grid's children on their own — what the 2s poll fetches and diffs.
