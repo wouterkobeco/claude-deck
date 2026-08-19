@@ -131,20 +131,20 @@ const STYLE = `
          padding: var(--gap) calc(var(--gap) + var(--safe-right))
                   calc(var(--gap) + var(--safe-bottom)) calc(var(--gap) + var(--safe-left));
          overflow-y: auto; overscroll-behavior: contain }
-  /* Rows set a key *height*, not a count: past the fold the board keeps going
-     and scrolls, because the 12-slot cap is a fact about the deck.
-     But height alone makes a key as tall as the screen divided by rows and as
-     wide as the screen divided by columns, and on a phone those two numbers
-     are nothing like each other — five columns of a 390px screen against a
-     third of its height is a key three times taller than it is wide. So the
-     height is also capped at the column's own width: a key is never taller
-     than square, on any screen, and the board scrolls for the rest. On a
-     tablet the row division is the smaller of the two and nothing changes. */
-  .grid { display: grid; grid-template-columns: repeat(var(--cols), 1fr);
-          grid-auto-rows: min(
+  /* Rows set a key *height* and columns its width, and on a real screen those
+     two numbers are nothing like each other: three columns of a 390px phone
+     against a fifth of its height is a tall key in portrait and a letterbox in
+     landscape. So a key is the *smaller* of the two, in both directions —
+     --key is that size, it is the row height, and it also caps the width so a
+     wide column leaves space beside the key rather than stretching it. Square
+     on any screen, in any orientation; the board scrolls for the rest. */
+  .grid { --key: min(
             (100cqh - (var(--rows) - 1) * var(--gap)) / var(--rows),
             (100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols));
+          display: grid; grid-template-columns: repeat(var(--cols), 1fr);
+          grid-auto-rows: var(--key);
           gap: var(--gap); align-content: start; min-height: 100% }
+  .grid > * { justify-self: center; width: min(100%, var(--key)) }
 
   /* Every dimension inside a key is in cqh/cqw against the key itself, so rows
      and --fs scale the caps, body, markers and task squares together. */
@@ -199,22 +199,44 @@ const STYLE = `
   .foot i.done { background: #ffffffdd }
   .foot i.active { background: #ffffff99 }
 
-  /* The three reserved keys. Dark and quiet, like their tiles on the deck. */
+  /* The three reserved keys. Dark and quiet, like their tiles on the deck.
+     Padding in %, not cqh: this rule is on .key itself, and an element is
+     never its own container — cqh here resolved against <main>, so on a
+     landscape phone the padding came out 12.7px instead of 3.9px and squeezed
+     the usage tile's contents into 71px of a 97px key. Percentages resolve
+     against this element's own box, and the key is square. Every rule below
+     is on a *descendant*, where cqh means what it looks like it means. */
   .tile { justify-content: center; align-items: center; text-align: center;
-          padding: 4cqh; gap: 1cqh }
-  .tile .lbl { font-size: calc(var(--fs) * .72cqh); letter-spacing: .14em;
+          padding: 5%; gap: 2px }
+  /* Sized to the key, not to --fs. That slider exists to set how much of a
+     session's *title* you can read, and these three tiles hold no title — a
+     fixed count, a caps label and an age. Scaling them with it meant a font
+     chosen so four lines fit a session key overflowed a tile holding two
+     percentages, two labels and two bars, and the caps were what got cut. */
+  .tile .lbl { font-size: 9cqh; letter-spacing: .14em;
                text-transform: uppercase; color: #ffffff99; font-weight: 700 }
-  .tile .val { font-size: calc(var(--fs) * 2.4cqh); font-weight: 700; color: #fff;
+  .tile .val { font-size: 26cqh; font-weight: 700; color: #fff;
                font-variant-numeric: tabular-nums; line-height: 1 }
-  .tile .sub { font-size: calc(var(--fs) * .68cqh); color: #757575 }
+  .tile .sub { font-size: 8cqh; color: #757575 }
   .tile.alert { background: #c62828 }
   .tile.alert .sub { color: #ffffffcc }
   /* renderUsage, unchanged: two halves split by a hair line, each a caps
      label, the percentage, and one thin bar. Nothing else — this key is read
      from across a room, not studied. */
-  .usage { display: flex; flex-direction: column; width: 100%; height: 100% }
-  .usage .half { flex: 1; display: flex; flex-direction: column; align-items: center;
-                 justify-content: center; gap: 1.5cqh; padding: 0 8cqw }
+  /* align-self:stretch and flex:1, not height:100%: .tile centres its children
+     in a column of automatic height, so a percentage height had nothing to
+     resolve against and the halves fell back to sizing on their own content —
+     which then clipped, because each holds more than it had room for. The
+     whole tile is the box; these two split it. */
+  .usage { flex: 1; align-self: stretch; min-height: 0; width: 100%;
+           display: flex; flex-direction: column }
+  /* min-height:0 and the clip are what stop a short key spilling its second
+     half past the bottom edge: two percentages, two caps rows and two bars is
+     the most crowded tile on the board, and a landscape phone makes every key
+     smaller than a portrait one. */
+  .usage .half { flex: 1; min-height: 0; overflow: hidden;
+                 display: flex; flex-direction: column; align-items: center;
+                 justify-content: center; gap: 1cqh; padding: 0 7cqw }
   .usage .half + .half { border-top: 1px solid #ffffff22 }
   .usage .bar { width: 100%; height: 5cqh; min-height: 3px; border-radius: 2px;
                 background: #ffffff22; overflow: hidden }
@@ -624,28 +646,56 @@ const set = (cols, rows, fs) => {
   document.getElementById("fsv").textContent = fs;
   document.getElementById("fs").value = fs;
   document.getElementById("readout").textContent = cols + " × " + rows;
-  localStorage.setItem("deck-layout", [cols, rows, fs].join(","));
+  localStorage.setItem(slot(), [cols, rows, fs].join(","));
   clampLines();
 };
-// The first visit picks a shape from the width of the screen it landed on,
-// because five columns of a phone is unreadable and three of a landscape iPad
-// is a waste of it. Deliberately not a device test: iPadOS Safari reports a
-// Mac user-agent by default, so "is this a phone" is a question the browser
-// will lie about — while the width is the thing that was actually wrong.
-// Overwritten by the first thing you set, which is then what this screen keeps.
-// The font is a *proportion of a key*, so the deck's own 19% would be 43px on
-// a 226px tile — the deck spends that because it is 72px seen across a room,
-// and copying the ratio rather than the intent is what cut every title off at
-// three lines. 9% is ~20px there and fits five.
+// A first visit in each orientation fits itself to the screen rather than
+// guessing, and the two are remembered apart: a shape chosen in portrait is a
+// letterbox in landscape, which is what rotating an iPhone used to produce.
 //
-// A phone needs a much bigger *share* to reach the same absolute size, because
-// its key is half as tall: 15% of a 119px tile is ~18px, against 9% of 226px
-// for ~20px. Both are read from a foot away rather than across a room, so the
-// number to hold roughly constant is the one in pixels, not the ratio.
-const fits = innerWidth < 600 ? [3, 5, 15] : innerWidth < 1000 ? [4, 5, 10] : [5, 3, 9];
-const saved = (localStorage.getItem("deck-layout") || "").split(",").map(Number);
-set(saved[0] || fits[0], saved[1] || fits[1], saved[2] || fits[2]);
-addEventListener("resize", clampLines);
+// Deliberately not a device test: iPadOS Safari reports a Mac user-agent by
+// default, so "is this a phone" is a question the browser will lie about,
+// while the dimensions are the thing that was actually wrong.
+//
+// Rows come from the height and columns follow from the *key* that produces,
+// so the keys come out square and fill the width instead of being centred in
+// columns far wider than they are. The target is an absolute size — about
+// 120px on a phone, 190px on anything bigger — because a key is read from a
+// foot away whatever the screen is; the font is then the share of that key
+// which lands near 18px, for the same reason.
+const slot = () => "deck-layout-" + (innerWidth > innerHeight ? "l" : "p");
+
+function fit() {
+  const gap = 8;
+  const head = 56;
+  const target = Math.min(innerWidth, innerHeight) < 500 ? 120 : 190;
+  const h = Math.max(120, innerHeight - head - 2 * gap);
+  const w = Math.max(120, innerWidth - 2 * gap);
+  const rows = Math.max(1, Math.min(10, Math.round(h / target)));
+  const key = (h - (rows - 1) * gap) / rows;
+  const cols = Math.max(1, Math.min(12, Math.round((w + gap) / (key + gap))));
+  return [cols, rows, Math.max(5, Math.min(22, Math.round((18 / key) * 100)))];
+}
+
+// Re-read on rotate: each orientation keeps whatever it was last set to, and
+// falls back to a fresh fit the first time it is seen.
+function applySaved() {
+  const saved = (localStorage.getItem(slot()) || "").split(",").map(Number);
+  const f = fit();
+  set(saved[0] || f[0], saved[1] || f[1], saved[2] || f[2]);
+}
+let showing = slot();
+applySaved();
+// resize rather than orientationchange: the latter is deprecated and fires
+// before the new dimensions are readable on iOS, while resize covers a rotate,
+// a split-screen drag and a desktop window all at once. Only a *change of
+// orientation* re-applies a layout — every other resize just re-measures how
+// many lines of body text fit.
+addEventListener("resize", () => {
+  if (slot() === showing) return clampLines();
+  showing = slot();
+  applySaved();
+});
 
 // ---- the poll ----------------------------------------------------------
 // Replacing the grid wholesale every 2s would restart every CSS animation, so

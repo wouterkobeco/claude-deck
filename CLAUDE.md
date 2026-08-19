@@ -722,17 +722,36 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   against the tile itself, so rows and `--fs` move the caps, the body, the
   markers and the task squares together — the deck's own proportions, without a
   second layout to keep in step.
-  **A key is never taller than square**, and that cap is what makes the same
-  page work on a phone. Rows set a key's *height* and columns set its *width*,
-  and on a 390px screen those two numbers are nothing like each other — five
-  columns of it against a third of its height is a key three times taller than
-  it is wide. `grid-auto-rows` is therefore the `min()` of the row division and
-  the column's own width; on a tablet the row division is already the smaller
-  of the two and nothing changes. The first visit also picks its shape from
-  `innerWidth` (3 columns under 600px, 5 over 1000). **Deliberately not a device
-  test**: iPadOS Safari reports a Mac user-agent by default, so "is this a
-  phone" is a question the browser will lie about, while the width is the thing
-  that was actually wrong.
+  **A key is square, in both directions, on any screen.** Rows set its height
+  and columns its width, and those two numbers are nothing like each other on a
+  real device: a portrait phone makes a key three times taller than it is wide,
+  and rotating the same phone makes it a letterbox. `--key` is the `min()` of
+  the two and is used *twice* — as `grid-auto-rows` and as a `max-width` on the
+  tile, so a column wider than the key leaves space beside it rather than
+  stretching it. Capping only the height was the first attempt and fixed
+  exactly half the problem, which is the half that happens to be portrait.
+  **The layout is remembered per orientation**, and a first sight of each fits
+  itself: rows come from the height against a target key size (~120px on a
+  phone, ~190px on anything bigger), columns follow from the key that produces,
+  and the font is the share of that key landing near 18px. One shape cannot
+  serve both — 3×6 is right for a portrait phone and absurd on the same phone
+  turned sideways. Re-applied on `resize` rather than `orientationchange`: the
+  latter is deprecated and fires before iOS reports the new dimensions, and
+  only a *change of orientation* re-applies, so every other resize just
+  re-measures the line count. **Deliberately not a device test**: iPadOS Safari
+  reports a Mac user-agent by default, so "is this a phone" is a question the
+  browser will lie about, while the dimensions are the thing that was wrong.
+  **An element is never its own container**, and `.tile` *is* `.key` — so its
+  `padding: 4cqh` resolved against `<main>`, not against the key, and came out
+  12.7px instead of 3.9px on a landscape phone. That squeezed the usage tile's
+  contents into 71px of a 97px key and clipped them. Percentages there instead;
+  every other `cq` unit in this file is on a descendant, where it means what it
+  looks like it means.
+  **The reserved tiles size their type to the key, not to `--fs`.** That slider
+  sets how much of a session *title* you can read, and those three tiles hold
+  no title — a count, a caps label, an age. Scaling them with it meant a font
+  chosen so four lines fit a session key overflowed a tile carrying two
+  percentages, two labels and two bars.
   **`--lines` is renderKey's `maxLines`, measured rather than derived**, because
   only the browser knows how tall a key ended up at this rows/font pair. It is
   taken from the *smallest* body on the board, not the first one: a key carrying
