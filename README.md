@@ -141,7 +141,10 @@ does the usage key.
 
 `npm start` prints a URL and a QR code. Point a camera at it and the whole
 board is a web page on your LAN — same sessions, same colours, same 2s beat as
-the deck.
+the deck. A compacting session spins the same ring it does on a key.
+
+No Stream Deck plugged in? `npm start` still runs: it says so on its first
+line, prints the URL and QR, and serves this page with nothing else to draw on.
 
 ```
 board: http://192.168.2.28:8765/board?t=40968304-…
@@ -407,6 +410,8 @@ npm run board-shot      # re-render the deck screenshots above
 
 - MK.2 only (15 keys, 72×72), macOS only. The web board has no such limit and
   runs anywhere with a browser, but the daemon it reads from is still macOS.
+- Started without a deck, the daemon stays without one: plugging it in later
+  needs a restart.
 - Auto-triggered compactions aren't detected; only `/compact` is.
 - **Terminal focus needs the extension installed** — see "Reveal the right
   terminal" under Setup, above. Without it, a press still raises the right
