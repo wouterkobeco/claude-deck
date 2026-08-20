@@ -51,8 +51,7 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   const buttons = Array.from({ length: 13 }, (_, i) => ({ index: i, width: 72, height: 72, drawn: null }));
   // The list index.mjs actually builds: two keys per cswap account (usage,
   // resets), active first, then the version — the all-time stats left for the
-  // activity page — the back key at 10, the config key at 11, blocked-today
-  // at 12.
+  // activity page — the back key at 10, the config key at 11.
   const now = Date.parse("2026-08-20T12:00:00Z");
   const tiles = [
     ...cswapTiles(
@@ -70,14 +69,13 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   assert.deepEqual(tiles[3].rows, [{ caps: "SESSION", text: "—" }, { caps: "WEEK", text: "—" }]);
   tiles[10] = { kind: "back" };
   tiles[11] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
-  tiles[12] = { label: "Blocked today", value: "41m" };
-  assert.equal(tiles.length, 13, "the tile list fills every session slot exactly");
+  assert.equal(tiles.length, 12, "the list ends at the config key");
 
   await refreshStats(deck, buttons, tiles);
   // Two accounts plus the version fill 0..4, leaving 5–9 blank — a blank is
   // never encoded.
   const filled = tiles.filter(Boolean).length;
-  assert.equal(filled, 8);
+  assert.equal(filled, 7);
   assert.equal(written.length, filled, "every filled key is drawn on the first pass");
   assert.ok(written.every((w) => w.bytes === 72 * 72 * 4), "each one is a full RGBA key buffer");
 

@@ -131,7 +131,7 @@ depends on the extension — see Known limits.
 [claude-swap](https://github.com/realiti4/claude-swap) installed, every
 subscription it manages gets two keys, active account first and underlined:
 session / week usage, and the time until each resets. Then the daemon's
-version and how long today was spent blocked on you. `BACK` returns, as does
+version. `BACK` returns, as does
 the usage key. All-time totals live on the activity page.
 
 ![The stats board](docs/img/board-stats.png)

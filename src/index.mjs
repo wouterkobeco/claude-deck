@@ -640,15 +640,6 @@ export const DETAIL_BACK_INDEX = 10;
 // way in must not move.
 export const CONFIG_INDEX = 11;
 
-// "Blocked today" sits on the last physical key, deliberately assigned here
-// rather than appended to the tile list ahead of the back/config splice — it
-// used to be appended there, which put it at the same index DETAIL_BACK_INDEX
-// overwrites, and the tile was silently never drawn. The Activity page still
-// says more (per project, across four windows, beside a pie) — but a number
-// you can read without picking anything up is a different thing from a page
-// you have to open.
-export const BLOCKED_TODAY_INDEX = 12;
-
 // Two keys per cswap account, the active one first: its usage (the
 // bottom-right key's shape, session and week %) and its resets (same shape,
 // the time left in each window instead of a bar). Both carry the account's
@@ -2131,7 +2122,6 @@ async function run() {
         // is short, and the way out must still be on the bottom-left button.
         statTiles[DETAIL_BACK_INDEX] = { kind: "back" };
         statTiles[CONFIG_INDEX] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
-        statTiles[BLOCKED_TODAY_INDEX] = blockedTodayTile();
         await refreshStats(deck, buttons, statTiles);
         const statsSessions = await liveSessions();
         ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, statsSessions, false));

@@ -1433,11 +1433,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   full board is at-a-glance familiarity, never something you could have acted
   on — which is what lets the board stop having to fit rather than growing
   paging or collapsing projects into group keys.
-  The slot that fold gave back went to the sessions, and the stats board's
-  freed tile went to **"Blocked today"** — which is the same trade run
-  backwards, since that tile is what was dropped when the free key first took
-  the slot. It is cached 30s: `readHistory()` reads the whole log and that
-  board polls every 2s while it is up.
+  The slot that fold gave back went to the sessions. "Blocked today" had a
+  stats tile for a while and now lives only on the activity page; its
+  `blockedTodayTile` stays cached 30s because `readHistory()` reads the whole
+  log and that page's status is polled.
   `freeQueue` folds nested state exactly as `refresh` does
   (`mostUrgent([own, ...nested])`), or a session whose Agent-tool subagent is
   still running would be offered as free while its own key two rows up reads
@@ -1459,16 +1458,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   describes. `renderUsage` grew `title`/`active`/`rows` for this rather than
   a second renderer, so the usage key and these can't drift apart; a value's
   font is sized off the row rather than the key because a titled row is a
-  fifth shorter. Then the version; blocked-today at 12, back at 10, config at
-  11. Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
-  under the back key. The all-time stats, the account name and the reset pair
-  all left the deck — every one of them is on the activity page, and a
+  fifth shorter. Then the version; back at 10, config at 11, key 12 blank.
+  Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
+  under the back key. The all-time stats, the account name, the reset pair
+  and blocked-today all left the deck — every one of them is on the activity page, and a
   machine without cswap sees only the version here.
-  **`blocked-today` used to be silently overwritten by the back key.** It was
-  appended to the tile array ahead of the back/config splice, which put it at
-  the exact index `DETAIL_BACK_INDEX` overwrites — so it was built every poll
-  and never once drawn. `BLOCKED_TODAY_INDEX` (12) now assigns it after the
-  splice, the same pattern as `back`/`config` themselves.
 - **A second press means "tell me more".** Tracked as a global "was the
   immediately preceding press" check (`lastPress` against `isRepeatPress`), not
   a timeout — only the press right before this one counts, so a key from
