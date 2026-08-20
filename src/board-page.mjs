@@ -238,6 +238,11 @@ const STYLE = `
      colour is the inline one usageColor already chose. */
   .gauge i.crit { animation: gaugeflash .8s steps(1, end) infinite }
   @keyframes gaugeflash { 50% { background: #ffffff } }
+  .compact { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6cqh }
+  .compact i { width: 40cqh; height: 40cqh; border-radius: 50%; border: 4cqh solid #ffffff33; border-top-color: #fff;
+    animation: spin 5s linear infinite }
+  .compact b { font-size: 11cqh; letter-spacing: .08em; color: #ffffffdd }
+  @keyframes spin { to { transform: rotate(360deg) } }
 
   .body { flex: 1; min-height: 0; display: flex; gap: 2.5cqw;
           padding: 5cqh 4cqw 3cqh; overflow: hidden }
@@ -486,9 +491,12 @@ function tile(k, token) {
   // over its subagents, the same mostUrgent() call refresh() makes.
   const blocked = k.state === "requires_action";
   const background = blocked ? STATE_COLORS.waiting : STATE_COLORS[k.state] ?? STATE_COLORS.idle;
+  // The deck's renderCompacting: a sweeping ring and the word, no title and no
+  // gauge. CSS spins it, so the poll's diffing keeps it turning between ticks.
+  const content = k.state === "compacting" ? `<div class="compact"><i></i><b>COMPACTING</b></div>` : body(k);
   return `<div class="key${blocked ? " blocked" : ""}"${id} data-session="${esc(k.id)}" style="background:${background}">
     ${bar(k)}
-    ${body(k)}
+    ${content}
     ${
       k.squares?.length
         ? `<div class="foot">${k.squares.map((s) => `<i class="${s === "todo" ? "" : esc(s)}"></i>`).join("")}</div>`
