@@ -50,3 +50,21 @@ export async function getCswapAccounts(now = Date.now(), root = CSWAP_ROOT) {
   cache = { at: now, value };
   return value;
 }
+
+// cswap refreshes its cache on its own schedule — or not at all, when nothing
+// of it is running — while the daemon already asks the API about the active
+// subscription every five minutes. Let that answer win for the active account:
+// a live number over a cached one, and a cached one over nothing.
+export function withLiveUsage(accounts, live) {
+  return accounts.map((a) =>
+    a.active
+      ? {
+          ...a,
+          session: live.session ?? a.session,
+          week: live.week ?? a.week,
+          sessionResetsAt: live.sessionResetsAt ?? a.sessionResetsAt,
+          weekResetsAt: live.weekResetsAt ?? a.weekResetsAt,
+        }
+      : a
+  );
+}

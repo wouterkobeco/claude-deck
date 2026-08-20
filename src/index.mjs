@@ -19,7 +19,7 @@ import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-sta
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
-import { getCswapAccounts } from "./cswap.mjs";
+import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
 
 // One source of truth for the version — read from package.json rather than
 // duplicated here, so a bump is one edit. Read rather than imported with
@@ -1285,7 +1285,7 @@ export const configDeps = {
       blocked: blockedTodayTile().value,
       version: pkg.version,
       account: await getAccountName(),
-      accounts: (await getCswapAccounts()).map((a) => ({
+      accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }).map((a) => ({
         name: a.email,
         active: a.active,
         usage: {
@@ -2122,7 +2122,10 @@ async function run() {
         // nothing here fetches — so a machine without it has only the version
         // here. Sliced at the back key: four accounts is the most that fits.
         const versionTile = { label: "Version", value: pkg.version };
-        const statTiles = [...cswapTiles(await getCswapAccounts()), versionTile].slice(0, DETAIL_BACK_INDEX);
+        const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), versionTile].slice(
+          0,
+          DETAIL_BACK_INDEX
+        );
         // Same fixed slot as the detail board's back key, and assigned by
         // index rather than spliced: with an unreadable stats cache the list
         // is short, and the way out must still be on the bottom-left button.
