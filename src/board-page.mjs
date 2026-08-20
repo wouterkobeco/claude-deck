@@ -79,6 +79,19 @@ const ICONS = {
  * meant the same icon landed you somewhere else depending on where you
  * pressed it — the one thing a fixed icon bar exists to prevent.
  */
+// The tab icon, on every page. Small sizes for tabs and bookmarks, 180 for
+// iOS's home screen, 192 for Android's; each is the same renderIcon at that
+// size, so the favicon is the home-screen icon and not a second drawing.
+export const FAVICON_SIZES = [16, 32, 48, 180, 192, 512];
+export function iconLinks(token) {
+  const t = esc(token);
+  return `<link rel="manifest" href="/manifest.webmanifest?t=${t}">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?t=${t}">
+  ${[16, 32, 48, 192]
+    .map((s) => `<link rel="icon" type="image/png" sizes="${s}x${s}" href="/icon-${s}.png?t=${t}">`)
+    .join("\n  ")}`;
+}
+
 export function iconHeader(token, here, title = "Deck") {
   const t = esc(token);
   const link = (view, href, label) =>
@@ -629,9 +642,7 @@ export function boardPage(token, { keys, projects, palette, version }) {
        called two things depending on the phone it is on. -->
   <meta name="apple-mobile-web-app-title" content="Claude Deck">
   <meta name="theme-color" content="#0b0b0b">
-  <link rel="manifest" href="/manifest.webmanifest?t=${esc(token)}">
-  <link rel="apple-touch-icon" href="/icon-180.png?t=${esc(token)}">
-  <link rel="icon" href="/icon-192.png?t=${esc(token)}">
+  ${iconLinks(token)}
   <title>Claude Deck</title><style>${HEADER_CSS}${STYLE}</style></head><body>
   ${iconHeader(token, "board")}
 

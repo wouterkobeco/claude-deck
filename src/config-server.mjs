@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
 import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
-import { boardGrid, boardPage, detailPanel, iconHeader, HEADER_CSS, HEADER_SCRIPT } from "./board-page.mjs";
+import { boardGrid, boardPage, detailPanel, iconHeader, iconLinks, FAVICON_SIZES, HEADER_CSS, HEADER_SCRIPT } from "./board-page.mjs";
 import { renderIcon, usageColor } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
 
@@ -299,6 +299,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    ${iconLinks(token)}
     <style>${HEADER_CSS}${STYLE}</style></head><body>
     ${iconHeader(token, "activity", "Activity")}
     <main class="wide">
@@ -383,6 +384,7 @@ function page(token, projects) {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck config</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    ${iconLinks(token)}
     <style>${HEADER_CSS}${STYLE}</style></head><body>
     ${iconHeader(token, "accents", "Projects")}
     <main>
@@ -582,7 +584,8 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         );
       }
 
-      const icon = url.pathname.match(/^\/icon-(180|192|512)\.png$/);
+      const icon = url.pathname.match(/^\/icon-(\d+)\.png$/);
+      if (req.method === "GET" && icon && !FAVICON_SIZES.includes(Number(icon[1]))) return send(res, 404, "no such icon");
       if (req.method === "GET" && icon) {
         // Rendered once per size and held: it is three kilobytes and never
         // changes, and a home screen asks for it exactly when the network is

@@ -597,9 +597,23 @@ eq((await iconRes.arrayBuffer()).byteLength > 0, true, "with bytes in it");
 eq((await fetch(`${bBase}/icon-64.png?t=${bToken}`)).status, 404, "a size nothing asks for is not rendered on demand");
 eq((await fetch(`${bBase}/icon-180.png`)).status, 403, "and icons are gated too");
 
+// The favicon is the home-screen icon at tab sizes, on every page.
+import { FAVICON_SIZES } from "../src/board-page.mjs";
+for (const size of FAVICON_SIZES) {
+  const r = await fetch(`${bBase}/icon-${size}.png?t=${bToken}`);
+  eq(r.status, 200, `icon-${size} is served`);
+  const png = Buffer.from(await r.arrayBuffer());
+  eq(png.readUInt32BE(16), size, `and is ${size}px wide`);
+}
+const accentsPage = await (await fetch(`${bBase}/?t=${bToken}`)).text();
+for (const [name, html] of [["board", board], ["activity", act], ["accents", accentsPage]]) {
+  eq(html.includes(`rel="icon" type="image/png" sizes="32x32" href="/icon-32.png?t=${bToken}"`), true, `${name} links a 32px favicon`);
+  eq(html.includes(`rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?t=${bToken}"`), true, `${name} links the touch icon`);
+}
+
 const boardHead = board.slice(0, board.indexOf("</head>"));
 eq(boardHead.includes(`rel="manifest" href="/manifest.webmanifest?t=${bToken}"`), true, "the page links its manifest with the token");
-eq(boardHead.includes(`rel="apple-touch-icon" href="/icon-180.png?t=${bToken}"`), true, "and its apple-touch icon");
+eq(boardHead.includes(`rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?t=${bToken}"`), true, "and its apple-touch icon");
 // iOS never fires beforeinstallprompt, so the button starts hidden and the
 // instructions start visible; Android's event swaps them.
 eq(board.includes('<button id="install" hidden>'), true, "the install button is hidden until a browser offers one");
