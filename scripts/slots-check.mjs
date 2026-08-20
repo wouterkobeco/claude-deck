@@ -769,7 +769,7 @@ eq(
   // square after the done run is the running one.
   const tasked = [sess("a0", A, { progress: { current: 3, total: 5, active: true } })];
   assignSlots(tasked, bslots, bnested);
-  eq(boardTiles(tasked)[0].squares, ["done", "done", "active", "todo", "todo"], "task squares match the deck's");
+  eq(boardTiles(tasked)[0].squares.map((q) => q.state), ["done", "done", "active", "todo", "todo"], "task squares match the deck's");
 
   // An unreachable host keeps its block's place and accent and says so; it is
   // never a session tile, so nothing can try to focus it.

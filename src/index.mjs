@@ -1181,7 +1181,11 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
       context: typeof s.context === "number" ? s.context : null,
       // taskSquares already decides which square is done, active or still to
       // do; only its geometry is for an SVG, so the width here is arbitrary.
-      squares: s.progress ? taskSquares(s.progress, 100).map((q) => q.state) : [],
+      // Each square names its task (a title attribute is a tooltip for free);
+      // the subject is what the detail panel shows for it, so the two agree.
+      squares: s.progress
+        ? taskSquares(s.progress, 100).map((q, i) => ({ state: q.state, title: s.progress.subjects?.[i] ? `${i + 1}. ${s.progress.subjects[i]}` : `task ${i + 1}` }))
+        : [],
       nested: own.map((n) => n.state),
     };
   });

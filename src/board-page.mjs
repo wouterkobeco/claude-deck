@@ -514,7 +514,12 @@ function tile(k, token) {
     ${content}
     ${
       k.squares?.length
-        ? `<div class="foot">${k.squares.map((s) => `<i class="${s === "todo" ? "" : esc(s)}"></i>`).join("")}</div>`
+        ? `<div class="foot">${k.squares
+            .map((s) => {
+              const { state, title } = typeof s === "string" ? { state: s, title: "" } : s;
+              return `<i class="${state === "todo" ? "" : esc(state)}"${title ? ` title="${esc(title)}"` : ""}></i>`;
+            })
+            .join("")}</div>`
         : ""
     }
   </div>`;

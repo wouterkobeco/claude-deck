@@ -410,7 +410,7 @@ const boardKeys = [
     shell: false,
     label: '<script>alert(1)</script>',
     context: 91,
-    squares: ["done", "active", "todo"],
+    squares: ["done", { state: "active", title: '2. Fix "x"' }, "todo"],
     nested: ["busy"],
   },
   { id: "s-2", kind: "session", project: "beta", accent: ACCENTS[1], state: "idle", shell: true, label: "", context: null, squares: [], nested: [] },
@@ -610,6 +610,8 @@ for (const [name, html] of [["board", board], ["activity", act], ["accents", acc
   eq(html.includes(`rel="icon" type="image/png" sizes="32x32" href="/icon-32.png?t=${bToken}"`), true, `${name} links a 32px favicon`);
   eq(html.includes(`rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?t=${bToken}"`), true, `${name} links the touch icon`);
 }
+
+eq(grid.includes('<i class="active" title="2. Fix &quot;x&quot;"></i>'), true, "a task square carries its subject as a tooltip, escaped");
 
 const boardHead = board.slice(0, board.indexOf("</head>"));
 eq(boardHead.includes(`rel="manifest" href="/manifest.webmanifest?t=${bToken}"`), true, "the page links its manifest with the token");

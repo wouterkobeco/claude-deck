@@ -452,7 +452,10 @@ export function taskCounter(tasks) {
     active >= 0 ? numberAt(active) : doneIndexes.length ? Math.max(...doneIndexes.map(numberAt)) : 0;
   const total = useSubjects ? Math.max(...numbered) : tasks.length;
 
-  return { current, total: Math.max(current, total) };
+  // Subject per task number, so a square on the web board can name its task.
+  const subjects = [];
+  tasks.forEach((t, i) => (subjects[numberAt(i) - 1] = t.subject ?? ""));
+  return { current, total: Math.max(current, total), subjects };
 }
 
 /**

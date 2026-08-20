@@ -174,3 +174,11 @@ assert.deepEqual(ledgerTasks("# SDD ledger — plan: x.md\n\nnothing yet\n"), []
 }
 
 console.log("OK: task counter, sdd ledger");
+
+// Subjects are indexed by task *number*, the same scheme the counter uses, so
+// square 9 on the board names "Task 9" and not whatever sat ninth in the list.
+{
+  const got = taskCounter([t("Task 4: a", "completed"), t("Task 6: b", "in_progress"), t("Task 5: c")]);
+  assert.deepEqual(got.subjects[5], "Task 6: b");
+  assert.deepEqual(taskCounter([t("first"), t("second")]).subjects, ["first", "second"]);
+}
