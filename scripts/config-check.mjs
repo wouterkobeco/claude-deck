@@ -240,6 +240,10 @@ const withHistory = await createConfigServer({
     blocked: "41m",
     version: "9.9.9",
     account: "Wouter",
+    accounts: [
+      { name: "wouter@kobeco.be", active: true, usage: { session: 0, week: 29, sessionResets: "", weekResets: "6d" } },
+      { name: "claude2@denayer.com", active: false, usage: { session: 0, week: 0, sessionResets: "", weekResets: "" } },
+    ],
   }),
 });
 const hBase = new URL(withHistory.url).origin;
@@ -251,6 +255,9 @@ eq(hPage.status, 200, "and is served with it");
 const hHtml = await hPage.text();
 eq(hHtml.includes("3h12m"), true, "the numbers reach the table");
 eq(hHtml.includes('class="account">Wouter<'), true, "the account name sits under the rate-limit heading");
+eq(hHtml.includes("<h2>Accounts</h2>"), true, "cswap's accounts get their own block");
+eq(hHtml.includes('class="account active">wouter@kobeco.be · active<'), true, "the active one says so");
+eq(hHtml.split('class="limit">').length - 1, 6, "two meters for the live token and two per cswap account");
 eq(hHtml.includes("4h11m"), true, "including the total the pie is a share of");
 // One table now, following the same window picker as the charts above it.
 eq(hHtml.split('class="project"').length - 1, 2, "one row per project, in one table");
@@ -283,7 +290,7 @@ eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row p
 // Three token segments, one model bar, two session segments, two token-legend
 // swatches, four state-legend swatches — and the two rate-limit meters that
 // moved onto the top of this page, which are one fill each.
-eq(hHtml.split("<i style=").length - 1, 14, "one element per bar segment, plus the legend swatches and the two meters");
+eq(hHtml.split("<i style=").length - 1, 18, "one element per bar segment, plus the legend swatches and the six meters");
 eq(hHtml.split('class="col unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.

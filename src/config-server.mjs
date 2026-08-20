@@ -154,6 +154,7 @@ const STYLE = `
      of their own. Side by side where there is room, stacked on a phone. */
   h2.first { margin-top:6px }
   .account { font-size:12px; color:#757575; margin:-8px 0 14px }
+  .limits + .account { margin-top:18px }
   .limits { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)) }
   .limit { background:#1b1b1b; border-radius:8px; padding:16px 18px }
   .lrow { display:flex; align-items:baseline; gap:12px }
@@ -263,6 +264,18 @@ const limits = (usage) =>
     )
     .join("")}</div>`;
 
+// Every subscription claude-swap manages, each with the same two meters, read
+// off its cache. Nothing when cswap isn't installed — the block is absent, not
+// empty.
+const accounts = (list) =>
+  list.length === 0
+    ? ""
+    : `<h2>Accounts</h2>${list
+        .map(
+          (a) => `<div class="account${a.active ? " active" : ""}">${esc(a.name)}${a.active ? " · active" : ""}</div>${limits(a.usage)}`
+        )
+        .join("")}`;
+
 // Today's blocked time and the all-time totals, as a grid that reflows rather
 // than the seven-row list they were on a page of their own — they sit above
 // the charts now, and nine stacked rows would push the thing you came for
@@ -306,6 +319,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
       <h2 class="first">Rate limits</h2>
       ${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}
       ${limits(status.usage)}
+      ${accounts(status.accounts ?? [])}
       ${facts(status.blocked, status.stats)}
       <h2>Where the tokens went</h2>
       ${periodBar(token, periods, period)}

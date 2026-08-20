@@ -128,9 +128,11 @@ depends on the extension — see Known limits.
 ![The detail board](docs/img/board-detail.png)
 
 **Stats** — the usage key's second press: time until each rate-limit window
-resets, then all-time totals, how long today was spent blocked on you, and the
-daemon's own version. `BACK` returns, as
-does the usage key.
+resets, total tokens, the signed-in account, the daemon's version, then — if
+[claude-swap](https://github.com/realiti4/claude-swap) is installed — a 5h and
+7d ring for every subscription it manages, read from its cache. How long today
+was spent blocked on you sits bottom-right. `BACK` returns, as does the usage
+key.
 
 ![The stats board](docs/img/board-stats.png)
 
@@ -351,6 +353,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
+| `~/.claude-swap-backup/{sequence.json,cache/usage.json}` | every claude-swap account's 5h / 7d usage and resets, if cswap is installed — nothing is fetched |
 | `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
 | `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |
 
@@ -394,6 +397,7 @@ npm run slots-check     # project grouping / slot assignment / detail layout
 npm run tasks-check     # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check     # rate-limit parse (--live prints the raw API response)
 npm run stats-check     # stats board formatting (--live prints the real tiles)
+npm run cswap-check     # claude-swap account parsing and graceful absence
 npm run title-check     # title / cleared / blocked-on-denial / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check    # palette contrast + separation floors

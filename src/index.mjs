@@ -19,6 +19,7 @@ import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-sta
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
+import { getCswapAccounts } from "./cswap.mjs";
 
 // One source of truth for the version — read from package.json rather than
 // duplicated here, so a bump is one edit. Read rather than imported with
@@ -648,6 +649,22 @@ export const CONFIG_INDEX = 11;
 // you have to open.
 export const BLOCKED_TODAY_INDEX = 12;
 
+// One ring per rate-limit window per cswap account, captioned by the account's
+// local part — "wouter 5h" — so two subscriptions read apart at a glance. An
+// unknown window keeps its caption and shows a dash rather than an empty ring.
+export function cswapTiles(accounts) {
+  return accounts.flatMap((a) =>
+    [
+      ["5h", a.session],
+      ["7d", a.week],
+    ].map(([win, p]) => ({
+      label: `${a.name} ${win}`,
+      value: typeof p === "number" ? String(Math.round(p)) : "—",
+      ...(typeof p === "number" ? { pie: p } : {}),
+    }))
+  );
+}
+
 /**
  * Does this press mean "tell me more" about the session it lands on?
  *
@@ -1263,6 +1280,16 @@ export const configDeps = {
       blocked: blockedTodayTile().value,
       version: pkg.version,
       account: await getAccountName(),
+      accounts: (await getCswapAccounts()).map((a) => ({
+        name: a.email,
+        active: a.active,
+        usage: {
+          session: a.session,
+          week: a.week,
+          sessionResets: formatReset(a.sessionResetsAt, "hours") ?? "",
+          weekResets: formatReset(a.weekResetsAt, "days") ?? "",
+        },
+      })),
     };
   },
   // One session at length, for the panel the board's second tap opens. The
@@ -2098,9 +2125,16 @@ async function run() {
         // unfiltered) — there's room there for it beside everything else. The
         // deck's 13 keys aren't, so its slot is where the account name lands
         // instead — same position, so the board's layout doesn't shift.
-        const deckStats = (await getStats()).filter((s) => s.label !== "Active days");
-        deckStats.splice(3, 0, { label: "Account", value: (await getAccountName()) ?? "—" });
-        const statTiles = [...resetTiles, ...deckStats, versionTile];
+        const deckStats = (await getStats()).filter((s) => s.label === "Total tokens");
+        deckStats.push({ label: "Account", value: (await getAccountName()) ?? "—" });
+        // Then every subscription cswap knows about, two ring tiles each (5h,
+        // 7d). Read off cswap's own cache — nothing here fetches — so a
+        // machine without it just has empty keys there. Truncated at the back
+        // key: three accounts is the most this row can hold.
+        const statTiles = [...resetTiles, ...deckStats, versionTile, ...cswapTiles(await getCswapAccounts())].slice(
+          0,
+          DETAIL_BACK_INDEX
+        );
         // Same fixed slot as the detail board's back key, and assigned by
         // index rather than spliced: with an unreadable stats cache the list
         // is short, and the way out must still be on the bottom-left button.

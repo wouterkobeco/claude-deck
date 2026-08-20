@@ -11,6 +11,7 @@ npm run slots-check    # project grouping / slot assignment
 npm run tasks-check    # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
+npm run cswap-check    # claude-swap accounts: parsing, graceful absence
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
@@ -352,11 +353,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output; don't
   change the formatting helpers without re-checking against a real cache file.
-  It returns exactly seven tiles — `index.mjs` brackets them with the reset
-  pair, the version tile, the back key and the config key to fill all 12
-  buttons, so an eighth
-  would land under the back key and never be seen (`stats-check` pins the
-  count).
+  It returns exactly seven tiles, all of which the activity page shows; the
+  deck keeps only "Total tokens" from them (`stats-check` pins the count).
+- `src/cswap.mjs` — the other subscriptions, read off claude-swap's own files
+  (`~/.claude-swap-backup/sequence.json` for the slots and which is active,
+  `cache/usage.json` for each one's last-good 5h/7d window and reset time).
+  cswap polls the same `/api/oauth/usage` endpoint `usage.mjs` does, once per
+  stored token, so the inactive accounts' numbers are already on disk and this
+  fetches nothing and touches no credential. Both files are another tool's
+  format: any failure reads as "cswap isn't installed" and yields `[]`, which
+  the stats board draws as empty keys and the activity page as no block at all.
 - `src/vscode-state.mjs` — best-effort reader of VS Code's `state.vscdb` via the
   `sqlite3` CLI, to find a file the target window already has open. Reads an
   undocumented internal format, so *every* failure path returns `null` and the
@@ -1445,19 +1451,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   usage key it sits beside — which is also what makes the fold read cleanly,
   since the attention side going red is then the only colour that key ever
   shows.
-  The stats board fills all 13 slots exactly: two reset tiles, seven stats, the
-  version, blocked-today, the back key, the config key. An eighth stats tile
-  would push each of those one along and the last off the board entirely —
-  silently, which is what `stats-check`'s count assertion is for.
-  **One of the seven is "Account", not "Active days".** `computeStats()`
-  itself is untouched — the activity page still shows all seven, unfiltered —
-  but the deck drops "Active days" from its own copy and splices an account
-  tile into that same slot (position 3, so the rest of the board doesn't
-  visibly shift), since a 13-key board doesn't have room for both and the
-  identity of who's signed in is more often the thing you want at a glance.
-  The name comes from `getAccountName()` in `usage.mjs`, which reads it from
-  `~/.claude.json`'s `oauthAccount` — not the keychain OAuth credentials
-  `fetchUsage()` already reads, which carry the plan but not a name.
+  The stats board's fixed keys are two reset tiles, "Total tokens", the
+  account name, the version (indices 0–4), blocked-today at 12, the back key
+  at 10, the config key at 11. **Indices 5–9 are cswap's**: two ring tiles per
+  registered subscription (`cswapTiles`, "wouter 5h" / "wouter 7d"), in slot
+  order, sliced at `DETAIL_BACK_INDEX` so a fourth account falls off rather
+  than under the back key. "Favorite model", "Sessions", "Most active day",
+  "Input tokens" and "Output tokens" left the deck to make that room — all
+  still on the activity page, which has the space. The account name comes from
+  `getAccountName()` in `usage.mjs`, which reads it from `~/.claude.json`'s
+  `oauthAccount` — not the keychain OAuth credentials `fetchUsage()` already
+  reads, which carry the plan but not a name.
   **`blocked-today` used to be silently overwritten by the back key.** It was
   appended to the tile array ahead of the back/config splice, which put it at
   the exact index `DETAIL_BACK_INDEX` overwrites — so it was built every poll
