@@ -300,6 +300,7 @@ const STYLE = `
      resolve against and the halves fell back to sizing on their own content —
      which then clipped, because each holds more than it had room for. The
      whole tile is the box; these two split it. */
+  a.key { text-decoration: none; color: inherit }
   .usage { flex: 1; align-self: stretch; min-height: 0; width: 100%;
            display: flex; flex-direction: column }
   /* min-height:0 and the clip are what stop a short key spilling its second
