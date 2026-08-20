@@ -1453,8 +1453,8 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   The stats board is cswap's, active account first: two keys per registered
   subscription (`cswapTiles`) — its usage in the bottom-right key's own shape
   (session % / week %), then its resets in the same shape with the time left
-  in place of a bar — both titled with the account's local part and underlined
-  on the active one, which is the subscription the bottom-right key also
+  in place of a bar — both titled with the account's local part and bordered —
+  busy green on the active one, grey otherwise, which is the subscription the bottom-right key also
   describes. `renderUsage` grew `title`/`active`/`rows` for this rather than
   a second renderer, so the usage key and these can't drift apart; a value's
   font is sized off the row rather than the key because a titled row is a

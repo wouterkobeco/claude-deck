@@ -488,8 +488,8 @@ const GAUGE_HEIGHT = 3;
  * `session` / `week` are percentages, or null while unknown.
  */
 // `title`/`active`/`rows` are the stats board's per-account variant: a caps
-// title across the top (underlined for the active subscription, which is the
-// one the bottom-right key also describes), and rows that carry either a
+// title across the top and a border — the busy green for the active
+// subscription (the one the bottom-right key also describes), grey otherwise, and rows that carry either a
 // `pct` (a bar) or a `text` (a reset time, no bar). Without them this is the
 // usage key exactly as it always was.
 export async function renderUsage({ width, height, session, week, title, active = false, rows }) {
@@ -508,7 +508,8 @@ export async function renderUsage({ width, height, session, week, title, active 
     ? `<text x="50%" y="${titleH * 0.5}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
              letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff" text-anchor="middle"
              dominant-baseline="middle">${fitCaps(title, width, capSize)}</text>
-       ${active ? `<rect x="6" y="${titleH - 3}" width="${width - 12}" height="2" fill="#ffffff" />` : ""}`
+       <rect x="1.5" y="1.5" width="${width - 3}" height="${height - 3}" rx="4" fill="none"
+             stroke="${active ? BUSY : "#555555"}" stroke-width="3" />`
     : "";
 
   const body = rows
