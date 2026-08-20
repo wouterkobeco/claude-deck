@@ -502,7 +502,7 @@ export async function renderUsage({ width, height, session, week, title, active 
   const capSize = Math.round(height * 0.11);
   // Off the row, not the key: a titled key's rows are a fifth shorter, and a
   // value sized for the full-height row runs into its own caps.
-  const pctSize = Math.round(half * 0.52);
+  const pctSize = Math.round(half * (title ? 0.62 : 0.52));
 
   const head = title
     ? `<text x="50%" y="${titleH * 0.5}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
@@ -518,15 +518,30 @@ export async function renderUsage({ width, height, session, week, title, active 
       const shown = known ? Math.min(100, Math.max(0, Math.round(pct))) : 0;
       const barY = top + half - 7;
       const value = text !== undefined ? text : known ? shown + "%" : "—";
+      const bar =
+        text !== undefined
+          ? ""
+          : `<rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#ffffff22" />
+        <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2"
+              fill="${usageColor(shown)}" />`;
+      // Titled keys have a fifth less height, so caps and value share one
+      // line — "SESS  12%" — centred on each other, rather than stacking.
+      if (title) {
+        const y = top + (text !== undefined ? half * 0.5 : half * 0.4);
+        return `
+        <text x="6" y="${y}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+              letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" dominant-baseline="middle">${caps.slice(0, 4)}</text>
+        <text x="${width - 6}" y="${y}" font-family="sans-serif" font-size="${pctSize}" fill="#ffffff"
+              text-anchor="end" dominant-baseline="middle">${value}</text>
+        ${bar}`;
+      }
       return `
         <text x="50%" y="${top + half * 0.24}" font-family="sans-serif" font-size="${capSize}"
               font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
               dominant-baseline="middle">${caps}</text>
         <text x="50%" y="${top + half * (text !== undefined ? 0.68 : 0.6)}" font-family="sans-serif" font-size="${pctSize}"
               fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${value}</text>
-        ${text !== undefined ? "" : `<rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#ffffff22" />
-        <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2"
-              fill="${usageColor(shown)}" />`}`;
+        ${bar}`;
     })
     .join("");
 
