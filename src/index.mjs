@@ -1810,12 +1810,22 @@ async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected)
 // out. Nothing else may reach for this — every draw path is handed its deck.
 let activeDeck = null;
 
+// No deck plugged in: the board page and config server are still worth
+// running, so stand in a device with the MK.2's shape whose draws go nowhere.
+// Every draw path is handed its deck, so nothing else has to know.
+// ponytail: no hot-plug — a deck plugged in later needs a restart.
+function headlessDeck() {
+  const noop = async () => {};
+  return {
+    PRODUCT_NAME: "no Stream Deck (web board only)",
+    CONTROLS: Array.from({ length: 15 }, (_, index) => ({ type: "button", index, pixelSize: { width: 72, height: 72 } })),
+    fillKeyBuffer: noop, clearPanel: noop, close: noop, on() {},
+  };
+}
+
 async function run() {
   const devices = await listStreamDecks();
-  if (devices.length === 0) {
-    throw new Error("No Stream Deck found. Is it plugged in?");
-  }
-  const deck = await openStreamDeck(devices[0].path);
+  const deck = devices.length === 0 ? headlessDeck() : await openStreamDeck(devices[0].path);
   activeDeck = deck;
   // Read here rather than at module scope: importing this file must not touch
   // the real ~/.claude, or every check inherits this machine's live palette.
