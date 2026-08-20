@@ -525,12 +525,12 @@ export async function renderUsage({ width, height, session, week, title, active 
         <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2"
               fill="${usageColor(shown)}" />`;
       // Titled keys have a fifth less height, so caps and value share one
-      // line — "SESS  12%" — centred on each other, rather than stacking.
+      // line — "SE  12%" — centred on each other, rather than stacking.
       if (title) {
         const y = top + (text !== undefined ? half * 0.5 : half * 0.4);
         return `
         <text x="6" y="${y}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-              letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" dominant-baseline="middle">${caps.slice(0, 4)}</text>
+              letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" dominant-baseline="middle">${{ SESSION: "SE", WEEK: "WK" }[caps] ?? caps}</text>
         <text x="${width - 6}" y="${y}" font-family="sans-serif" font-size="${pctSize}" fill="#ffffff"
               text-anchor="end" dominant-baseline="middle">${value}</text>
         ${bar}`;
