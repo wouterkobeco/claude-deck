@@ -490,7 +490,8 @@ function tile(k, token) {
   // The block's colour, not this session's: `state` arrives already folded
   // over its subagents, the same mostUrgent() call refresh() makes.
   const blocked = k.state === "requires_action";
-  const background = blocked ? STATE_COLORS.waiting : STATE_COLORS[k.state] ?? STATE_COLORS.idle;
+  // compacting has no colour of its own: the deck draws it on busy's green.
+  const background = blocked ? STATE_COLORS.waiting : k.state === "compacting" ? STATE_COLORS.busy : STATE_COLORS[k.state] ?? STATE_COLORS.idle;
   // The deck's renderCompacting: a sweeping ring and the word, no title and no
   // gauge. CSS spins it, so the poll's diffing keeps it turning between ticks.
   const content = k.state === "compacting" ? `<div class="compact"><i></i><b>COMPACTING</b></div>` : body(k);

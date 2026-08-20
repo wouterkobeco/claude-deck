@@ -690,3 +690,15 @@ eq(lanAddress({ lo0: [{ family: "IPv4", address: "127.0.0.1", internal: true }],
 eq(lanAddress({}), null, "no interfaces at all is null, not a throw");
 
 console.log("OK: token gate, palette and folder validation, escaping, swatch count, redirect, reorder, activity page and charts, board page, detail panel, shared header, focus and lanAddress");
+
+// A compacting tile: busy green with the spinning ring, never idle grey with a
+// bare word (STATE_COLORS has no `compacting` entry, so the lookup fell through).
+{
+  const { boardGrid } = await import("../src/board-page.mjs");
+  const { STATE_COLORS } = await import("../src/render.mjs");
+  const html = boardGrid([{ id: "abc", kind: "session", state: "compacting", label: "x", project: "p", accent: "#fff" }], "t");
+  if (!html.includes(`background:${STATE_COLORS.busy}`) || !html.includes('class="compact"')) {
+    console.error("FAIL: compacting tile", html);
+    process.exit(1);
+  }
+}
