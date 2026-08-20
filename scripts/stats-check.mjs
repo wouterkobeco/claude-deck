@@ -49,34 +49,35 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   const written = [];
   const deck = { fillKeyBuffer: (index, buf) => written.push({ index, bytes: buf.length }) };
   const buttons = Array.from({ length: 13 }, (_, i) => ({ index: i, width: 72, height: 72, drawn: null }));
-  // The list index.mjs actually builds: two reset tiles, "Total tokens", the
-  // account name, the version, then two ring tiles per cswap account — the
-  // other five stats left for the activity page to make that room — the back
-  // key at 10, the config key at 11, blocked-today at 12.
-  const deckStats = stats.filter((s) => s.label === "Total tokens");
-  deckStats.push({ label: "Account", value: "Wouter" });
-  const rings = cswapTiles([
-    { name: "wouter", session: 12, week: 29.4 },
-    { name: "claude2", session: null, week: 0 },
-  ]);
-  assert.deepEqual(rings[1], { label: "wouter 7d", value: "29", pie: 29.4 });
-  assert.deepEqual(rings[2], { label: "claude2 5h", value: "—" }, "an unknown window is a dash, not an empty ring");
-  deckStats.push(...rings);
+  // The list index.mjs actually builds: two keys per cswap account (usage,
+  // resets), active first, then the version — the all-time stats left for the
+  // activity page — the back key at 10, the config key at 11, blocked-today
+  // at 12.
+  const now = Date.parse("2026-08-20T12:00:00Z");
   const tiles = [
-    { label: "Session reset", value: "3h" },
-    { label: "Week reset", value: "5d" },
-    ...deckStats,
+    ...cswapTiles(
+      [
+        { name: "wouter", active: true, session: 12, week: 29.4, sessionResetsAt: "2026-08-20T15:00:00Z", weekResetsAt: "2026-08-26T06:00:00Z" },
+        { name: "claude2", active: false, session: null, week: 0, sessionResetsAt: null, weekResetsAt: null },
+      ],
+      now
+    ),
     { label: "Version", value: "9.9.9" },
   ];
+  assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "6d" }]);
+  assert.equal(tiles[0].active, true);
+  assert.deepEqual(tiles[2].rows[0], { caps: "SESSION", pct: null }, "an unknown window is a dash, not zero");
+  assert.deepEqual(tiles[3].rows, [{ caps: "SESSION", text: "—" }, { caps: "WEEK", text: "—" }]);
   tiles[10] = { kind: "back" };
   tiles[11] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
   tiles[12] = { label: "Blocked today", value: "41m" };
   assert.equal(tiles.length, 13, "the tile list fills every session slot exactly");
 
   await refreshStats(deck, buttons, tiles);
-  // Two accounts fill 0..8, leaving key 9 blank — a blank is never encoded.
+  // Two accounts plus the version fill 0..4, leaving 5–9 blank — a blank is
+  // never encoded.
   const filled = tiles.filter(Boolean).length;
-  assert.equal(filled, 12);
+  assert.equal(filled, 8);
   assert.equal(written.length, filled, "every filled key is drawn on the first pass");
   assert.ok(written.every((w) => w.bytes === 72 * 72 * 4), "each one is a full RGBA key buffer");
 
@@ -92,9 +93,9 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   const short = [];
   short[10] = { kind: "back" };
   await refreshStats(deck, buttons, short);
-  // Eleven: the back key's signature is identical across the two lists and
-  // key 9 was already blank, so the diff leaves those two alone. Everything
-  // else blanks.
+  // The back key's signature is identical across the two lists and the blank
+  // keys were already blank, so the diff leaves those alone. Everything else
+  // blanks.
   assert.equal(written.length, filled - 1, "every key that changed is repainted");
   assert.deepEqual(buttons.map((b) => b.drawn).filter(Boolean), ['stat {"kind":"back"}'],
     "and only the way out is left drawn");

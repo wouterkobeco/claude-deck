@@ -487,37 +487,53 @@ const GAUGE_HEIGHT = 3;
  * Usage key: the two rate-limit windows Claude Code's /usage reports, stacked.
  * `session` / `week` are percentages, or null while unknown.
  */
-export async function renderUsage({ width, height, session, week }) {
-  const half = height / 2;
-  const rows = [
-    { caps: "SESSION", pct: session, top: 0 },
-    { caps: "WEEK", pct: week, top: half },
-  ];
+// `title`/`active`/`rows` are the stats board's per-account variant: a caps
+// title across the top (underlined for the active subscription, which is the
+// one the bottom-right key also describes), and rows that carry either a
+// `pct` (a bar) or a `text` (a reset time, no bar). Without them this is the
+// usage key exactly as it always was.
+export async function renderUsage({ width, height, session, week, title, active = false, rows }) {
+  const titleH = title ? Math.round(height * 0.18) : 0;
+  const half = (height - titleH) / 2;
+  rows = (rows ?? [
+    { caps: "SESSION", pct: session },
+    { caps: "WEEK", pct: week },
+  ]).map((r, i) => ({ ...r, top: titleH + i * half }));
   const capSize = Math.round(height * 0.11);
-  const pctSize = Math.round(height * 0.26);
+  // Off the row, not the key: a titled key's rows are a fifth shorter, and a
+  // value sized for the full-height row runs into its own caps.
+  const pctSize = Math.round(half * 0.52);
+
+  const head = title
+    ? `<text x="50%" y="${titleH * 0.5}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
+             letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff" text-anchor="middle"
+             dominant-baseline="middle">${fitCaps(title, width, capSize)}</text>
+       ${active ? `<rect x="6" y="${titleH - 3}" width="${width - 12}" height="2" fill="#ffffff" />` : ""}`
+    : "";
 
   const body = rows
-    .map(({ caps, pct, top }) => {
+    .map(({ caps, pct, text, top }) => {
       const known = typeof pct === "number";
       const shown = known ? Math.min(100, Math.max(0, Math.round(pct))) : 0;
       const barY = top + half - 7;
+      const value = text !== undefined ? text : known ? shown + "%" : "—";
       return `
-        <text x="50%" y="${top + half * 0.26}" font-family="sans-serif" font-size="${capSize}"
+        <text x="50%" y="${top + half * 0.24}" font-family="sans-serif" font-size="${capSize}"
               font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
               dominant-baseline="middle">${caps}</text>
-        <text x="50%" y="${top + half * 0.62}" font-family="sans-serif" font-size="${pctSize}"
-              fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${known ? shown + "%" : "—"}</text>
-        <rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#ffffff22" />
+        <text x="50%" y="${top + half * (text !== undefined ? 0.68 : 0.6)}" font-family="sans-serif" font-size="${pctSize}"
+              fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${value}</text>
+        ${text !== undefined ? "" : `<rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#ffffff22" />
         <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2"
-              fill="${usageColor(shown)}" />`;
+              fill="${usageColor(shown)}" />`}`;
     })
     .join("");
 
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="#1b1b1b" />
-      <rect y="${half - 1}" width="${width}" height="1" fill="#ffffff22" />
-      ${body}
+      <rect y="${titleH + half - 1}" width="${width}" height="1" fill="#ffffff22" />
+      ${head}${body}
     </svg>`;
 
   return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();

@@ -649,20 +649,25 @@ export const CONFIG_INDEX = 11;
 // you have to open.
 export const BLOCKED_TODAY_INDEX = 12;
 
-// One ring per rate-limit window per cswap account, captioned by the account's
-// local part — "wouter 5h" — so two subscriptions read apart at a glance. An
-// unknown window keeps its caption and shows a dash rather than an empty ring.
-export function cswapTiles(accounts) {
-  return accounts.flatMap((a) =>
-    [
-      ["5h", a.session],
-      ["7d", a.week],
-    ].map(([win, p]) => ({
-      label: `${a.name} ${win}`,
-      value: typeof p === "number" ? String(Math.round(p)) : "—",
-      ...(typeof p === "number" ? { pie: p } : {}),
-    }))
-  );
+// Two keys per cswap account, the active one first: its usage (the
+// bottom-right key's shape, session and week %) and its resets (same shape,
+// the time left in each window instead of a bar). Both carry the account's
+// local part as a title, underlined on the active subscription so the pair
+// the usage key is also talking about reads apart from the rest.
+export function cswapTiles(accounts, now = Date.now()) {
+  return accounts.flatMap((a) => {
+    const head = { kind: "usage", title: a.name, active: a.active };
+    return [
+      { ...head, rows: [{ caps: "SESSION", pct: a.session }, { caps: "WEEK", pct: a.week }] },
+      {
+        ...head,
+        rows: [
+          { caps: "SESSION", text: formatReset(a.sessionResetsAt, "hours", now) ?? "—" },
+          { caps: "WEEK", text: formatReset(a.weekResetsAt, "days", now) ?? "—" },
+        ],
+      },
+    ];
+  });
 }
 
 /**
@@ -1065,7 +1070,7 @@ export async function refreshStats(deck, buttons, stats) {
       // board does it. They carry their own glyph/caps, which `...stat` hands
       // straight to renderBack — and which JSON.stringify(stat) above already
       // signs, so neither needs a branch of its own here.
-      const render = stat.kind === "back" || stat.kind === "config" ? renderBack : renderStat;
+      const render = stat.kind === "back" || stat.kind === "config" ? renderBack : stat.kind === "usage" ? renderUsage : renderStat;
       await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...stat, big: true }), { format: "rgba" });
       btn.drawn = drawn;
     })
@@ -2112,29 +2117,12 @@ async function run() {
   while (!disconnected) {
     try {
       if (view.kind === "stats") {
-        // Top-left pair: time left in each rate-limit window, ahead of the
-        // all-time totals — these change by the hour/day, the totals barely
-        // move. Session in hours (it resets within a day), week in days.
-        const { sessionResetsAt, weekResetsAt } = await getUsage();
-        const resetTiles = [
-          { label: "Session reset", value: formatReset(sessionResetsAt, "hours") ?? "—" },
-          { label: "Week reset", value: formatReset(weekResetsAt, "days") ?? "—" },
-        ];
+        // Every subscription cswap knows about, active first, two keys each
+        // (usage, resets), then the version. Read off cswap's own cache —
+        // nothing here fetches — so a machine without it has only the version
+        // here. Sliced at the back key: four accounts is the most that fits.
         const versionTile = { label: "Version", value: pkg.version };
-        // "Active days" stays on the activity page (getStats() feeds that too,
-        // unfiltered) — there's room there for it beside everything else. The
-        // deck's 13 keys aren't, so its slot is where the account name lands
-        // instead — same position, so the board's layout doesn't shift.
-        const deckStats = (await getStats()).filter((s) => s.label === "Total tokens");
-        deckStats.push({ label: "Account", value: (await getAccountName()) ?? "—" });
-        // Then every subscription cswap knows about, two ring tiles each (5h,
-        // 7d). Read off cswap's own cache — nothing here fetches — so a
-        // machine without it just has empty keys there. Truncated at the back
-        // key: three accounts is the most this row can hold.
-        const statTiles = [...resetTiles, ...deckStats, versionTile, ...cswapTiles(await getCswapAccounts())].slice(
-          0,
-          DETAIL_BACK_INDEX
-        );
+        const statTiles = [...cswapTiles(await getCswapAccounts()), versionTile].slice(0, DETAIL_BACK_INDEX);
         // Same fixed slot as the detail board's back key, and assigned by
         // index rather than spliced: with an unreadable stats cache the list
         // is short, and the way out must still be on the bottom-left button.

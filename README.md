@@ -127,12 +127,12 @@ depends on the extension — see Known limits.
 
 ![The detail board](docs/img/board-detail.png)
 
-**Stats** — the usage key's second press: time until each rate-limit window
-resets, total tokens, the signed-in account, the daemon's version, then — if
-[claude-swap](https://github.com/realiti4/claude-swap) is installed — a 5h and
-7d ring for every subscription it manages, read from its cache. How long today
-was spent blocked on you sits bottom-right. `BACK` returns, as does the usage
-key.
+**Stats** — the usage key's second press. With
+[claude-swap](https://github.com/realiti4/claude-swap) installed, every
+subscription it manages gets two keys, active account first and underlined:
+session / week usage, and the time until each resets. Then the daemon's
+version and how long today was spent blocked on you. `BACK` returns, as does
+the usage key. All-time totals live on the activity page.
 
 ![The stats board](docs/img/board-stats.png)
 

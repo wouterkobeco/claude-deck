@@ -16,7 +16,9 @@ const pct = (w) => (typeof w?.pct === "number" ? w.pct : null);
 export function parseCswap(sequence, usage) {
   const active = String(sequence?.activeAccountNumber ?? "");
   return Object.entries(sequence?.accounts ?? {})
-    .sort(([a], [b]) => Number(a) - Number(b))
+    // Active first — it's the one the usage key already describes, so it
+    // leads everywhere it's listed — then slot order.
+    .sort(([a], [b]) => (b === active) - (a === active) || Number(a) - Number(b))
     .map(([slot, acct]) => {
       const good = usage?.accounts?.[slot]?.lastGood ?? {};
       const email = typeof acct?.email === "string" ? acct.email : `slot ${slot}`;

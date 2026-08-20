@@ -353,8 +353,8 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output; don't
   change the formatting helpers without re-checking against a real cache file.
-  It returns exactly seven tiles, all of which the activity page shows; the
-  deck keeps only "Total tokens" from them (`stats-check` pins the count).
+  It returns exactly seven tiles, all of which the activity page shows; none
+  are on the deck any more (`stats-check` pins the count).
 - `src/cswap.mjs` — the other subscriptions, read off claude-swap's own files
   (`~/.claude-swap-backup/sequence.json` for the slots and which is active,
   `cache/usage.json` for each one's last-good 5h/7d window and reset time).
@@ -1451,17 +1451,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   usage key it sits beside — which is also what makes the fold read cleanly,
   since the attention side going red is then the only colour that key ever
   shows.
-  The stats board's fixed keys are two reset tiles, "Total tokens", the
-  account name, the version (indices 0–4), blocked-today at 12, the back key
-  at 10, the config key at 11. **Indices 5–9 are cswap's**: two ring tiles per
-  registered subscription (`cswapTiles`, "wouter 5h" / "wouter 7d"), in slot
-  order, sliced at `DETAIL_BACK_INDEX` so a fourth account falls off rather
-  than under the back key. "Favorite model", "Sessions", "Most active day",
-  "Input tokens" and "Output tokens" left the deck to make that room — all
-  still on the activity page, which has the space. The account name comes from
-  `getAccountName()` in `usage.mjs`, which reads it from `~/.claude.json`'s
-  `oauthAccount` — not the keychain OAuth credentials `fetchUsage()` already
-  reads, which carry the plan but not a name.
+  The stats board is cswap's, active account first: two keys per registered
+  subscription (`cswapTiles`) — its usage in the bottom-right key's own shape
+  (session % / week %), then its resets in the same shape with the time left
+  in place of a bar — both titled with the account's local part and underlined
+  on the active one, which is the subscription the bottom-right key also
+  describes. `renderUsage` grew `title`/`active`/`rows` for this rather than
+  a second renderer, so the usage key and these can't drift apart; a value's
+  font is sized off the row rather than the key because a titled row is a
+  fifth shorter. Then the version; blocked-today at 12, back at 10, config at
+  11. Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
+  under the back key. The all-time stats, the account name and the reset pair
+  all left the deck — every one of them is on the activity page, and a
+  machine without cswap sees only the version here.
   **`blocked-today` used to be silently overwritten by the back key.** It was
   appended to the tile array ahead of the back/config splice, which put it at
   the exact index `DETAIL_BACK_INDEX` overwrites — so it was built every poll
