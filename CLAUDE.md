@@ -712,18 +712,32 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **`PERIODS` in `index.mjs` is the whole window feature** —
   12h/24h/7d/30d/3mo/6mo/1y/all-time, each with the bucket it groups into,
   chosen to keep the column count in the 24–52 band (fewer and a bar chart is
-  a table; more and the columns are thinner than the gaps) — except 12h,
-  which is inherently under that band at 12 columns: it halves 24h at the
-  same hourly step, and there's no finer unit than an hour to make up the
-  difference since the stored records are hourly, so a short window is just
-  a short chart. 6mo is 3mo doubled at double the step (4 days rather than
-  2), landing back on 3mo's own 45 columns rather than drifting past 52. 1y
-  is a capped year at "all"'s own weekly step (53 columns); "all" itself is
-  whatever is actually open-ended past a year. Every other step is a whole
-  number of
-  hours because the stored records *are* hourly, so changing window is a
-  regrouping rather than a re-read — that is why a year of history costs the
-  same page load as a day. The window arrives as `?p=`, and the page renders
+  a table; more and the columns are thinner than the gaps). 6mo is 3mo
+  doubled at double the step (4 days rather than 2), landing back on 3mo's
+  own 45 columns rather than drifting past 52. 1y is a capped year at "all"'s
+  own weekly step (53 columns); "all" itself is whatever is actually
+  open-ended past a year. Every other step is a whole number of hours because
+  the stored records *are* hourly, so changing window is a regrouping rather
+  than a re-read — that is why a year of history costs the same page load as
+  a day.
+  **12h is the one period whose step goes below an hour** (15 minutes, 48
+  columns) — short enough that sub-hour resolution actually shows something a
+  coarser bar wouldn't, and the concurrency/memory series can genuinely
+  provide it: `concurrency` buckets at whatever `step` it's given with no
+  floor of its own, and `memorySeries`'s floor is `TICK_MS` (5 minutes, the
+  tick's own cadence) rather than an hour. Tokens can't follow: a transcript's
+  usage is logged in whole-hour buckets (`summariseTokens`'s own floor), so
+  its chart stays 12 columns regardless of what `step` asks for. That split
+  is why `activity()` carries **two** tick functions rather than one —
+  `tickAt` for concurrency/memory, sized off the real `step`, and
+  `tokenTickAt`, sized off `tokenStep` (`step` re-floored to the hour the
+  same way `summariseTokens` floors its own buckets) — because sharing one
+  would label the token chart's axis for 48 columns it doesn't have, using a
+  `cols` count computed for a bucket size tokens were never going to use.
+  `unit` (the token peak's "peak X/‹unit›" label) stays `"h"` for 12h rather
+  than `"15m"`, for the same reason: the number really is a peak-per-hour,
+  regardless of what the period's own headline step is. The window arrives
+  as `?p=`, and the page renders
   whichever one `activity()` says it *used* rather than the one that was
   asked for, so an edited URL cannot produce a picker that disagrees with the
   charts under it. Coarse buckets sample concurrency proportionally coarser

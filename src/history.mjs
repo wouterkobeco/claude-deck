@@ -318,9 +318,14 @@ export function concurrency(records, from, to, now, step = 3600000) {
  * each bucket, not the mean — a day-wide bar that averages a two-hour swap
  * storm into 30% has hidden the thing the chart is for. `samples` is 0 for a
  * bucket no tick carried memory through, which draws as unseen.
+ *
+ * Floored at `TICK_MS`, not at an hour: a tick lands every 5 minutes, so
+ * that's the finest a bucket can mean anything at, and it's what lets the
+ * 12h period ask for 15-minute buckets here instead of being forced to the
+ * same hourly resolution tokens are stuck with.
  */
 export function memorySeries(records, from, to, step = 3600000, host = null) {
-  const size = Math.max(3600000, Math.round(step / 3600000) * 3600000);
+  const size = Math.max(TICK_MS, Math.round(step / TICK_MS) * TICK_MS);
   const start = Math.floor(from / size) * size;
   const buckets = new Map();
   for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, totalMb: null, swapTotalMb: null, claudeMb: 0, claudeCount: 0, samples: 0 });

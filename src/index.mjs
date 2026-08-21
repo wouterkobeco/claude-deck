@@ -13,7 +13,7 @@ import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
 import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
-import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
+import { collectTokens, compactTokens, earliestBucket, groupTokens, HOUR_MS, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
@@ -1477,6 +1477,16 @@ export const configDeps = {
     // clock, so the rightmost column is always named and the labels don't
     // shuffle as the window slides.
     const tickAt = (i) => ((cols - 1 - i) % every === 0 ? format(new Date(from + i * step)) : "");
+    // Tokens never bucket finer than an hour — `summariseTokens` floors to it
+    // regardless of `step` — so a period whose own step goes sub-hourly (12h,
+    // at 15 minutes, for the concurrency and memory charts) would otherwise
+    // hand the token/input charts a `tickAt` built for four times as many
+    // columns as they actually have. A second tick function, floored the same
+    // way `summariseTokens` floors its buckets, is what keeps their axis
+    // labels naming the column that's actually there.
+    const tokenStep = Math.max(HOUR_MS, Math.round(step / HOUR_MS) * HOUR_MS);
+    const tokenCols = Math.max(1, Math.ceil((now - from) / tokenStep));
+    const tokenTickAt = (i) => ((tokenCols - 1 - i) % every === 0 ? format(new Date(from + i * tokenStep)) : "");
     // Bars are a percentage of the busiest column, not of a fixed ceiling:
     // these series span three orders of magnitude between a quiet hour and a
     // fan-out, and anything absolute draws every ordinary column as a sliver.
@@ -1500,7 +1510,7 @@ export const configDeps = {
       providers,
       cols: perBucket.map((r, i) => ({
         label: title(new Date(r.hour)),
-        tick: tickAt(i),
+        tick: tokenTickAt(i),
         bars: providers
           .filter((v) => r.outBy[v])
           .map((v) => ({ state: v, pct: (r.outBy[v] / peakOut) * 100 })),
@@ -1524,7 +1534,7 @@ export const configDeps = {
       peak: `${compactCount(peakIn)}/${unit}`,
       cols: perBucket.map((r, i) => ({
         label: title(new Date(r.hour)),
-        tick: tickAt(i),
+        tick: tokenTickAt(i),
         bars: INPUT_KINDS.filter(([, f]) => f(r)).map(([state, f]) => ({ state, pct: (f(r) / peakIn) * 100 })),
         value: inputOf(r) ? INPUT_KINDS.filter(([, f]) => f(r)).map(([k, f]) => `${k} ${compactCount(f(r))}`).join(" · ") : "—",
       })),
@@ -1617,11 +1627,15 @@ export const configDeps = {
 // the labels themselves land on something meaningful: a day boundary at 6h
 // buckets, roughly a working week at daily ones.
 const PERIODS = {
-  // Half of "24h" at the same hourly step, so it's inherently below the
-  // 24-column band that comment describes further down — there's no finer
-  // unit than an hour to make up the difference, since the stored records
-  // are hourly. A short window is just a short chart.
-  "12h": { name: "12 hours", span: 12 * 3600000, step: 3600000, unit: "h", every: 3,
+  // 15-minute buckets rather than hourly: this is the one period short
+  // enough that sub-hour resolution actually shows something a coarser bar
+  // wouldn't (a 15-minute fan-out is a whole column here, a sliver of an
+  // hourly one). `unit` stays "h", not "15m" — the token/input charts still
+  // bucket hourly regardless (`summariseTokens`'s own floor), so their peak
+  // label has to keep describing what they actually show; only the
+  // concurrency and memory charts, sampled every 5 minutes, get the finer
+  // step. 48 columns (12h / 15m), comfortably inside the 24-52 band.
+  "12h": { name: "12 hours", span: 12 * 3600000, step: 900000, unit: "h", every: 4,
     format: (d) => `${d.getHours()}h`,
     title: (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
   "24h": { name: "24 hours", span: 24 * 3600000, step: 3600000, unit: "h", every: 3,

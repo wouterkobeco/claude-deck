@@ -226,6 +226,14 @@ console.log("OK: change-only records, closing records, duration and clipping, re
   ])) { console.error("FAILED memorySeries", series); process.exit(1); }
   const pi = memorySeries(recs, H0, H0 + 3600000, 3600000, "pi");
   if (pi[0].pressure !== 88 || pi[0].samples !== 1 || pi[0].claudeMb !== 300) { console.error("FAILED memorySeries host", pi); process.exit(1); }
+  // The floor is TICK_MS, not an hour — 12h's own 15-minute step relies on
+  // this, and a sub-hour request has to actually produce sub-hour buckets
+  // rather than being silently rounded back up.
+  const fine = memorySeries(recs, H0, H0 + 3 * TICK_MS, TICK_MS);
+  if (fine.length !== 3 || fine[0].pressure !== 30 || fine[1].pressure !== 75 || fine[2].samples !== 0) {
+    console.error("FAILED memorySeries sub-hour", fine);
+    process.exit(1);
+  }
   if (JSON.stringify(memoryHosts(recs)) !== '["pi"]') { console.error("FAILED memoryHosts"); process.exit(1); }
   const dir = mkdtempSync(join(tmpdir(), "hist-"));
   recordTick(H0, dir, { pressure: 41.6, swap: 93.2, claude: { mb: 5400, count: 17 } }, { pi: { pressure: 88.2, swap: null }, dead: null });
