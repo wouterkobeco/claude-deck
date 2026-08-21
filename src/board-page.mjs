@@ -485,6 +485,12 @@ function tile(k, token) {
       k.session
     )}${usageHalf("Week", k.week)}</div></a>`;
   }
+  if (k.kind === "memory") {
+    return `<a class="key dark tile alert" href="/activity?t=${esc(token)}"${id}>
+      <div class="val">${esc(k.pct)}%</div>
+      <div class="lbl">memory</div>
+    </a>`;
+  }
   if (k.kind === "attention" || k.kind === "free") {
     const alert = k.kind === "attention" && k.count > 0;
     return `<div class="key dark tile${alert ? " alert" : ""}"${id}>

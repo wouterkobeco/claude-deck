@@ -885,7 +885,22 @@ async function drawStatus(deck, btn, sessions, pulse) {
   const now = Date.now() / 1000;
   const attention = attentionQueue(sessions, now);
   const free = freeQueue(sessions, now);
-  const { kind, count, longest } = statusKey(attention, free, now);
+  const { kind, count, longest, pct } = statusKey(attention, free, now, (await getMemory()).pressure);
+
+  if (kind === "memory") {
+    // The attention key's own shape and red, with the pressure where the
+    // count goes; the blink window is keyed on crossing the line, not on the
+    // number moving. `count` is a string so the quiet-at-zero rule stays off.
+    btn.renderParams = { count: `${pct}%`, longest: "", label: "MEMORY" };
+    if (!btn.lastCount) btn.blinkUntil = Date.now() + ATTENTION_BLINK_MS;
+    btn.lastCount = 1;
+    const drawn = `memory ${pct} ${pulse}`;
+    if (btn.drawn !== drawn) {
+      await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, ...btn.renderParams, pulse }), { format: "rgba" });
+      btn.drawn = drawn;
+    }
+    return { attention: 0, free: free.length, memory: true };
+  }
 
   if (kind === "attention") {
     btn.renderParams = { count, longest };
@@ -928,11 +943,17 @@ async function drawStatus(deck, btn, sessions, pulse) {
  * `now` is an argument rather than a clock read, like `summarise`'s: the age
  * it reports is the only thing here that could quietly start lying.
  */
-export function statusKey(attention, free, now) {
+export const MEMORY_ALERT_PCT = 70;
+
+export function statusKey(attention, free, now, memoryPressure = null) {
   const oldest = (q) => (q.length && q[0].ts ? formatAge(now - q[0].ts) : "");
-  return attention.length > 0
-    ? { kind: "attention", count: attention.length, longest: oldest(attention) }
-    : { kind: "free", count: free.length, longest: oldest(free) };
+  if (attention.length > 0) return { kind: "attention", count: attention.length, longest: oldest(attention) };
+  // Between the two queues: sessions blocked on you still come first, but a
+  // machine about to swap itself to a halt outranks "where can I start the
+  // next thing". `pct` rather than `count` so no board mistakes it for one.
+  if (typeof memoryPressure === "number" && memoryPressure > MEMORY_ALERT_PCT)
+    return { kind: "memory", pct: Math.round(memoryPressure) };
+  return { kind: "free", count: free.length, longest: oldest(free) };
 }
 
 // One queue drawn across the session keys, the shape attention/free/busy all
@@ -1221,7 +1242,7 @@ async function boardKeys() {
   return [
     ...keys,
     { id: "__usage", kind: "usage", session, week },
-    { id: "__status", ...statusKey(attention, free, now) },
+    { id: "__status", ...statusKey(attention, free, now, (await getMemory()).pressure) },
   ];
 }
 
@@ -1816,7 +1837,7 @@ async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected)
             // btn.drawn, so without that settle write the key could freeze on
             // whatever bright frame the last in-window tick left behind.
             const params = statusButton.renderParams;
-            const blinking = params?.count > 0 && Date.now() < (statusButton.blinkUntil ?? 0);
+            const blinking = !!params?.count && params.count !== 0 && Date.now() < (statusButton.blinkUntil ?? 0);
             if (!params || (!blinking && !statusButton.blinkSettle)) return [];
             statusButton.blinkSettle = blinking;
             return [
@@ -1913,6 +1934,7 @@ async function run() {
   // The same, for the free key. Read by its press handler so a dark key with
   // nothing free opens nothing rather than an empty board.
   let freeCount = 0;
+  let memoryAlert = false;
   // The same again, for the busy board the status key reaches by continuing
   // past free rather than exiting — the third leg of its own cycle.
   let busyCount = 0;
@@ -2064,6 +2086,8 @@ async function run() {
       // rather than a board the key never mentioned. Both counts come from
       // the last drawStatus().
       if (attentionCount > 0) setView({ kind: "attention" });
+      // The memory alert opens the stats board, where the memory key lives.
+      else if (memoryAlert) setView({ kind: "stats" });
       else if (freeCount > 0) setView({ kind: "free" });
       // Nothing to open: it changes no view, so it clears the chain itself —
       // a key that does nothing must still count as "something else in
@@ -2130,9 +2154,9 @@ async function run() {
         statTiles[CONFIG_INDEX] = { kind: "config", glyph: "⚙", caps: "CONFIG" };
         await refreshStats(deck, buttons, statTiles);
         const statsSessions = await liveSessions();
-        ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, statsSessions, false));
+        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await drawStatus(deck, statusButton, statsSessions, false));
       } else if (view.kind === "free") {
-        ({ attention: attentionCount, free: freeCount } = await refreshFree(deck, buttons, statusButton));
+        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await refreshFree(deck, buttons, statusButton));
         // Same exit as the attention board, for the same reason: a drained
         // queue is twelve dark keys and a dim BUSY key, which at a glance is
         // the daemon having died. Guarded on the view still being this one —
@@ -2141,7 +2165,7 @@ async function run() {
         if (freeCount === 0 && view.kind === "free") {
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
-          ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
+          ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
       } else if (view.kind === "busy") {
         ({ attention: attentionCount, free: freeCount, busy: busyCount } = await refreshBusy(deck, buttons, statusButton));
@@ -2151,10 +2175,10 @@ async function run() {
         if (busyCount === 0 && view.kind === "busy") {
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
-          ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
+          ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
       } else if (view.kind === "attention") {
-        ({ attention: attentionCount, free: freeCount } = await refreshAttention(deck, buttons, statusButton));
+        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await refreshAttention(deck, buttons, statusButton));
         // The queue re-sorts while it's up so an unblocked session leaves it;
         // when the last one clears, you should leave too — otherwise a
         // drained queue is thirteen dark keys plus a dim CLEAR key,
@@ -2173,7 +2197,7 @@ async function run() {
           // just shorter. refresh() already calls getLiveSessions() once;
           // reuse its return rather than querying again.
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
-          ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
+          ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
       } else if (view.kind === "detail") {
         const detailSessions = await refreshDetail(deck, allKeys, view);
@@ -2185,7 +2209,7 @@ async function run() {
           // it forever, repainting the same tick for the same reason.
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
-          ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
+          ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
         // No drawAttention, no drawFree, and no drawUsage below: the detail board owns
         // all 15 keys, so anything else painting keys 12, 13 and 14 fights it
@@ -2194,7 +2218,7 @@ async function run() {
         // gates is on the attention key, which is a detail tile right now.
       } else {
         const sessions = await refresh(deck, buttons, slots, nestedBySlot);
-        ({ attention: attentionCount, free: freeCount } = await drawStatus(deck, statusButton, sessions, false));
+        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         // One read serves both: the coverage log below, and `everActive` —
         // `isRepeatPress` needs a session ever reported active by *some* poll,
         // not just this one, so it's accumulated rather than replaced.

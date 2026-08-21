@@ -561,7 +561,7 @@ export async function renderUsage({ width, height, session, week, title, active,
  * has been waiting. Dark and quiet at zero — an empty queue should read as
  * "nothing to do here", not as a key that failed to draw.
  */
-export async function renderAttention({ width, height, count, longest, pulse }) {
+export async function renderAttention({ width, height, count, longest, pulse, label = "WAITING" }) {
   const capSize = Math.round(height * 0.11);
   const countSize = Math.round(height * 0.34);
   const quiet = count === 0;
@@ -578,7 +578,7 @@ export async function renderAttention({ width, height, count, longest, pulse }) 
           ? ""
           : `<text x="50%" y="${height * 0.66}" font-family="sans-serif" font-size="${capSize}"
                    font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffffcc" text-anchor="middle"
-                   dominant-baseline="middle">WAITING</text>
+                   dominant-baseline="middle">${label}</text>
              <text x="50%" y="${height * 0.85}" font-family="sans-serif" font-size="${capSize}"
                    fill="#ffffff99" text-anchor="middle"
                    dominant-baseline="middle">${escapeXml(longest ?? "")}</text>`
