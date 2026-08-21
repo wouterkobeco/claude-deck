@@ -55,6 +55,9 @@ export function memoryFields(memory) {
   const rec = {};
   if (typeof memory?.pressure === "number") rec.mem = Math.round(memory.pressure);
   if (typeof memory?.swap === "number") rec.swap = Math.round(memory.swap);
+  // Totals, so the chart can say the percentage as an amount; in MB, whole.
+  if (memory?.totalMb) rec.mt = memory.totalMb;
+  if (memory?.swapTotalMb) rec.st = memory.swapTotalMb;
   if (typeof memory?.claude?.mb === "number") {
     rec.cl = memory.claude.mb; // resident MB across claude processes
     rec.cln = memory.claude.count;
@@ -320,7 +323,7 @@ export function memorySeries(records, from, to, step = 3600000, host = null) {
   const size = Math.max(3600000, Math.round(step / 3600000) * 3600000);
   const start = Math.floor(from / size) * size;
   const buckets = new Map();
-  for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, claudeMb: 0, claudeCount: 0, samples: 0 });
+  for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, totalMb: null, swapTotalMb: null, claudeMb: 0, claudeCount: 0, samples: 0 });
   for (const rec of records) {
     if (rec.kind !== TICK) continue;
     const r = host === null ? rec : rec.hosts?.[host];
@@ -330,6 +333,8 @@ export function memorySeries(records, from, to, step = 3600000, host = null) {
     b.samples++;
     b.pressure = Math.max(b.pressure, r.mem);
     b.swap = Math.max(b.swap, r.swap ?? 0);
+    b.totalMb = r.mt ?? b.totalMb;
+    b.swapTotalMb = r.st ?? b.swapTotalMb;
     // The sessions' own footprint, at its high-water mark with the count it
     // had then — the pair has to come off one sample or "5GB · 3 sessions"
     // can describe a moment that never happened.

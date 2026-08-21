@@ -81,7 +81,7 @@ const withMem = splitTreeStream(Buffer.from(
   "100 1 512000 /usr/local/bin/claude\n101 100 1024 node\n102 1 1024 claude\n---\ntar"));
 assert.deepEqual([...withMem.pids], [100, 101, 102], "the pid table still parses with the extra columns");
 assert.equal(withMem.ppids.get(101), 100);
-assert.deepEqual(withMem.memory, { pressure: 75, swap: 75, claude: { mb: 501, count: 2 } }, "meminfo and claude rss are read off the block");
+assert.deepEqual(withMem.memory, { pressure: 75, swap: 75, totalMb: 7813, swapTotalMb: 977, claude: { mb: 501, count: 2 } }, "meminfo and claude rss are read off the block");
 assert.equal(splitTreeStream(Buffer.from("===\n5 1\n---\ntar")).memory, null, "a host with no /proc/meminfo reports none");
 assert.equal(splitTreeStream(Buffer.alloc(0)).tar.length, 0, "an empty stream has no tar");
 assert.equal(splitTreeStream(Buffer.alloc(0)).ppids.size, 0, "an empty stream has no ancestry");

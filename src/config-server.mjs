@@ -20,6 +20,7 @@ import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs
 import { boardGrid, boardPage, detailPanel, iconHeader, iconLinks, FAVICON_SIZES, HEADER_CSS, HEADER_SCRIPT } from "./board-page.mjs";
 import { renderIcon, usageColor } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
+import { pctWithAmount } from "./memory.mjs";
 
 // A form POST of one folder key and one hex value. Anything approaching this
 // is not a browser filling in the page we served.
@@ -254,22 +255,26 @@ const periodBar = (token, periods, here) =>
 // hold a percentage and the window it is a percentage *of* at once — and 81%
 // twenty minutes before a reset means something quite different from 81% on
 // day one of seven. Here each window is one meter with its own reset under it.
-const limits = (usage, [a, b] = ["Session · 5 hours", "Week · 7 days"]) =>
-  `<div class="limits">${[
-    [a, usage.session, usage.sessionResets],
-    [b, usage.week, usage.weekResets],
-  ]
+const limits = (rows) =>
+  `<div class="limits">${rows
     .map(
-      ([caps, pct, resets]) => `<div class="limit">
+      ({ caps, pct, sub }) => `<div class="limit">
         <div class="lrow"><span class="lcap">${esc(caps)}</span>
           <span class="lpct">${typeof pct === "number" ? Math.round(pct) + "%" : "—"}</span></div>
         <div class="ltrack"><i style="width:${
           typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
         }%;background:${usageColor(pct ?? 0)}"></i></div>
-        <div class="lsub">${resets === undefined ? "" : resets ? `resets in ${esc(resets)}` : "reset time unknown"}</div>
+        <div class="lsub">${esc(sub ?? "")}</div>
       </div>`
     )
     .join("")}</div>`;
+
+// The two windows of a subscription, each with its reset under it.
+const rateLimits = (usage) =>
+  limits([
+    { caps: "Session · 5 hours", pct: usage.session, sub: usage.sessionResets ? `resets in ${usage.sessionResets}` : "reset time unknown" },
+    { caps: "Week · 7 days", pct: usage.week, sub: usage.weekResets ? `resets in ${usage.weekResets}` : "reset time unknown" },
+  ]);
 
 // Every subscription claude-swap manages, each with the same two meters, read
 // off its cache. Nothing when cswap isn't installed — the block is absent, not
@@ -279,13 +284,17 @@ const accounts = (list) =>
     ? ""
     : list
         .map(
-          (a) => `<div class="account${a.active ? " active" : ""}">${esc(a.name)}${a.active ? " · active" : ""}</div>${limits(a.usage)}`
+          (a) => `<div class="account${a.active ? " active" : ""}">${esc(a.name)}${a.active ? " · active" : ""}</div>${rateLimits(a.usage)}`
         )
         .join("");
 
 // This machine's memory, the same two meters the deck's memory key draws.
 // `limits` takes a session/week pair, so the rows are passed under those
 // names with their own captions.
+// The amount under each meter — "48.0 of 64 GB" — in the slot a rate limit
+// uses for its reset.
+const amount = (pct, totalMb) => /\((.*)\)/.exec(pctWithAmount(pct, totalMb))?.[1] ?? "";
+
 // One pair per machine, this one first; the name is only shown once there is
 // more than one machine to tell apart.
 const memory = (list) =>
@@ -294,10 +303,10 @@ const memory = (list) =>
     : `<h2>Memory</h2>${list
         .map(
           (m) =>
-            `${list.length > 1 ? `<div class="account">${esc(m.name)}</div>` : ""}${limits(
-              { session: m.pressure, week: m.swap },
-              ["RAM pressure", "Swap in use"]
-            )}`
+            `${list.length > 1 ? `<div class="account">${esc(m.name)}</div>` : ""}${limits([
+              { caps: "RAM pressure", pct: m.pressure, sub: amount(m.pressure, m.totalMb) },
+              { caps: "Swap in use", pct: m.swap, sub: amount(m.swap, m.swapTotalMb) },
+            ])}`
         )
         .join("")}`;
 
@@ -347,7 +356,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
         // carries the live numbers, so the plain pair would say it twice.
         status.accounts?.length
           ? accounts(status.accounts)
-          : `${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}${limits(status.usage)}`
+          : `${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}${rateLimits(status.usage)}`
       }
       ${memory(status.memory)}
       ${facts(status.blocked, status.stats)}

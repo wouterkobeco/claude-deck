@@ -9,13 +9,18 @@ const TTL_MS = 10_000;
 // so 100 minus it is pressure; `vm.swapusage` is "total = 2048.00M used =
 // 1100.00M free = ...". Node's os.freemem() is useless here: macOS keeps
 // nearly everything as cache, so it reads near zero on a healthy machine.
-export function parseMemory(levelLine, swapLine) {
+export function parseMemory(levelLine, swapLine, memsizeLine) {
   const level = /^\d+$/.test(String(levelLine).trim()) ? Number(levelLine) : NaN;
   const m = /total = ([\d.]+)M\s+used = ([\d.]+)M/.exec(swapLine ?? "");
   const total = m ? Number(m[1]) : 0;
+  const memsize = Number(memsizeLine);
   return {
     pressure: Number.isFinite(level) ? 100 - level : null,
     swap: m && total > 0 ? (Number(m[2]) / total) * 100 : null,
+    // Totals in MB, so a percentage can be said as an amount — these are what
+    // the tooltip multiplies back out; null where unknown.
+    totalMb: memsize > 0 ? Math.round(memsize / 1048576) : null,
+    swapTotalMb: total > 0 ? Math.round(total) : null,
   };
 }
 
@@ -45,14 +50,14 @@ let inflight = null;
 export function getMemory(now = Date.now()) {
   if (now - cache.at >= TTL_MS && !inflight) {
     inflight = Promise.all([
-      run("sysctl", ["-n", "kern.memorystatus_level", "vm.swapusage"]),
+      run("sysctl", ["-n", "kern.memorystatus_level", "vm.swapusage", "hw.memsize"]),
       // What the Claude sessions themselves hold, resident only — the part
       // swapped out is invisible to ps, so this is a floor, not the bill.
       run("ps", ["-axo", "rss=,comm="]).catch(() => null),
     ])
       .then(([{ stdout }, ps]) => {
-        const [level, swap] = stdout.trim().split("\n");
-        cache = { at: Date.now(), value: { ...parseMemory(level, swap), claude: ps ? parseClaudeRss(ps.stdout) : null } };
+        const [level, swap, memsize] = stdout.trim().split("\n");
+        cache = { at: Date.now(), value: { ...parseMemory(level, swap, memsize), claude: ps ? parseClaudeRss(ps.stdout) : null } };
       })
       .catch(() => { cache = { ...cache, at: Date.now() }; })
       .finally(() => { inflight = null; });
@@ -75,5 +80,16 @@ export function parseMeminfo(text) {
   return {
     pressure: total > 0 && avail !== undefined ? Math.max(0, Math.min(100, 100 - (avail / total) * 100)) : null,
     swap: swapTotal > 0 && kb.SwapFree !== undefined ? ((swapTotal - kb.SwapFree) / swapTotal) * 100 : null,
+    totalMb: total > 0 ? Math.round(total / 1024) : null,
+    swapTotalMb: swapTotal > 0 ? Math.round(swapTotal / 1024) : null,
   };
+}
+
+/** "75% (48.0 of 64 GB)" — a percentage said as an amount when the total is known. */
+export function pctWithAmount(pct, totalMb) {
+  if (typeof pct !== "number") return "—";
+  const p = `${Math.round(pct)}%`;
+  if (!totalMb) return p;
+  const gb = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
+  return `${p} (${gb((pct / 100) * totalMb)} of ${gb(totalMb)})`;
 }

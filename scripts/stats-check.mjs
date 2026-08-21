@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { fmt, formatModel, computeStats, getStats } from "../src/stats.mjs";
 import { refreshStats, cswapTiles } from "../src/index.mjs";
-import { parseMemory, parseClaudeRss, parseMeminfo } from "../src/memory.mjs";
+import { parseMemory, parseClaudeRss, parseMeminfo, pctWithAmount } from "../src/memory.mjs";
 
 assert.equal(fmt(950), "950");
 assert.equal(fmt(4371), "4.4k");
@@ -65,14 +65,20 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
     { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: 42 }, { caps: "SWAP", pct: 93 }] },
     { label: "Version", value: "9.9.9" },
   ];
-  assert.deepEqual(parseMemory("58", "total = 20480.00M  used = 19105.00M  free = 1375.00M  (encrypted)"), {
+  assert.deepEqual(parseMemory("58", "total = 20480.00M  used = 19105.00M  free = 1375.00M  (encrypted)", "68719476736"), {
     pressure: 42,
     swap: 19105 / 20480 * 100,
+    totalMb: 65536,
+    swapTotalMb: 20480,
   });
+  assert.equal(pctWithAmount(75, 65536), "75% (48.0 GB of 64.0 GB)");
+  assert.equal(pctWithAmount(50, 512), "50% (256 MB of 512 MB)");
+  assert.equal(pctWithAmount(50, null), "50%", "no total, no amount");
+  assert.equal(pctWithAmount(null, 512), "—");
   assert.deepEqual(parseClaudeRss("  1024 /opt/claude/bin/claude\n 2048 claude\n 4096 /usr/bin/node\n 512 /x/claude-swap\n"), { mb: 3, count: 2 });
-  assert.deepEqual(parseMeminfo("MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n"), { pressure: 75, swap: null }, "a Linux host: what isn't available is pressure; no swap is unknown");
-  assert.deepEqual(parseMeminfo(""), { pressure: null, swap: null });
-  assert.deepEqual(parseMemory("", "total = 0.00M  used = 0.00M"), { pressure: null, swap: null }, "no swap configured is unknown, not 0/0");
+  assert.deepEqual(parseMeminfo("MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n"), { pressure: 75, swap: null, totalMb: 1, swapTotalMb: null }, "a Linux host: what isn't available is pressure; no swap is unknown");
+  assert.deepEqual(parseMeminfo(""), { pressure: null, swap: null, totalMb: null, swapTotalMb: null });
+  assert.deepEqual(parseMemory("", "total = 0.00M  used = 0.00M"), { pressure: null, swap: null, totalMb: null, swapTotalMb: null }, "no swap configured is unknown, not 0/0");
   assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "6d" }]);
   assert.equal(tiles[0].active, true);
   assert.deepEqual(tiles[2].rows[0], { caps: "SESSION", pct: null }, "an unknown window is a dash, not zero");

@@ -20,7 +20,7 @@ import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, rende
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
-import { getMemory } from "./memory.mjs";
+import { getMemory, pctWithAmount } from "./memory.mjs";
 
 // One source of truth for the version — read from package.json rather than
 // duplicated here, so a bump is one edit. Read rather than imported with
@@ -1568,7 +1568,7 @@ export const configDeps = {
             tick: tickAt(i),
             unseen: r.samples === 0,
             bars: r.samples === 0 ? [] : [{ state: r.pressure > MEMORY_ALERT_PCT ? "memory-high" : "memory", pct: r.pressure }],
-            value: r.samples === 0 ? "not watched" : `pressure ${r.pressure}% · swap ${r.swap}%`,
+            value: r.samples === 0 ? "not watched" : `pressure ${pctWithAmount(r.pressure, r.totalMb)} · swap ${pctWithAmount(r.swap, r.swapTotalMb)}`,
           })),
         },
         claude: {

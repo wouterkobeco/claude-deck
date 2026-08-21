@@ -269,7 +269,7 @@ const withHistory = await createConfigServer({
     blocked: "41m",
     version: "9.9.9",
     account: "Wouter",
-    memory: [{ name: "This Mac", pressure: 41, swap: 93.2 }, { name: "pi", pressure: 40, swap: null }],
+    memory: [{ name: "This Mac", pressure: 41, swap: 93.2, totalMb: 65536, swapTotalMb: 20480 }, { name: "pi", pressure: 40, swap: null }],
     accounts: [
       { name: "wouter@kobeco.be", active: true, usage: { session: 0, week: 29, sessionResets: "", weekResets: "6d" } },
       { name: "claude2@denayer.com", active: false, usage: { session: 0, week: 0, sessionResets: "", weekResets: "" } },
@@ -293,6 +293,7 @@ eq(hHtml.includes("Memory held by Claude sessions · This Mac<span") && hHtml.in
 eq(hHtml.includes("<h2>Memory pressure · pi<span"), true, "and the host gets its own");
 eq(hHtml.includes("Memory held by Claude sessions · pi<span"), false, "but no footprint chart when it never ran a session");
 eq(hHtml.includes("<h2>Memory pressure · This Mac<span") && hHtml.includes("swap 90%"), true, "memory pressure over time has its own chart");
+eq(hHtml.includes("26.2 GB of 64.0 GB"), true, "the meter says the percentage as an amount");
 eq(hHtml.includes("<h2>Memory</h2>") && hHtml.includes("Swap in use</span>"), true, "memory gets its own pair");
 eq(hHtml.includes("4h11m"), true, "including the total the pie is a share of");
 // One table now, following the same window picker as the charts above it.

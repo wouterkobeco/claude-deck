@@ -214,15 +214,15 @@ console.log("OK: change-only records, closing records, duration and clipping, re
 {
   const H0 = Date.UTC(2026, 7, 20, 9);
   const recs = [
-    { ts: H0, kind: TICK, mem: 30, swap: 50, cl: 6000, cln: 17 },
+    { ts: H0, kind: TICK, mem: 30, swap: 50, mt: 65536, st: 20480, cl: 6000, cln: 17 },
     { ts: H0 + TICK_MS, kind: TICK, mem: 75, swap: 90, cl: 5000, cln: 12, hosts: { pi: { mem: 88, swap: 10, cl: 300, cln: 1 } } },
     { ts: H0 + 2 * TICK_MS, kind: TICK },
     { ts: H0 + 3600000, id: "a", folder: "/p", state: "busy" },
   ];
   const series = memorySeries(recs, H0, H0 + 2 * 3600000);
   if (JSON.stringify(series) !== JSON.stringify([
-    { hour: H0, pressure: 75, swap: 90, claudeMb: 6000, claudeCount: 17, samples: 2 },
-    { hour: H0 + 3600000, pressure: 0, swap: 0, claudeMb: 0, claudeCount: 0, samples: 0 },
+    { hour: H0, pressure: 75, swap: 90, totalMb: 65536, swapTotalMb: 20480, claudeMb: 6000, claudeCount: 17, samples: 2 },
+    { hour: H0 + 3600000, pressure: 0, swap: 0, totalMb: null, swapTotalMb: null, claudeMb: 0, claudeCount: 0, samples: 0 },
   ])) { console.error("FAILED memorySeries", series); process.exit(1); }
   const pi = memorySeries(recs, H0, H0 + 3600000, 3600000, "pi");
   if (pi[0].pressure !== 88 || pi[0].samples !== 1 || pi[0].claudeMb !== 300) { console.error("FAILED memorySeries host", pi); process.exit(1); }
