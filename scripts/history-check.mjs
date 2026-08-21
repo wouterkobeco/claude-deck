@@ -214,20 +214,20 @@ console.log("OK: change-only records, closing records, duration and clipping, re
 {
   const H0 = Date.UTC(2026, 7, 20, 9);
   const recs = [
-    { ts: H0, kind: TICK, mem: 30, swap: 50 },
-    { ts: H0 + TICK_MS, kind: TICK, mem: 75, swap: 90 },
+    { ts: H0, kind: TICK, mem: 30, swap: 50, cl: 6000, cln: 17 },
+    { ts: H0 + TICK_MS, kind: TICK, mem: 75, swap: 90, cl: 5000, cln: 12 },
     { ts: H0 + 2 * TICK_MS, kind: TICK },
     { ts: H0 + 3600000, id: "a", folder: "/p", state: "busy" },
   ];
   const series = memorySeries(recs, H0, H0 + 2 * 3600000);
   if (JSON.stringify(series) !== JSON.stringify([
-    { hour: H0, pressure: 75, swap: 90, samples: 2 },
-    { hour: H0 + 3600000, pressure: 0, swap: 0, samples: 0 },
+    { hour: H0, pressure: 75, swap: 90, claudeMb: 6000, claudeCount: 17, samples: 2 },
+    { hour: H0 + 3600000, pressure: 0, swap: 0, claudeMb: 0, claudeCount: 0, samples: 0 },
   ])) { console.error("FAILED memorySeries", series); process.exit(1); }
   const dir = mkdtempSync(join(tmpdir(), "hist-"));
-  recordTick(H0, dir, { pressure: 41.6, swap: 93.2 });
+  recordTick(H0, dir, { pressure: 41.6, swap: 93.2, claude: { mb: 5400, count: 17 } });
   recordTick(H0 + TICK_MS, dir, { pressure: null, swap: null });
   const [a, b] = readHistory(dir);
-  if (a.mem !== 42 || a.swap !== 93 || "mem" in b) { console.error("FAILED recordTick memory", a, b); process.exit(1); }
+  if (a.mem !== 42 || a.swap !== 93 || a.cl !== 5400 || a.cln !== 17 || "mem" in b || "cl" in b) { console.error("FAILED recordTick memory", a, b); process.exit(1); }
   console.log("OK: memory on the tick");
 }

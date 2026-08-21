@@ -535,10 +535,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **Ticks also carry memory** (`mem`, `swap`, whole percentages) when the
   daemon had a reading: a five-minute sample is the cadence a pressure series
   wants, and riding the tick costs no new file and no new cadence.
+  They carry the Claude sessions' own resident footprint too (`cl` MB, `cln`
+  processes, off `ps -axo rss=,comm=` matched on the `claude` basename) —
+  resident only, so a floor: what's swapped out is invisible to ps.
   `memorySeries` keeps each bucket's *maximum*, not its mean — a day-wide bar
   that averages a two-hour swap storm into 30% hides the thing the chart is
   for — and the activity page draws it against a fixed 100, red over
-  `MEMORY_ALERT_PCT`, with unwatched buckets striped like the sessions chart.
+  `MEMORY_ALERT_PCT`, with unwatched buckets striped like the sessions chart. The sessions'
+  footprint is a chart of its own under "Sessions in parallel", scaled to
+  its busiest column like the token charts (an amount, not a share), and the
+  count shown beside a bucket's high-water mark is the count *at* that sample.
 - `src/tokens.mjs` — what the tokens went on: hourly totals lifted out of
   Claude Code's transcripts, into a log that outlives them. Every assistant
   message carries `message.usage` beside an ISO timestamp, so the history is

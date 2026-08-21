@@ -1531,7 +1531,23 @@ export const configDeps = {
       })),
     };
 
-    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions, pressure };
+    // What the Claude sessions themselves held, resident, at each bucket's
+    // high-water mark. Scaled to the busiest column like the token charts —
+    // this is an amount, not a share.
+    const peakClaude = Math.max(1, ...mem.map((r) => r.claudeMb));
+    const gb = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+    const claudeMemory = {
+      peak: `max ${gb(peakClaude)}`,
+      cols: mem.map((r, i) => ({
+        label: title(new Date(r.hour)),
+        tick: tickAt(i),
+        unseen: r.samples === 0,
+        bars: r.claudeMb ? [{ state: "claude", pct: (r.claudeMb / peakClaude) * 100 }] : [],
+        value: r.samples === 0 ? "not watched" : `${gb(r.claudeMb)} · ${r.claudeCount} session${r.claudeCount === 1 ? "" : "s"}`,
+      })),
+    };
+
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions, pressure, claudeMemory };
   },
 };
 

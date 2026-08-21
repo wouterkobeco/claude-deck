@@ -303,7 +303,7 @@ const facts = (blocked, stats) =>
     .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, pressure }, status) {
+function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, pressure, claudeMemory }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
@@ -363,6 +363,11 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
         sessions.cols.length === 0
           ? ""
           : `<h2>Sessions in parallel<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+      }
+      ${
+        !claudeMemory || claudeMemory.cols.every((c) => !c.bars.length)
+          ? ""
+          : `<h2>Memory held by Claude sessions<span class="peak">${esc(claudeMemory.peak)}</span></h2>${columns(claudeMemory)}`
       }
       ${
         !pressure || pressure.cols.length === 0 || pressure.cols.every((c) => c.unseen)

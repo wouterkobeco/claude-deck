@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { fmt, formatModel, computeStats, getStats } from "../src/stats.mjs";
 import { refreshStats, cswapTiles } from "../src/index.mjs";
-import { parseMemory } from "../src/memory.mjs";
+import { parseMemory, parseClaudeRss } from "../src/memory.mjs";
 
 assert.equal(fmt(950), "950");
 assert.equal(fmt(4371), "4.4k");
@@ -69,6 +69,7 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
     pressure: 42,
     swap: 19105 / 20480 * 100,
   });
+  assert.deepEqual(parseClaudeRss("  1024 /opt/claude/bin/claude\n 2048 claude\n 4096 /usr/bin/node\n 512 /x/claude-swap\n"), { mb: 3, count: 2 });
   assert.deepEqual(parseMemory("", "total = 0.00M  used = 0.00M"), { pressure: null, swap: null }, "no swap configured is unknown, not 0/0");
   assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "6d" }]);
   assert.equal(tiles[0].active, true);

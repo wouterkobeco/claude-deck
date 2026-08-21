@@ -56,6 +56,10 @@ export function recordTick(now = Date.now(), root = CLAUDE_DIR, memory = null) {
     const rec = { ts: now, kind: TICK };
     if (typeof memory?.pressure === "number") rec.mem = Math.round(memory.pressure);
     if (typeof memory?.swap === "number") rec.swap = Math.round(memory.swap);
+    if (typeof memory?.claude?.mb === "number") {
+      rec.cl = memory.claude.mb; // resident MB across claude processes
+      rec.cln = memory.claude.count;
+    }
     appendFileSync(fileIn(root), JSON.stringify(rec) + "\n");
   } catch {
     // Same as a lost transition: the next tick writes again.
@@ -307,7 +311,7 @@ export function memorySeries(records, from, to, step = 3600000) {
   const size = Math.max(3600000, Math.round(step / 3600000) * 3600000);
   const start = Math.floor(from / size) * size;
   const buckets = new Map();
-  for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, samples: 0 });
+  for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, claudeMb: 0, claudeCount: 0, samples: 0 });
   for (const r of records) {
     if (r.kind !== TICK || typeof r.mem !== "number") continue;
     const b = buckets.get(Math.floor(r.ts / size) * size);
@@ -315,6 +319,13 @@ export function memorySeries(records, from, to, step = 3600000) {
     b.samples++;
     b.pressure = Math.max(b.pressure, r.mem);
     b.swap = Math.max(b.swap, r.swap ?? 0);
+    // The sessions' own footprint, at its high-water mark with the count it
+    // had then — the pair has to come off one sample or "5GB · 3 sessions"
+    // can describe a moment that never happened.
+    if ((r.cl ?? 0) > b.claudeMb) {
+      b.claudeMb = r.cl;
+      b.claudeCount = r.cln ?? 0;
+    }
   }
   return [...buckets.values()];
 }

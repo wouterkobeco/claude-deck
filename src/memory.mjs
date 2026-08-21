@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-const TTL_MS = 5_000;
+const TTL_MS = 10_000;
 
 // macOS only, like the rest. `kern.memorystatus_level` is the kernel's own
 // "free percentage" — what Activity Monitor's pressure graph is derived from —
@@ -19,7 +19,20 @@ export function parseMemory(levelLine, swapLine) {
   };
 }
 
-let cache = { at: 0, value: { pressure: null, swap: null } };
+/** `ps -axo rss=,comm=` -> resident MB and count of `claude` CLI processes. */
+export function parseClaudeRss(psOut) {
+  let kb = 0;
+  let count = 0;
+  for (const line of String(psOut ?? "").split("\n")) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!m || m[2].split("/").pop() !== "claude") continue;
+    kb += Number(m[1]);
+    count++;
+  }
+  return { mb: Math.round(kb / 1024), count };
+}
+
+let cache = { at: 0, value: { pressure: null, swap: null, claude: null } };
 let inflight = null;
 
 /**
@@ -31,10 +44,15 @@ let inflight = null;
  */
 export function getMemory(now = Date.now()) {
   if (now - cache.at >= TTL_MS && !inflight) {
-    inflight = run("sysctl", ["-n", "kern.memorystatus_level", "vm.swapusage"])
-      .then(({ stdout }) => {
+    inflight = Promise.all([
+      run("sysctl", ["-n", "kern.memorystatus_level", "vm.swapusage"]),
+      // What the Claude sessions themselves hold, resident only — the part
+      // swapped out is invisible to ps, so this is a floor, not the bill.
+      run("ps", ["-axo", "rss=,comm="]).catch(() => null),
+    ])
+      .then(([{ stdout }, ps]) => {
         const [level, swap] = stdout.trim().split("\n");
-        cache = { at: Date.now(), value: parseMemory(level, swap) };
+        cache = { at: Date.now(), value: { ...parseMemory(level, swap), claude: ps ? parseClaudeRss(ps.stdout) : null } };
       })
       .catch(() => { cache = { ...cache, at: Date.now() }; })
       .finally(() => { inflight = null; });
