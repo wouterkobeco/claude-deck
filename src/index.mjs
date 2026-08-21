@@ -2339,7 +2339,10 @@ async function run() {
               .map((w) => (w.open > 1 ? `${w.name} (${w.covered} of ${w.open} windows)` : w.name))
               .join(", ");
             console.log(
-              `vscode terminal focus: ${coverage} windows have the extension — reload ${which || "the rest"} (Developer: Reload Window)`
+              // "local": remote windows are never in this count — their IDE
+              // lock is on the other host and staleWindows skips their state —
+              // and a name like kob-backend is open on both sides here.
+              `vscode terminal focus: ${coverage} local windows have the extension — reload ${which || "the rest"} (Developer: Reload Window)`
             );
           }
         }
