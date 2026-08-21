@@ -661,10 +661,12 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   regroup of records the picker drives).
   **A rate-limit meter's title states its own reset**: "Session resets in 5
   hours" rather than a static "Session · 5 hours" caption plus a "resets in
-  5h" line underneath, which said the unit twice. `resetRow` falls back to
-  the static caption, with no bar and centered text in its place
-  (`.lunknown`), only when the reset itself isn't known — a bar under an
-  unstated reset reads as "just reset" when it means "we don't know".
+  5h" line underneath, which said the unit twice — and the caption's "5
+  hours"/"7 days" was never information anyway, just the window's own fixed
+  length. `resetRow` falls back to the bare window name ("Session", "Week"),
+  with no bar and centered text in its place (`.lunknown`), only when the
+  reset itself isn't known — a bar under an unstated reset reads as "just
+  reset" when it means "we don't know".
   **Under "Rate limits": every cswap account, or the plain pair without
   cswap — never both.** The active account leads that list and already
   carries the daemon's live numbers, so drawing the plain pair above it said
