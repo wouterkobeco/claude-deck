@@ -80,6 +80,15 @@ const remoteMemo = new Map();
 // same place `ppids` is read from. Absent for a host that is failing or that
 // has no /proc/meminfo; present means the numbers are at most one remote poll
 // old, which is the staleness every other remote fact on the board carries.
+// Each reachable host's fetched `ide/`, for the extension-coverage check: the
+// tree fetch tars that directory, so a remote window's lock is as readable
+// here as a local one, and "reload that window" can name remote ones too.
+function remoteIdeDirs() {
+  const out = [];
+  for (const [host, entry] of remoteMemo) if (entry.source?.root) out.push({ host, dir: join(entry.source.root, "ide") });
+  return out;
+}
+
 function hostMemories() {
   const out = {};
   for (const [host, entry] of remoteMemo) if (entry.source?.memory) out[host] = entry.source.memory;
@@ -2308,7 +2317,8 @@ async function run() {
           if (w.activeSessionId) everActive.add(w.activeSessionId);
         }
         const withExt = windowStates.length;
-        const total = countVsCodeWindows(undefined, windowStates);
+        const remoteIde = remoteIdeDirs();
+        const total = countVsCodeWindows(undefined, windowStates, remoteIde);
         const coverage = `${withExt}/${total}`;
         // `lastCoverage` moves on every change, not just the ones that print:
         // it is the "has this already been said" guard, and skipping the
@@ -2334,15 +2344,15 @@ async function run() {
             // two windows on one folder can only be reported as a count. It
             // says "1 of 2" there rather than naming a window it cannot tell
             // apart from its twin.
-            const stale = staleWindows(undefined, windowStates);
+            const stale = staleWindows(undefined, windowStates, remoteIde);
             const which = stale
               .map((w) => (w.open > 1 ? `${w.name} (${w.covered} of ${w.open} windows)` : w.name))
               .join(", ");
             console.log(
-              // "local": remote windows are never in this count — their IDE
-              // lock is on the other host and staleWindows skips their state —
-              // and a name like kob-backend is open on both sides here.
-              `vscode terminal focus: ${coverage} local windows have the extension — reload ${which || "the rest"} (Developer: Reload Window)`
+              // Remote windows are in this count once their host has been
+              // fetched (its ide/ rides the tree), and are named host:folder —
+              // kob-backend is open on both sides of this machine's ssh.
+              `vscode terminal focus: ${coverage} windows have the extension — reload ${which || "the rest"} (Developer: Reload Window)`
             );
           }
         }

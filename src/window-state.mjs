@@ -137,8 +137,18 @@ function readIdeLocks(dir) {
  * in extension/), so the `Set` is one entry per open window, matching what the
  * numerator counts a remote window as.
  */
-export function countVsCodeWindows(dir = IDE_DIR, states = []) {
-  return readIdeLocks(dir).length + new Set(states.filter((s) => s.host).map((s) => s.pid)).size;
+// `remotes` is `[{host, dir}]` — each reachable host's `ide/` as the tree
+// fetch left it on disk. A remote host's locks are as countable as local ones
+// once fetched; a host not in the list (unreachable, or never fetched) falls
+// back to counting the windows that published state for it, which is all
+// that was ever known about it before the locks were read.
+export function countVsCodeWindows(dir = IDE_DIR, states = [], remotes = []) {
+  const fetched = new Set(remotes.map((r) => r.host));
+  return (
+    readIdeLocks(dir).length +
+    remotes.reduce((n, r) => n + readIdeLocks(r.dir).length, 0) +
+    new Set(states.filter((s) => s.host && !fetched.has(s.host)).map((s) => s.pid)).size
+  );
 }
 
 /**
@@ -167,33 +177,41 @@ export function countVsCodeWindows(dir = IDE_DIR, states = []) {
  * only `host === null` states keeps a remote folder path from coincidentally
  * matching a local one.
  */
-export function staleWindows(dir = IDE_DIR, states = []) {
+export function staleWindows(dir = IDE_DIR, states = [], remotes = []) {
   const key = (folders) => [...folders].sort().join("\n");
-  const have = new Map();
-  for (const s of states) {
-    if (s.host) continue;
-    const k = key(s.folders);
-    have.set(k, (have.get(k) ?? 0) + 1);
-  }
-
-  const stale = [];
-  const open = new Map();
-  for (const folders of readIdeLocks(dir)) {
-    const k = key(folders);
-    open.set(k, (open.get(k) ?? 0) + 1);
-  }
-  for (const [k, total] of open) {
-    const covered = have.get(k) ?? 0;
-    if (covered >= total) continue;
-    const folders = k ? k.split("\n") : [];
-    stale.push({
-      // The basename is what anyone reading a log line recognises; the full
-      // paths ride along for a caller that wants to be precise.
-      name: folders.map((f) => f.split("/").filter(Boolean).pop() ?? f).join(" + ") || "(no folder)",
-      folders,
-      open: total,
-      covered,
-    });
-  }
-  return stale.sort((a, b) => a.name.localeCompare(b.name));
+  // The same comparison per machine: its locks against the states published
+  // for it — `host === null` for this one, so a remote path can never cover a
+  // local window that happens to share it. A remote window's name carries its
+  // host, because kob-backend is open on both sides of this machine's ssh.
+  const compare = (host, lockDir) => {
+    const have = new Map();
+    for (const s of states) {
+      if ((s.host ?? null) !== host) continue;
+      const k = key(s.folders);
+      have.set(k, (have.get(k) ?? 0) + 1);
+    }
+    const open = new Map();
+    for (const folders of readIdeLocks(lockDir)) {
+      const k = key(folders);
+      open.set(k, (open.get(k) ?? 0) + 1);
+    }
+    const stale = [];
+    for (const [k, total] of open) {
+      const covered = have.get(k) ?? 0;
+      if (covered >= total) continue;
+      const folders = k ? k.split("\n") : [];
+      const base = folders.map((f) => f.split("/").filter(Boolean).pop() ?? f).join(" + ") || "(no folder)";
+      stale.push({
+        // The basename is what anyone reading a log line recognises; the full
+        // paths ride along for a caller that wants to be precise.
+        name: host ? `${host}:${base}` : base,
+        host,
+        folders,
+        open: total,
+        covered,
+      });
+    }
+    return stale;
+  };
+  return [compare(null, dir), ...remotes.map((r) => compare(r.host, r.dir))].flat().sort((a, b) => a.name.localeCompare(b.name));
 }

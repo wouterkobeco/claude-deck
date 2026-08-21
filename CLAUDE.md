@@ -421,10 +421,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   indistinguishable here, so the answer is `1 of 2 windows`, not a pointer at
   one of them — the same duplicate-folder ambiguity `focusWindow` has never
   solved, live on this machine with two locks on `kob/kob-backend`. Remote
-  windows are excluded from both sides: their lock is on the other host so it
-  is never in `ide/`, their published state is the only reason they are counted
-  at all, and comparing only `host === null` states is what stops a remote path
-  coincidentally covering a local one. Reads
+  windows are compared **per host**: their lock is on the other host, but the
+  tree fetch tars that host's `ide/` into the scratch tree, so `staleWindows`
+  and `countVsCodeWindows` take `remotes = [{host, dir}]` (`remoteIdeDirs` in
+  `index.mjs`) and run the same folder join against the states published for
+  that host — `host === null` against local locks, `host === "pi"` against
+  pi's — which is what stops a remote path coincidentally covering a local
+  one. A stale remote window is named `host:folder`, since kob-backend is open
+  on both sides of this machine's ssh. A host not yet fetched falls back to
+  counting the windows that published state for it, which is all that was
+  ever known about it before its locks were readable. Reads
   `~/.claude/streamdeck-windows/<extension host pid>.json`, one per open VS Code
   window, carrying that window's folders, whether it's focused, and which
   session's terminal is in front. **Synchronous on purpose** — its only caller

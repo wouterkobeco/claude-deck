@@ -227,6 +227,24 @@ await lock("d.lock", { workspaceFolders: ["/proj/alpha"] });
   assert.deepEqual([alpha.open, alpha.covered], [2, 1], "two windows on one folder, one covered");
 }
 
+// A remote host's locks arrive by the tree fetch and are compared against the
+// states published for *that* host: a local window on the same path covers
+// nothing there, and the stale one is named with its host.
+{
+  const rdir = join(idedir, "..", "streamdeck-remote-ide-check");
+  await mkdir(rdir, { recursive: true });
+  await writeFile(join(rdir, "9.lock"), JSON.stringify({ workspaceFolders: ["/proj/alpha"] }));
+  await writeFile(join(rdir, "8.lock"), JSON.stringify({ workspaceFolders: ["/home/pi/x"] }));
+  await writeFile(join(wdir, `${process.ppid}.json`), JSON.stringify({ folders: ["/home/pi/x"], host: "pi" }));
+  const states = readWindowStates(wdir);
+  const remotes = [{ host: "pi", dir: rdir }];
+  const stale = staleWindows(idedir, states, remotes);
+  assert.equal(stale.some((w) => w.name === "pi:alpha" && w.host === "pi"), true, "the remote window without the extension is named with its host");
+  assert.equal(stale.some((w) => w.name === "pi:x"), false, "the one that published state is covered");
+  assert.equal(countVsCodeWindows(idedir, states, remotes), countVsCodeWindows(idedir, states) - 1 + 2, "fetched hosts count by lock, not by published state");
+  rmSync(join(wdir, `${process.ppid}.json`));
+}
+
 // A multi-root window is one window, not one per folder — keyed by its whole
 // sorted folder list, or it would look half-covered forever.
 await rm(join(idedir, "d.lock"));
