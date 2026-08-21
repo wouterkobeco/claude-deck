@@ -118,7 +118,12 @@ export function formatReset(iso, unit, now = Date.now()) {
   if (!iso) return null;
   const minutes = minutesUntil(iso, now);
   if (minutes < 60) return `${minutes}m`;
-  return unit === "hours" ? `${hoursUntil(iso, now)}h` : `${daysUntil(iso, now)}d`;
+  if (unit === "hours") return `${hoursUntil(iso, now)}h`;
+  // "days" drops to the finer unit under a day, the same reason "hours" drops
+  // to minutes under an hour: `daysUntil` ceils, so 1h and 23h both read "1d"
+  // otherwise — honest about "resets today" but not about how soon.
+  const hours = hoursUntil(iso, now);
+  return hours < 24 ? `${hours}h` : `${daysUntil(iso, now)}d`;
 }
 
 export async function fetchUsage() {

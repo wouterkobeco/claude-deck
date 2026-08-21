@@ -30,6 +30,7 @@ assert.equal(formatReset(null, "hours", now), null);
 assert.equal(formatReset("2026-08-11T15:00:00Z", "hours", now), "3h"); // >= 1h left, coarse unit
 assert.equal(formatReset("2026-08-11T12:45:00Z", "hours", now), "45m"); // < 1h left, drops to minutes
 assert.equal(formatReset("2026-08-14T23:00:00Z", "days", now), "4d");
+assert.equal(formatReset("2026-08-12T09:00:00Z", "days", now), "21h"); // < 24h left, drops to hours rather than reading "1d"
 assert.equal(formatReset("2026-08-11T12:30:00Z", "days", now), "30m"); // same drop applies to the week tile
 console.log("OK: formatReset");
 
