@@ -778,6 +778,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `liveProjects` (the config page's list and the activity page's project
   table both read off it), so a rename reaches the deck without a separate
   wiring path at each site.
+  **A renamed row also gets a reset icon**, shown only on that project —
+  `configDeps.projects()` exposes `renamed: folderNames.has(key)`, a presence
+  check rather than a string comparison, because a custom name can coincide
+  with the folder's own basename and that's still a rename. It's rendered on
+  hover of the whole bar rather than the name specifically: the name itself
+  becomes an `<input>` the moment it's hovered, so a CSS rule keyed to
+  hovering *it* would stop matching the instant the swap happens. Clicking it
+  clears the override outright — `POST /rename` with an empty name, the same
+  request an emptied edit box sends — with no edit step of its own.
   **`POST /order` takes what the pointer was over, not where the row should
   go** — `target` plus `side` (`above`/`below`), never a computed anchor. That
   split was learned the hard way: the arithmetic started in the browser, where

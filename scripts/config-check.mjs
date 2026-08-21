@@ -28,7 +28,9 @@ const NASTY = '/projects/<script>"x';
 
 let calls = [];
 const projects = () => [
-  { key: ALPHA, name: "alpha", host: null, accent: ACCENTS[0] },
+  // Only ALPHA carries a rename, so the reset icon's presence/absence is
+  // covered by the same three-project fixture the rest of the page uses.
+  { key: ALPHA, name: "alpha", host: null, accent: ACCENTS[0], renamed: true },
   { key: REMOTE, name: "x", host: "pi", accent: ACCENTS[1] },
   { key: NASTY, name: '<script>"x', host: null, accent: ACCENTS[2] },
 ];
@@ -53,6 +55,8 @@ eq(page.status, 200, "the page is served");
 const html = await page.text();
 eq(html.includes("alpha"), true, "the page lists a local project");
 eq(html.includes('class="pname">alpha<'), true, "the name sits in its own hoverable span");
+eq(html.includes('class="pname-reset"'), true, "a renamed project gets the reset icon");
+eq(html.split('class="pname-reset"').length - 1, 1, "and only the one that's actually been renamed");
 eq(html.includes("pi:/home/pi/x"), true, "and a remote one by its full key");
 // Eight swatches per project, three projects.
 eq(html.split('name="accent"').length - 1, 24, "eight swatches per project");

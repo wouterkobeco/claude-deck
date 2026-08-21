@@ -69,6 +69,13 @@ const STYLE = `
                           color: inherit; background: none; flex: 1; min-width: 0 }
   .pname-input { border: none; border-bottom: 1px dashed #00000088; padding: 0 }
   .pname-input:focus { outline: none; border-bottom-style: solid }
+  /* Only rendered at all once a project actually has an override — hovering
+     the bar is what reveals it, not the icon's own presence, so there's
+     nothing to accidentally click on a project nobody has renamed. */
+  .pname-reset { flex: none; opacity: 0; background: none; border: none; padding: 0;
+                 color: inherit; font-size: 15px; line-height: 1; cursor: pointer }
+  .bar:hover .pname-reset { opacity: .7 }
+  .pname-reset:hover { opacity: 1 }
   .key { background:#1b1b1b; padding:5px 10px; font-size:11px; color:#757575;
          font-family:ui-monospace,monospace; word-break:break-all }
   .swatches { display:flex; gap:6px; margin-top:8px }
@@ -479,6 +486,11 @@ function page(token, projects) {
       <div class="bar" style="background:${esc(p.accent)}">
         <span class="handle" draggable="true" title="drag to reorder">⠿</span>
         <span class="pname">${esc(p.name)}</span>
+        ${
+          p.renamed
+            ? `<button type="button" class="pname-reset" title="reset to the folder's own name">↺</button>`
+            : ""
+        }
       </div>
       <div class="key">${esc(p.key)}</div>
       <div class="swatches">${ACCENTS.map(
@@ -582,6 +594,16 @@ document.addEventListener(
   },
   true
 );
+
+// The reset icon only exists on a project that has an override, and always
+// clears it outright — there's no edit box to open first, unlike the name
+// itself. type="button" on the element already keeps it from touching the
+// row's own form submission.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".pname-reset");
+  if (!btn) return;
+  send("/rename", { folder: btn.closest(".row").dataset.key, name: "" });
+});
 
 document.addEventListener("submit", (e) => {
   e.preventDefault();

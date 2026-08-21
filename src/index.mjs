@@ -1290,7 +1290,11 @@ async function boardKeys() {
 export const configDeps = {
   projects: () =>
     [...liveProjects]
-      .map(([key, p]) => ({ key, name: p.name, host: p.host, accent: accentFor(key) }))
+      // `renamed` is what the config page shows the reset icon on — a
+      // custom name and the folder's own derived one can coincide, so this
+      // has to come from whether an override exists, not from comparing
+      // strings.
+      .map(([key, p]) => ({ key, name: p.name, host: p.host, accent: accentFor(key), renamed: folderNames.has(key) }))
       // ?? Infinity, not a bare subtraction: assignSlots is what fills
       // folderOrder and it runs only on sessions-board polls, so a project
       // that appeared while the stats board was up has no position yet.
