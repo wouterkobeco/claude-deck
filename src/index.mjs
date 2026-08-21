@@ -2261,7 +2261,13 @@ async function run() {
             : [{ caps: "RAM", pct: m.pressure }, { caps: "SWAP", pct: m.swap }],
         });
         const memoryTiles = [memTile("memory", getMemory()), ...Object.entries(hostMemories()).map(([h, m]) => memTile(h, m))];
-        const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), ...memoryTiles, versionTile].slice(
+        // Accounts lead, the version beside them, then the memory keys on a
+        // row of their own — read as two things, not one run — padded to the
+        // next row only when the memory keys still fit above the back key.
+        const head = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), versionTile];
+        const nextRow = Math.ceil(head.length / 5) * 5;
+        const pad = nextRow + memoryTiles.length <= DETAIL_BACK_INDEX ? Array(nextRow - head.length).fill(null) : [];
+        const statTiles = [...head, ...pad, ...memoryTiles].slice(
           0,
           DETAIL_BACK_INDEX
         );

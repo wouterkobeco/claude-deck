@@ -62,9 +62,11 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
       ],
       now
     ),
-    { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: 42 }, { caps: "SWAP", pct: 93 }] },
     { label: "Version", value: "9.9.9" },
   ];
+  // Two accounts and the version fill 0..4; the memory keys start the next
+  // row, as index.mjs lays them out.
+  tiles[5] = { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: 42 }, { caps: "SWAP", pct: 93 }] };
   assert.deepEqual(parseMemory("58", "total = 20480.00M  used = 19105.00M  free = 1375.00M  (encrypted)", "68719476736"), {
     pressure: 42,
     swap: 19105 / 20480 * 100,
@@ -88,7 +90,7 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   assert.equal(tiles.length, 12, "the list ends at the config key");
 
   await refreshStats(deck, buttons, tiles);
-  // Two accounts, memory and the version fill 0..5, leaving 6–9 blank — a blank is
+  // Two accounts and the version fill 0..4, memory is 5, leaving 6–9 blank — a blank is
   // never encoded.
   const filled = tiles.filter(Boolean).length;
   assert.equal(filled, 8);

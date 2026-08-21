@@ -1508,8 +1508,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   any memory key flips all of them between % and GB** (`memGb`, held outside
   `view` so it survives leaving the board; the bar stays under the amount, so
   red at 90% is red at 57 GB), a key per reachable host in the same shape,
-  the version;
-  back at 10, config at 11, key 12 blank.
+  the version right after the accounts; and the memory keys start the **next
+  row** (padded only while they still fit above the back key), so two
+  subscriptions read as row one and the machines as row two; back at 10,
+  config at 11, key 12 blank.
   Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
   under the back key. The all-time stats, the account name, the reset pair
   and blocked-today all left the deck — every one of them is on the activity page, and a
