@@ -1095,6 +1095,7 @@ export async function refreshStats(deck, buttons, stats) {
     buttons.map(async (btn, i) => {
       const stat = stats[i] ?? null;
       btn.assigned = null;
+      btn.stat = stat; // what this key shows, for the press handler
       btn.renderParams = null; // same as refreshDetail: keeps pulse off stale data
 
       if (!stat) {
@@ -2020,6 +2021,9 @@ async function run() {
   // `tiles` is filled in by the first refreshDetail after the view opens and
   // then held, so the board's shape stays put while its content updates.
   let view = { kind: "sessions" };
+  // Memory keys in GB rather than %, flipped by pressing one. Outside `view`
+  // so it survives leaving and reopening the stats board.
+  let memGb = false;
   // Latest attentionQueue length, kept here so the press handler can read it
   // without a second query — drawAttention returns it on every call, this
   // just holds the most recent value.
@@ -2135,6 +2139,13 @@ async function run() {
     // task or a subagent shouldn't throw the board away, and the back key is
     // right there saying so.
     if (view.kind === "detail") {
+      if (buttons[control.index]?.stat?.memory) {
+        // Toggles the unit on every memory key; the next stats poll redraws
+        // them, since the rows change and so does their signature.
+        memGb = !memGb;
+        lastPress = null;
+        return;
+      }
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
       // Nothing here seeds a repeat: the tiles aren't session keys, and the
       // back key may still be sitting on a session whose project matches the
@@ -2234,7 +2245,20 @@ async function run() {
         const versionTile = { label: "Version", value: pkg.version };
         // This machine's memory, in the account keys' shape: pressure and
         // swap in use, no border since it's neither active nor inactive.
-        const memTile = (title, m) => ({ kind: "usage", title, rows: [{ caps: "RAM", pct: m.pressure }, { caps: "SWAP", pct: m.swap }] });
+        // A press on any memory key flips every one of them between the
+        // percentage and the amount (`memGb`) — GB is the whole-board
+        // answer to "how much", not a per-key setting. The bar stays: the
+        // amount rides over the same gauge, so red at 90% is red at 57 GB.
+        const amt = (pct, totalMb) =>
+          typeof pct === "number" && totalMb ? `${((pct / 100) * totalMb) / 1024 >= 10 ? Math.round(((pct / 100) * totalMb) / 1024) : (((pct / 100) * totalMb) / 1024).toFixed(1)}G` : "—";
+        const memTile = (title, m) => ({
+          kind: "usage",
+          title,
+          memory: true,
+          rows: memGb
+            ? [{ caps: "RAM", pct: m.pressure, text: amt(m.pressure, m.totalMb) }, { caps: "SWAP", pct: m.swap, text: amt(m.swap, m.swapTotalMb) }]
+            : [{ caps: "RAM", pct: m.pressure }, { caps: "SWAP", pct: m.swap }],
+        });
         const memoryTiles = [memTile("memory", getMemory()), ...Object.entries(hostMemories()).map(([h, m]) => memTile(h, m))];
         const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), ...memoryTiles, versionTile].slice(
           0,

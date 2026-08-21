@@ -1504,7 +1504,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   fifth shorter. Then a memory key in the same shape (`memory.mjs`: RAM
   pressure off `kern.memorystatus_level`, swap in use off `vm.swapusage` —
   not `os.freemem()`, which macOS's file cache keeps near zero on a healthy
-  machine; no border, since it's neither active nor inactive), the version;
+  machine; no border, since it's neither active nor inactive — and **a press on
+  any memory key flips all of them between % and GB** (`memGb`, held outside
+  `view` so it survives leaving the board; the bar stays under the amount, so
+  red at 90% is red at 57 GB), a key per reachable host in the same shape,
+  the version;
   back at 10, config at 11, key 12 blank.
   Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
   under the back key. The all-time stats, the account name, the reset pair

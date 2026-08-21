@@ -519,8 +519,10 @@ export async function renderUsage({ width, height, session, week, title, active,
       const shown = known ? Math.min(100, Math.max(0, Math.round(pct))) : 0;
       const barY = top + half - 7;
       const value = text !== undefined ? text : known ? shown + "%" : "—";
+      // A row with a `text` and no `pct` is a reset time — no bar. One with
+      // both is an amount said over its own gauge (the memory keys in GB).
       const bar =
-        text !== undefined
+        !known
           ? ""
           : `<rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#ffffff22" />
         <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2"
@@ -528,7 +530,7 @@ export async function renderUsage({ width, height, session, week, title, active,
       // Titled keys have a fifth less height, so caps and value share one
       // line — "SE  12%" — centred on each other, rather than stacking.
       if (title) {
-        const y = top + (text !== undefined ? half * 0.5 : half * 0.4);
+        const y = top + (known ? half * 0.4 : half * 0.5);
         return `
         <text x="6" y="${y}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
               letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" dominant-baseline="middle">${{ SESSION: "SE", WEEK: "WK" }[caps] ?? caps}</text>
