@@ -353,7 +353,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
-| `sysctl kern.memorystatus_level vm.swapusage` | this machine's RAM pressure and swap use, for the memory key, the status key's alert, and the activity page's pressure-over-time chart (sampled every 5 minutes into the history log) |
+| `sysctl kern.memorystatus_level vm.swapusage` | this machine's RAM pressure and swap use, for the memory key, the status key's alert, and the activity page's pressure-over-time chart (sampled every 5 minutes into the history log); a Remote-SSH host's `/proc/meminfo` rides the existing fetch and gets the same key, alert and chart |
 | `~/.claude-swap-backup/{sequence.json,cache/usage.json}` | every claude-swap account's 5h / 7d usage and resets, if cswap is installed — nothing is fetched |
 | `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
 | `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |

@@ -488,7 +488,7 @@ function tile(k, token) {
   if (k.kind === "memory") {
     return `<a class="key dark tile alert" href="/activity?t=${esc(token)}"${id}>
       <div class="val">${esc(k.pct)}%</div>
-      <div class="lbl">memory</div>
+      <div class="lbl">${k.host ? `${esc(k.host)} memory` : "memory"}</div>
     </a>`;
   }
   if (k.kind === "attention" || k.kind === "free") {

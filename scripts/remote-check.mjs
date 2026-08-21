@@ -72,6 +72,17 @@ assert.equal(pidsOnly.ppids.size, 0, "and yields no ancestry rather than a wrong
 
 // A host that answered nothing is empty, never a throw.
 assert.deepEqual([...splitTreeStream(Buffer.alloc(0)).pids], [], "an empty stream has no pids");
+// The memory block ahead of the pid table: meminfo becomes pressure/swap, and
+// the `claude` rows' rss become the sessions' footprint. A stream without the
+// fence (pidsOnly above) reports no memory rather than a wrong one.
+assert.equal(pidsOnly.memory, null, "no fence, no memory data");
+const withMem = splitTreeStream(Buffer.from(
+  "MemTotal:       8000000 kB\nMemAvailable:   2000000 kB\nSwapTotal:      1000000 kB\nSwapFree:        250000 kB\n===\n" +
+  "100 1 512000 /usr/local/bin/claude\n101 100 1024 node\n102 1 1024 claude\n---\ntar"));
+assert.deepEqual([...withMem.pids], [100, 101, 102], "the pid table still parses with the extra columns");
+assert.equal(withMem.ppids.get(101), 100);
+assert.deepEqual(withMem.memory, { pressure: 75, swap: 75, claude: { mb: 501, count: 2 } }, "meminfo and claude rss are read off the block");
+assert.equal(splitTreeStream(Buffer.from("===\n5 1\n---\ntar")).memory, null, "a host with no /proc/meminfo reports none");
 assert.equal(splitTreeStream(Buffer.alloc(0)).tar.length, 0, "an empty stream has no tar");
 assert.equal(splitTreeStream(Buffer.alloc(0)).ppids.size, 0, "an empty stream has no ancestry");
 

@@ -216,20 +216,26 @@ const activity = {
       { label: "10:00", tick: "", bars: [], value: "—" },
     ],
   },
-  claudeMemory: {
-    peak: "max 5.4 GB",
-    cols: [
-      { label: "09:00", tick: "9h", unseen: false, bars: [{ state: "claude", pct: 100 }], value: "5.4 GB · 17 sessions" },
-      { label: "10:00", tick: "", unseen: true, bars: [], value: "not watched" },
-    ],
-  },
-  pressure: {
-    peak: "max 75%",
-    cols: [
-      { label: "09:00", tick: "9h", unseen: false, bars: [{ state: "memory-high", pct: 75 }], value: "pressure 75% · swap 90%" },
-      { label: "10:00", tick: "", unseen: true, bars: [], value: "not watched" },
-    ],
-  },
+  // One pair of memory charts per machine, this one first; a second machine
+  // is what earns the names in the headings.
+  memory: [
+    {
+      name: "This Mac",
+      claude: { peak: "max 5.4 GB", cols: [
+        { label: "09:00", tick: "9h", unseen: false, bars: [{ state: "claude", pct: 100 }], value: "5.4 GB · 17 sessions" },
+        { label: "10:00", tick: "", unseen: true, bars: [], value: "not watched" },
+      ] },
+      pressure: { peak: "max 75%", cols: [
+        { label: "09:00", tick: "9h", unseen: false, bars: [{ state: "memory-high", pct: 75 }], value: "pressure 75% · swap 90%" },
+        { label: "10:00", tick: "", unseen: true, bars: [], value: "not watched" },
+      ] },
+    },
+    {
+      name: "pi",
+      claude: { peak: "max 1 MB", cols: [{ label: "09:00", tick: "9h", unseen: false, bars: [], value: "0 MB · 0 sessions" }] },
+      pressure: { peak: "max 40%", cols: [{ label: "09:00", tick: "9h", unseen: false, bars: [{ state: "memory", pct: 40 }], value: "pressure 40% · swap 0%" }] },
+    },
+  ],
   models: [{ label: "opus-5", bars: [{ state: "tokens", pct: 100 }], value: "1.1M" }],
   sessions: {
     peak: "3",
@@ -263,7 +269,7 @@ const withHistory = await createConfigServer({
     blocked: "41m",
     version: "9.9.9",
     account: "Wouter",
-    memory: { pressure: 41, swap: 93.2 },
+    memory: [{ name: "This Mac", pressure: 41, swap: 93.2 }, { name: "pi", pressure: 40, swap: null }],
     accounts: [
       { name: "wouter@kobeco.be", active: true, usage: { session: 0, week: 29, sessionResets: "", weekResets: "6d" } },
       { name: "claude2@denayer.com", active: false, usage: { session: 0, week: 0, sessionResets: "", weekResets: "" } },
@@ -281,10 +287,12 @@ eq(hHtml.includes("3h12m"), true, "the numbers reach the table");
 eq(hHtml.includes('class="account">Wouter<'), false, "with cswap accounts the plain pair is not drawn — the active account is already first");
 eq(hHtml.includes("<h2>Accounts</h2>"), false, "and they sit under Rate limits rather than a heading of their own");
 eq(hHtml.includes('class="account active">wouter@kobeco.be · active<'), true, "the active one says so");
-eq(hHtml.split('class="limit">').length - 1, 6, "two per cswap account, two for memory — the live pair is the active account's");
+eq(hHtml.split('class="limit">').length - 1, 8, "two per cswap account, two per machine for memory — the live pair is the active account's");
 eq(hHtml.includes("<h2>Input tokens<span") && hHtml.includes("cache-read 36M"), true, "input gets its own stacked chart");
-eq(hHtml.includes("Memory held by Claude sessions<span") && hHtml.includes("17 sessions"), true, "the sessions' own footprint has a chart");
-eq(hHtml.includes("<h2>Memory pressure<span") && hHtml.includes("swap 90%"), true, "memory pressure over time has its own chart");
+eq(hHtml.includes("Memory held by Claude sessions · This Mac<span") && hHtml.includes("17 sessions"), true, "the sessions' own footprint has a chart, named once there are two machines");
+eq(hHtml.includes("<h2>Memory pressure · pi<span"), true, "and the host gets its own");
+eq(hHtml.includes("Memory held by Claude sessions · pi<span"), false, "but no footprint chart when it never ran a session");
+eq(hHtml.includes("<h2>Memory pressure · This Mac<span") && hHtml.includes("swap 90%"), true, "memory pressure over time has its own chart");
 eq(hHtml.includes("<h2>Memory</h2>") && hHtml.includes("Swap in use</span>"), true, "memory gets its own pair");
 eq(hHtml.includes("4h11m"), true, "including the total the pie is a share of");
 // One table now, following the same window picker as the charts above it.
@@ -318,7 +326,7 @@ eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row p
 // Three token segments, one model bar, two session segments, two token-legend
 // swatches, four state-legend swatches — and the two rate-limit meters that
 // moved onto the top of this page, which are one fill each.
-eq(hHtml.split("<i style=").length - 1, 26, "one element per bar segment, plus the legend swatches and the eight meters");
+eq(hHtml.split("<i style=").length - 1, 29, "one element per bar segment, plus the legend swatches and the eight meters");
 eq(hHtml.split('class="col unseen"').length - 1, 3, "an unwatched hour is striped rather than empty — in the sessions and both memory charts");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.

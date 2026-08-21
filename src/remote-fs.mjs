@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { parseMeminfo } from "./memory.mjs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tailLines, transcriptPathFor } from "./sessions.mjs";
@@ -55,7 +56,13 @@ export const TREE_CMD =
   // empty output would otherwise take the pid set down with it — an empty set
   // is `isAlive` false for everything, so every session on that host silently
   // disappears rather than merely losing its terminal reveal.
-  "{ ps -A -o pid=,ppid= 2>/dev/null | grep . || ls /proc 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1, $2 }'; " +
+  // Memory first, fenced by its own marker: /proc/meminfo is Linux's and a
+  // host without it contributes an empty block, which reads as "no memory
+  // data" rather than as a failure. Costs nothing — the shell is already here.
+  "cat /proc/meminfo 2>/dev/null; echo ===; " +
+  // rss and comm ride along for the Claude sessions' own footprint; the
+  // `ls /proc` fallback has neither, which costs that host only the chart.
+  "{ ps -A -o pid=,ppid=,rss=,comm= 2>/dev/null | grep . || ls /proc 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1, $2, $3, $4 }'; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
@@ -70,24 +77,39 @@ export const TREE_CMD =
  */
 export function splitTreeStream(buffer) {
   const at = buffer.indexOf(SEPARATOR);
-  if (at < 0) return { pids: new Set(), ppids: new Map(), tar: Buffer.alloc(0) };
+  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, tar: Buffer.alloc(0) };
   const pids = new Set();
+  // The memory block precedes the pid table behind its own fence; a stream
+  // from before the fence existed has no block and reads as no memory data.
+  let head = buffer.subarray(0, at).toString("utf8");
+  let memory = null;
+  const fence = head.indexOf("===\n");
+  if (fence >= 0) {
+    const info = parseMeminfo(head.slice(0, fence));
+    memory = info.pressure === null ? null : { ...info, claude: { mb: 0, count: 0 } };
+    head = head.slice(fence + 4);
+  }
   // Second column, when the host had a `ps` that could produce one. Absent is a
   // supported outcome, not a failure: it costs the terminal reveal for that
   // host and nothing else, where treating it as an error would drop every
   // session there as dead.
   const ppids = new Map();
-  for (const line of buffer.subarray(0, at).toString("utf8").split("\n")) {
-    const [first, second] = line.trim().split(/\s+/);
+  for (const line of head.split("\n")) {
+    const [first, second, rss, comm] = line.trim().split(/\s+/);
     const pid = Number(first);
     if (!Number.isInteger(pid) || pid <= 0) continue;
     pids.add(pid);
+    if (memory && comm && comm.split("/").pop() === "claude" && Number(rss) > 0) {
+      memory.claude.mb += Number(rss) / 1024;
+      memory.claude.count++;
+    }
     const ppid = Number(second);
     // pid 1's parent is 0, and a ppid of 0 would make `ancestorChain` walk to a
     // process that isn't one. Recorded only when it names a real parent.
     if (Number.isInteger(ppid) && ppid > 0) ppids.set(pid, ppid);
   }
-  return { pids, ppids, tar: buffer.subarray(at + SEPARATOR.length) };
+  if (memory) memory.claude.mb = Math.round(memory.claude.mb);
+  return { pids, ppids, memory, tar: buffer.subarray(at + SEPARATOR.length) };
 }
 
 /**
@@ -350,7 +372,7 @@ export async function fetchSource(host, scratchRoot) {
 
     const stream = await run(["ssh", ...sshArgs(host, controlPath), TREE_CMD]);
     if (!stream) return null;
-    const { pids, ppids, tar } = splitTreeStream(stream);
+    const { pids, ppids, memory, tar } = splitTreeStream(stream);
 
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
@@ -426,6 +448,10 @@ export async function fetchSource(host, scratchRoot) {
       // synchronous key handler and cannot afford an ssh round trip; empty on a
       // host whose `ps` gave no second column, which costs only the reveal.
       ppids,
+      // This host's RAM pressure, swap and the Claude sessions' footprint, or
+      // null where it had no /proc/meminfo. Read off the source by index.mjs
+      // the same way `ppids` is.
+      memory,
       // A session transcript was never fetched to disk, so it comes from the
       // map. A *subagent* transcript did ride in the tar — small, and needed
       // with its real mtime, since SUBAGENT_IDLE_MAX_S retires an agent by

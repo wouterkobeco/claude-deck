@@ -795,9 +795,11 @@ eq(
      "anything blocked wins, however much capacity is free");
   eq(statusKey([], q(9, 3000), NOW), { kind: "free", count: 9, longest: "50m" },
      "nothing blocked falls back to the free queue");
-  eq(statusKey([], q(9, 3000), NOW, 71), { kind: "memory", pct: 71 }, "memory pressure over the line outranks free");
-  eq(statusKey(q(2, 360), [], NOW, 99).kind, "attention", "but never a session blocked on you");
-  eq(statusKey([], q(9, 3000), NOW, 70).kind, "free", "at the line is not over it");
+  const P = (local, pi) => [{ host: null, pressure: local }, { host: "pi", pressure: pi }];
+  eq(statusKey([], q(9, 3000), NOW, P(71, 20)), { kind: "memory", pct: 71, host: null }, "memory pressure over the line outranks free");
+  eq(statusKey([], q(9, 3000), NOW, P(72, 90)), { kind: "memory", pct: 90, host: "pi" }, "the worst machine is the one named");
+  eq(statusKey(q(2, 360), [], NOW, P(99, 99)).kind, "attention", "but never a session blocked on you");
+  eq(statusKey([], q(9, 3000), NOW, P(70, null)).kind, "free", "at the line is not over it, and unknown is not over it");
   eq(statusKey([], [], NOW), { kind: "free", count: 0, longest: "" },
      "neither is a dark key that opens nothing, not a missing one");
   // The age is the *oldest* of that queue, which is what both renderers put

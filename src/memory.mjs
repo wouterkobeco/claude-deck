@@ -59,3 +59,21 @@ export function getMemory(now = Date.now()) {
   }
   return cache.value;
 }
+
+/**
+ * A Linux host's `/proc/meminfo` -> the same shape as `parseMemory`. Pressure
+ * is what isn't `MemAvailable` — the kernel's own "how much could be handed
+ * out without swapping", which is the closest thing Linux has to macOS's
+ * level. No swap configured is unknown, not 0/0.
+ */
+export function parseMeminfo(text) {
+  const kb = {};
+  for (const m of String(text ?? "").matchAll(/^(\w+):\s+(\d+)/gm)) kb[m[1]] = Number(m[2]);
+  const total = kb.MemTotal;
+  const avail = kb.MemAvailable;
+  const swapTotal = kb.SwapTotal;
+  return {
+    pressure: total > 0 && avail !== undefined ? Math.max(0, Math.min(100, 100 - (avail / total) * 100)) : null,
+    swap: swapTotal > 0 && kb.SwapFree !== undefined ? ((swapTotal - kb.SwapFree) / swapTotal) * 100 : null,
+  };
+}

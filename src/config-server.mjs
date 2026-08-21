@@ -286,13 +286,20 @@ const accounts = (list) =>
 // This machine's memory, the same two meters the deck's memory key draws.
 // `limits` takes a session/week pair, so the rows are passed under those
 // names with their own captions.
-const memory = (mem) =>
-  mem
-    ? `<h2>Memory</h2>${limits(
-        { session: mem.pressure, week: mem.swap },
-        ["RAM pressure", "Swap in use"]
-      )}`
-    : "";
+// One pair per machine, this one first; the name is only shown once there is
+// more than one machine to tell apart.
+const memory = (list) =>
+  !list?.length
+    ? ""
+    : `<h2>Memory</h2>${list
+        .map(
+          (m) =>
+            `${list.length > 1 ? `<div class="account">${esc(m.name)}</div>` : ""}${limits(
+              { session: m.pressure, week: m.swap },
+              ["RAM pressure", "Swap in use"]
+            )}`
+        )
+        .join("")}`;
 
 // Today's blocked time and the all-time totals, as a grid that reflows rather
 // than the seven-row list they were on a page of their own — they sit above
@@ -303,7 +310,7 @@ const facts = (blocked, stats) =>
     .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, pressure, claudeMemory }, status) {
+function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, memory: memCharts = [] }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
@@ -368,16 +375,18 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
           ? ""
           : `<h2>Sessions in parallel<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
       }
-      ${
-        !claudeMemory || claudeMemory.cols.every((c) => !c.bars.length)
-          ? ""
-          : `<h2>Memory held by Claude sessions<span class="peak">${esc(claudeMemory.peak)}</span></h2>${columns(claudeMemory)}`
-      }
-      ${
-        !pressure || pressure.cols.length === 0 || pressure.cols.every((c) => c.unseen)
-          ? ""
-          : `<h2>Memory pressure<span class="peak">${esc(pressure.peak)}</span></h2>${columns(pressure)}`
-      }
+      ${memCharts
+        .map((m) => {
+          const seen = m.pressure.cols.some((c) => !c.unseen);
+          if (!seen) return "";
+          const who = memCharts.length > 1 ? ` · ${esc(m.name)}` : "";
+          return `${
+            m.claude.cols.every((c) => !c.bars.length)
+              ? ""
+              : `<h2>Memory held by Claude sessions${who}<span class="peak">${esc(m.claude.peak)}</span></h2>${columns(m.claude)}`
+          }<h2>Memory pressure${who}<span class="peak">${esc(m.pressure.peak)}</span></h2>${columns(m.pressure)}`;
+        })
+        .join("")}
       ${
         rows.length === 0
           ? '<p class="empty">no history recorded yet</p>'

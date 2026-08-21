@@ -6,7 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GONE, OUTAGE_MS, RETENTION_DAYS, TICK, TICK_MS, concurrency, memorySeries, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory } from "../src/history.mjs";
+import { GONE, OUTAGE_MS, RETENTION_DAYS, TICK, TICK_MS, concurrency, memoryHosts, memorySeries, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory } from "../src/history.mjs";
 
 const eq = (got, want, label) => {
   const a = JSON.stringify(got);
@@ -215,7 +215,7 @@ console.log("OK: change-only records, closing records, duration and clipping, re
   const H0 = Date.UTC(2026, 7, 20, 9);
   const recs = [
     { ts: H0, kind: TICK, mem: 30, swap: 50, cl: 6000, cln: 17 },
-    { ts: H0 + TICK_MS, kind: TICK, mem: 75, swap: 90, cl: 5000, cln: 12 },
+    { ts: H0 + TICK_MS, kind: TICK, mem: 75, swap: 90, cl: 5000, cln: 12, hosts: { pi: { mem: 88, swap: 10, cl: 300, cln: 1 } } },
     { ts: H0 + 2 * TICK_MS, kind: TICK },
     { ts: H0 + 3600000, id: "a", folder: "/p", state: "busy" },
   ];
@@ -224,10 +224,13 @@ console.log("OK: change-only records, closing records, duration and clipping, re
     { hour: H0, pressure: 75, swap: 90, claudeMb: 6000, claudeCount: 17, samples: 2 },
     { hour: H0 + 3600000, pressure: 0, swap: 0, claudeMb: 0, claudeCount: 0, samples: 0 },
   ])) { console.error("FAILED memorySeries", series); process.exit(1); }
+  const pi = memorySeries(recs, H0, H0 + 3600000, 3600000, "pi");
+  if (pi[0].pressure !== 88 || pi[0].samples !== 1 || pi[0].claudeMb !== 300) { console.error("FAILED memorySeries host", pi); process.exit(1); }
+  if (JSON.stringify(memoryHosts(recs)) !== '["pi"]') { console.error("FAILED memoryHosts"); process.exit(1); }
   const dir = mkdtempSync(join(tmpdir(), "hist-"));
-  recordTick(H0, dir, { pressure: 41.6, swap: 93.2, claude: { mb: 5400, count: 17 } });
+  recordTick(H0, dir, { pressure: 41.6, swap: 93.2, claude: { mb: 5400, count: 17 } }, { pi: { pressure: 88.2, swap: null }, dead: null });
   recordTick(H0 + TICK_MS, dir, { pressure: null, swap: null });
   const [a, b] = readHistory(dir);
-  if (a.mem !== 42 || a.swap !== 93 || a.cl !== 5400 || a.cln !== 17 || "mem" in b || "cl" in b) { console.error("FAILED recordTick memory", a, b); process.exit(1); }
+  if (a.mem !== 42 || a.swap !== 93 || a.cl !== 5400 || a.cln !== 17 || "mem" in b || "cl" in b || JSON.stringify(a.hosts) !== '{"pi":{"mem":88}}' || "hosts" in b) { console.error("FAILED recordTick memory", a, b); process.exit(1); }
   console.log("OK: memory on the tick");
 }

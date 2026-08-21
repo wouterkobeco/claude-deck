@@ -51,15 +51,24 @@ export const TICK_MS = 300_000;
 // minutes, not seconds, and a five-minute sample is what Activity Monitor's
 // own graph amounts to. A tick without it (older, or a failed read) is still
 // a tick; readers that draw the series skip it.
-export function recordTick(now = Date.now(), root = CLAUDE_DIR, memory = null) {
+export function memoryFields(memory) {
+  const rec = {};
+  if (typeof memory?.pressure === "number") rec.mem = Math.round(memory.pressure);
+  if (typeof memory?.swap === "number") rec.swap = Math.round(memory.swap);
+  if (typeof memory?.claude?.mb === "number") {
+    rec.cl = memory.claude.mb; // resident MB across claude processes
+    rec.cln = memory.claude.count;
+  }
+  return rec;
+}
+
+// `hosts` is the same fields per remote host, keyed by name, for the hosts
+// that reported this tick — a host whose fetch is failing simply isn't in it.
+export function recordTick(now = Date.now(), root = CLAUDE_DIR, memory = null, hosts = {}) {
   try {
-    const rec = { ts: now, kind: TICK };
-    if (typeof memory?.pressure === "number") rec.mem = Math.round(memory.pressure);
-    if (typeof memory?.swap === "number") rec.swap = Math.round(memory.swap);
-    if (typeof memory?.claude?.mb === "number") {
-      rec.cl = memory.claude.mb; // resident MB across claude processes
-      rec.cln = memory.claude.count;
-    }
+    const rec = { ts: now, kind: TICK, ...memoryFields(memory) };
+    const h = Object.fromEntries(Object.entries(hosts).map(([k, v]) => [k, memoryFields(v)]).filter(([, v]) => "mem" in v));
+    if (Object.keys(h).length) rec.hosts = h;
     appendFileSync(fileIn(root), JSON.stringify(rec) + "\n");
   } catch {
     // Same as a lost transition: the next tick writes again.
@@ -307,14 +316,16 @@ export function concurrency(records, from, to, now, step = 3600000) {
  * storm into 30% has hidden the thing the chart is for. `samples` is 0 for a
  * bucket no tick carried memory through, which draws as unseen.
  */
-export function memorySeries(records, from, to, step = 3600000) {
+export function memorySeries(records, from, to, step = 3600000, host = null) {
   const size = Math.max(3600000, Math.round(step / 3600000) * 3600000);
   const start = Math.floor(from / size) * size;
   const buckets = new Map();
   for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, claudeMb: 0, claudeCount: 0, samples: 0 });
-  for (const r of records) {
-    if (r.kind !== TICK || typeof r.mem !== "number") continue;
-    const b = buckets.get(Math.floor(r.ts / size) * size);
+  for (const rec of records) {
+    if (rec.kind !== TICK) continue;
+    const r = host === null ? rec : rec.hosts?.[host];
+    if (typeof r?.mem !== "number") continue;
+    const b = buckets.get(Math.floor(rec.ts / size) * size);
     if (!b) continue;
     b.samples++;
     b.pressure = Math.max(b.pressure, r.mem);
@@ -328,4 +339,11 @@ export function memorySeries(records, from, to, step = 3600000) {
     }
   }
   return [...buckets.values()];
+}
+
+/** Every remote host any tick in `records` carries memory for, sorted. */
+export function memoryHosts(records) {
+  const hosts = new Set();
+  for (const r of records) if (r.kind === TICK && r.hosts) for (const h of Object.keys(r.hosts)) hosts.add(h);
+  return [...hosts].sort();
 }

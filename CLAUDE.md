@@ -535,6 +535,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **Ticks also carry memory** (`mem`, `swap`, whole percentages) when the
   daemon had a reading: a five-minute sample is the cadence a pressure series
   wants, and riding the tick costs no new file and no new cadence.
+  **A remote host's memory rides the tree fetch**: `TREE_CMD` prints
+  `/proc/meminfo` behind its own `===` fence ahead of the pid table, and the
+  table now carries `rss` and `comm`, so `splitTreeStream` yields a `memory`
+  of the same shape `getMemory` gives (`parseMeminfo`: pressure is what isn't
+  `MemAvailable`) — no extra round trip, and a host with no `/proc/meminfo`
+  (a Mac) reports `null` rather than zeros. It reaches the board through the
+  source, read off `remoteMemo` like `ppids` (`hostMemories`): a stats key per
+  host in the memory key's shape, a meter pair per machine on the activity
+  page, `statusKey` alerting on the *worst* machine with its name where
+  `MEMORY` goes, and `hosts` on the tick for a pressure chart per host — a
+  host that has gone away keeps its history, since `memoryHosts` walks the
+  records rather than the live memo.
   They carry the Claude sessions' own resident footprint too (`cl` MB, `cln`
   processes, off `ps -axo rss=,comm=` matched on the `claude` basename) —
   resident only, so a floor: what's swapped out is invisible to ps.

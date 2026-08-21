@@ -12,7 +12,7 @@ import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
-import { memorySeries, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
+import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
 import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
@@ -75,6 +75,23 @@ let arrivals = 0;
 // source that fetch produced. Held here for the daemon's lifetime, like
 // folderOrder — a host that goes away is evicted by remoteSources().
 const remoteMemo = new Map();
+
+// Each reachable host's memory, off the source its last fetch produced — the
+// same place `ppids` is read from. Absent for a host that is failing or that
+// has no /proc/meminfo; present means the numbers are at most one remote poll
+// old, which is the staleness every other remote fact on the board carries.
+function hostMemories() {
+  const out = {};
+  for (const [host, entry] of remoteMemo) if (entry.source?.memory) out[host] = entry.source.memory;
+  return out;
+}
+
+// Every machine's pressure, this one first, for whichever key or page wants
+// the worst of them — `null` is the local host's name here as everywhere.
+function allPressures() {
+  const local = getMemory();
+  return [{ host: null, pressure: local.pressure }, ...Object.entries(hostMemories()).map(([host, m]) => ({ host, pressure: m.pressure }))];
+}
 // Not os.tmpdir(): on macOS that's a long per-user path under /var/folders,
 // and fetchSource's ControlPath socket (that path, plus "cm-<host>", plus
 // ssh's own random suffix while the bind is in flight) blows the ~104-byte
@@ -166,7 +183,7 @@ function recordHistory(sessions) {
   // overnight as a working night. See history.mjs's TICK.
   if (now - lastTick >= TICK_MS) {
     lastTick = now;
-    recordTick(now, undefined, getMemory());
+    recordTick(now, undefined, getMemory(), hostMemories());
     collectTokensInBackground();
   }
   // Trimming is a whole-file rewrite, so it runs at startup (historyDay starts
@@ -885,16 +902,17 @@ async function drawStatus(deck, btn, sessions, pulse) {
   const now = Date.now() / 1000;
   const attention = attentionQueue(sessions, now);
   const free = freeQueue(sessions, now);
-  const { kind, count, longest, pct } = statusKey(attention, free, now, getMemory().pressure);
+  const { kind, count, longest, pct, host } = statusKey(attention, free, now, allPressures());
 
   if (kind === "memory") {
     // The attention key's own shape and red, with the pressure where the
-    // count goes; the blink window is keyed on crossing the line, not on the
-    // number moving. `count` is a string so the quiet-at-zero rule stays off.
-    btn.renderParams = { count: `${pct}%`, longest: "", label: "MEMORY" };
+    // count goes and the machine's name under it — MEMORY for this one; the
+    // blink window is keyed on crossing the line, not on the number moving.
+    // `count` is a string so the quiet-at-zero rule stays off.
+    btn.renderParams = { count: `${pct}%`, longest: "", label: host ? host.toUpperCase() : "MEMORY" };
     if (!btn.lastCount) btn.blinkUntil = Date.now() + ATTENTION_BLINK_MS;
     btn.lastCount = 1;
-    const drawn = `memory ${pct} ${pulse}`;
+    const drawn = `memory ${host} ${pct} ${pulse}`;
     if (btn.drawn !== drawn) {
       await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, ...btn.renderParams, pulse }), { format: "rgba" });
       btn.drawn = drawn;
@@ -945,14 +963,18 @@ async function drawStatus(deck, btn, sessions, pulse) {
  */
 export const MEMORY_ALERT_PCT = 70;
 
-export function statusKey(attention, free, now, memoryPressure = null) {
+export function statusKey(attention, free, now, pressures = []) {
   const oldest = (q) => (q.length && q[0].ts ? formatAge(now - q[0].ts) : "");
   if (attention.length > 0) return { kind: "attention", count: attention.length, longest: oldest(attention) };
   // Between the two queues: sessions blocked on you still come first, but a
   // machine about to swap itself to a halt outranks "where can I start the
-  // next thing". `pct` rather than `count` so no board mistakes it for one.
-  if (typeof memoryPressure === "number" && memoryPressure > MEMORY_ALERT_PCT)
-    return { kind: "memory", pct: Math.round(memoryPressure) };
+  // next thing". `pressures` is every machine — `{host, pressure}`, host null
+  // for this one — and the worst over the line is what the key names. `pct`
+  // rather than `count` so no board mistakes it for one.
+  const worst = pressures
+    .filter((p) => typeof p.pressure === "number" && p.pressure > MEMORY_ALERT_PCT)
+    .sort((a, b) => b.pressure - a.pressure)[0];
+  if (worst) return { kind: "memory", pct: Math.round(worst.pressure), host: worst.host };
   return { kind: "free", count: free.length, longest: oldest(free) };
 }
 
@@ -1242,7 +1264,7 @@ async function boardKeys() {
   return [
     ...keys,
     { id: "__usage", kind: "usage", session, week },
-    { id: "__status", ...statusKey(attention, free, now, getMemory().pressure) },
+    { id: "__status", ...statusKey(attention, free, now, allPressures()) },
   ];
 }
 
@@ -1298,7 +1320,8 @@ export const configDeps = {
       blocked: blockedTodayTile().value,
       version: pkg.version,
       account: await getAccountName(),
-      memory: getMemory(),
+      // This machine first, then every reachable host, under its name.
+      memory: [{ name: "This Mac", ...getMemory() }, ...Object.entries(hostMemories()).map(([name, m]) => ({ name, ...m }))],
       accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }).map((a) => ({
         name: a.email,
         active: a.active,
@@ -1515,39 +1538,45 @@ export const configDeps = {
       })),
     };
 
-    // Memory pressure, against a fixed 100 rather than the busiest column —
-    // it is a percentage, and 40% has to look like 40% whatever the window
-    // held. Red over the same line the status key alerts on.
-    const mem = memorySeries(records, from, now, step);
-    const peakMem = Math.max(0, ...mem.map((r) => r.pressure));
-    const pressure = {
-      peak: `max ${peakMem}%`,
-      cols: mem.map((r, i) => ({
-        label: title(new Date(r.hour)),
-        tick: tickAt(i),
-        unseen: r.samples === 0,
-        bars: r.samples === 0 ? [] : [{ state: r.pressure > MEMORY_ALERT_PCT ? "memory-high" : "memory", pct: r.pressure }],
-        value: r.samples === 0 ? "not watched" : `pressure ${r.pressure}% · swap ${r.swap}%`,
-      })),
-    };
-
-    // What the Claude sessions themselves held, resident, at each bucket's
-    // high-water mark. Scaled to the busiest column like the token charts —
-    // this is an amount, not a share.
-    const peakClaude = Math.max(1, ...mem.map((r) => r.claudeMb));
+    // Memory, one pair of charts per machine — this one first, then every
+    // host any tick in the window reported for (a host that has gone away
+    // still has its history). Pressure is against a fixed 100 rather than
+    // the busiest column — it is a percentage, and 40% has to look like 40%
+    // whatever the window held — red over the same line the status key
+    // alerts on; the sessions' own resident footprint scales to its busiest
+    // column like the token charts, an amount rather than a share.
     const gb = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
-    const claudeMemory = {
-      peak: `max ${gb(peakClaude)}`,
-      cols: mem.map((r, i) => ({
-        label: title(new Date(r.hour)),
-        tick: tickAt(i),
-        unseen: r.samples === 0,
-        bars: r.claudeMb ? [{ state: "claude", pct: (r.claudeMb / peakClaude) * 100 }] : [],
-        value: r.samples === 0 ? "not watched" : `${gb(r.claudeMb)} · ${r.claudeCount} session${r.claudeCount === 1 ? "" : "s"}`,
-      })),
+    const memoryCharts = (name, host) => {
+      const mem = memorySeries(records, from, now, step, host);
+      const peakMem = Math.max(0, ...mem.map((r) => r.pressure));
+      const peakClaude = Math.max(1, ...mem.map((r) => r.claudeMb));
+      return {
+        name,
+        pressure: {
+          peak: `max ${peakMem}%`,
+          cols: mem.map((r, i) => ({
+            label: title(new Date(r.hour)),
+            tick: tickAt(i),
+            unseen: r.samples === 0,
+            bars: r.samples === 0 ? [] : [{ state: r.pressure > MEMORY_ALERT_PCT ? "memory-high" : "memory", pct: r.pressure }],
+            value: r.samples === 0 ? "not watched" : `pressure ${r.pressure}% · swap ${r.swap}%`,
+          })),
+        },
+        claude: {
+          peak: `max ${gb(peakClaude)}`,
+          cols: mem.map((r, i) => ({
+            label: title(new Date(r.hour)),
+            tick: tickAt(i),
+            unseen: r.samples === 0,
+            bars: r.claudeMb ? [{ state: "claude", pct: (r.claudeMb / peakClaude) * 100 }] : [],
+            value: r.samples === 0 ? "not watched" : `${gb(r.claudeMb)} · ${r.claudeCount} session${r.claudeCount === 1 ? "" : "s"}`,
+          })),
+        },
+      };
     };
+    const memory = [memoryCharts("This Mac", null), ...memoryHosts(records).map((h) => memoryCharts(h, h))];
 
-    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions, pressure, claudeMemory };
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions, memory };
   },
 };
 
@@ -2193,9 +2222,9 @@ async function run() {
         const versionTile = { label: "Version", value: pkg.version };
         // This machine's memory, in the account keys' shape: pressure and
         // swap in use, no border since it's neither active nor inactive.
-        const mem = getMemory();
-        const memoryTile = { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: mem.pressure }, { caps: "SWAP", pct: mem.swap }] };
-        const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), memoryTile, versionTile].slice(
+        const memTile = (title, m) => ({ kind: "usage", title, rows: [{ caps: "RAM", pct: m.pressure }, { caps: "SWAP", pct: m.swap }] });
+        const memoryTiles = [memTile("memory", getMemory()), ...Object.entries(hostMemories()).map(([h, m]) => memTile(h, m))];
+        const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), ...memoryTiles, versionTile].slice(
           0,
           DETAIL_BACK_INDEX
         );
