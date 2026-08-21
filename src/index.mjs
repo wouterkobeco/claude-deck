@@ -2139,13 +2139,6 @@ async function run() {
     // task or a subagent shouldn't throw the board away, and the back key is
     // right there saying so.
     if (view.kind === "detail") {
-      if (buttons[control.index]?.stat?.memory) {
-        // Toggles the unit on every memory key; the next stats poll redraws
-        // them, since the rows change and so does their signature.
-        memGb = !memGb;
-        lastPress = null;
-        return;
-      }
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
       // Nothing here seeds a repeat: the tiles aren't session keys, and the
       // back key may still be sitting on a session whose project matches the
@@ -2200,8 +2193,16 @@ async function run() {
       return;
     }
     if (view.kind === "stats") {
-      // Stat tiles aren't clickable; the back key and the config key are.
-      // (The usage key still toggles the board off, handled above.)
+      // Stat tiles aren't clickable, save three: the back key, the config
+      // key, and any memory key. (The usage key still toggles the board off,
+      // handled above.)
+      if (buttons[control.index]?.stat?.memory) {
+        // Toggles the unit on every memory key; the next stats poll redraws
+        // them, since the rows change and so does their signature.
+        memGb = !memGb;
+        lastPress = null;
+        return;
+      }
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
       if (control.index === CONFIG_INDEX) {
         // Not awaited, and it cannot throw: a press is a synchronous handler,
