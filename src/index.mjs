@@ -20,6 +20,7 @@ import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, rende
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
+import { getMemory } from "./memory.mjs";
 
 // One source of truth for the version — read from package.json rather than
 // duplicated here, so a bump is one edit. Read rather than imported with
@@ -2113,7 +2114,11 @@ async function run() {
         // nothing here fetches — so a machine without it has only the version
         // here. Sliced at the back key: four accounts is the most that fits.
         const versionTile = { label: "Version", value: pkg.version };
-        const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), versionTile].slice(
+        // This machine's memory, in the account keys' shape: pressure and
+        // swap in use, no border since it's neither active nor inactive.
+        const mem = await getMemory();
+        const memoryTile = { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: mem.pressure }, { caps: "SWAP", pct: mem.swap }] };
+        const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), memoryTile, versionTile].slice(
           0,
           DETAIL_BACK_INDEX
         );

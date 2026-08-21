@@ -130,8 +130,8 @@ depends on the extension — see Known limits.
 **Stats** — the usage key's second press. With
 [claude-swap](https://github.com/realiti4/claude-swap) installed, every
 subscription it manages gets two keys, active account first with a green border:
-session / week usage, and the time until each resets. Then the daemon's
-version. `BACK` returns, as does
+session / week usage, and the time until each resets. Then this machine's
+memory pressure and swap use, and the daemon's version. `BACK` returns, as does
 the usage key. All-time totals live on the activity page.
 
 ![The stats board](docs/img/board-stats.png)

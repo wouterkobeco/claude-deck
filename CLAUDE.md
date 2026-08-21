@@ -1458,7 +1458,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   describes. `renderUsage` grew `title`/`active`/`rows` for this rather than
   a second renderer, so the usage key and these can't drift apart; a value's
   font is sized off the row rather than the key because a titled row is a
-  fifth shorter. Then the version; back at 10, config at 11, key 12 blank.
+  fifth shorter. Then a memory key in the same shape (`memory.mjs`: RAM
+  pressure off `kern.memorystatus_level`, swap in use off `vm.swapusage` —
+  not `os.freemem()`, which macOS's file cache keeps near zero on a healthy
+  machine; no border, since it's neither active nor inactive), the version;
+  back at 10, config at 11, key 12 blank.
   Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
   under the back key. The all-time stats, the account name, the reset pair
   and blocked-today all left the deck — every one of them is on the activity page, and a

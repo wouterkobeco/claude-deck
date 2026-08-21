@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { fmt, formatModel, computeStats, getStats } from "../src/stats.mjs";
 import { refreshStats, cswapTiles } from "../src/index.mjs";
+import { parseMemory } from "../src/memory.mjs";
 
 assert.equal(fmt(950), "950");
 assert.equal(fmt(4371), "4.4k");
@@ -61,8 +62,14 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
       ],
       now
     ),
+    { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: 42 }, { caps: "SWAP", pct: 93 }] },
     { label: "Version", value: "9.9.9" },
   ];
+  assert.deepEqual(parseMemory("58", "total = 20480.00M  used = 19105.00M  free = 1375.00M  (encrypted)"), {
+    pressure: 42,
+    swap: 19105 / 20480 * 100,
+  });
+  assert.deepEqual(parseMemory("", "total = 0.00M  used = 0.00M"), { pressure: null, swap: null }, "no swap configured is unknown, not 0/0");
   assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "6d" }]);
   assert.equal(tiles[0].active, true);
   assert.deepEqual(tiles[2].rows[0], { caps: "SESSION", pct: null }, "an unknown window is a dash, not zero");
@@ -72,10 +79,10 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   assert.equal(tiles.length, 12, "the list ends at the config key");
 
   await refreshStats(deck, buttons, tiles);
-  // Two accounts plus the version fill 0..4, leaving 5–9 blank — a blank is
+  // Two accounts, memory and the version fill 0..5, leaving 6–9 blank — a blank is
   // never encoded.
   const filled = tiles.filter(Boolean).length;
-  assert.equal(filled, 7);
+  assert.equal(filled, 8);
   assert.equal(written.length, filled, "every filled key is drawn on the first pass");
   assert.ok(written.every((w) => w.bytes === 72 * 72 * 4), "each one is a full RGBA key buffer");
 
