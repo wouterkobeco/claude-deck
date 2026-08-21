@@ -207,6 +207,15 @@ const activity = {
       { label: "10:00", tick: "", bars: [{ state: "claude", pct: 40 }], value: "claude 360k" },
     ],
   },
+  // Input has its own chart — it runs orders of magnitude above output — and
+  // stacks by kind.
+  input: {
+    peak: "40M",
+    cols: [
+      { label: "09:00", tick: "9h", bars: [{ state: "input", pct: 5 }, { state: "cache-read", pct: 90 }, { state: "cache-write", pct: 5 }], value: "input 2M · cache-read 36M · cache-write 2M" },
+      { label: "10:00", tick: "", bars: [], value: "—" },
+    ],
+  },
   models: [{ label: "opus-5", bars: [{ state: "tokens", pct: 100 }], value: "1.1M" }],
   sessions: {
     peak: "3",
@@ -259,6 +268,7 @@ eq(hHtml.includes('class="account">Wouter<'), true, "the account name sits under
 eq(hHtml.includes("<h2>Accounts</h2>"), true, "cswap's accounts get their own block");
 eq(hHtml.includes('class="account active">wouter@kobeco.be · active<'), true, "the active one says so");
 eq(hHtml.split('class="limit">').length - 1, 8, "two meters for the live token, two per cswap account, two for memory");
+eq(hHtml.includes("<h2>Input tokens<span") && hHtml.includes("cache-read 36M"), true, "input gets its own stacked chart");
 eq(hHtml.includes("<h2>Memory</h2>") && hHtml.includes("Swap in use</span>"), true, "memory gets its own pair");
 eq(hHtml.includes("4h11m"), true, "including the total the pie is a share of");
 // One table now, following the same window picker as the charts above it.
@@ -292,7 +302,7 @@ eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row p
 // Three token segments, one model bar, two session segments, two token-legend
 // swatches, four state-legend swatches — and the two rate-limit meters that
 // moved onto the top of this page, which are one fill each.
-eq(hHtml.split("<i style=").length - 1, 20, "one element per bar segment, plus the legend swatches and the eight meters");
+eq(hHtml.split("<i style=").length - 1, 26, "one element per bar segment, plus the legend swatches and the eight meters");
 eq(hHtml.split('class="col unseen"').length - 1, 1, "an unwatched hour is striped rather than empty");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.
@@ -339,7 +349,7 @@ const oneVendor = await createConfigServer({
   }),
 });
 const solo = await (await fetch(oneVendor.url.replace("/?", "/activity?"))).text();
-eq(solo.split('class="legend"').length - 1, 1, "one vendor earns no legend of its own — only the states chart keeps hers");
+eq(solo.split('class="legend"').length - 1, 2, "one vendor earns no legend of its own — only the input and states charts keep theirs");
 oneVendor.server.close();
 
 // The window picker. Links rather than a select, because a select needs a

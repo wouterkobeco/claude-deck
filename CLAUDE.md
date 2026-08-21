@@ -583,8 +583,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - `src/config-server.mjs` — the config page: a local web UI, served by the
   daemon on loopback and opened from the stats board's config key, for setting
   which accent each live project wears, and — on its second tab, **Activity** —
-  for the charts nothing on a 72px key could carry: output tokens per hour, the
-  same split by model, sessions in parallel per hour coloured by state, and
+  for the charts nothing on a 72px key could carry: output tokens per hour,
+  input tokens per hour on a chart of their own (two orders of magnitude
+  bigger here, so a shared axis flattens output; stacked fresh / cache read /
+  cache write, since how much was cache is the question), the output split
+  by model, sessions in parallel per hour coloured by state, and
   the per-project time table that tab used to be. The charts are **divs whose
   width or height is a percentage, rendered on the server** like everything else
   here; there is no canvas and no chart library, because `SCRIPT` is already
@@ -1395,7 +1398,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   slot saying two things that are never both the answer: "10 sessions free" is
   not what you want to read while two are blocked on you, and once nothing is
   blocked the blocked count is a zero nobody needs a key for. `statusKey` picks
-  — attention whenever that queue has anything, free otherwise — and a press
+  — attention whenever that queue has anything, then **memory** when this
+  machine's RAM pressure is over `MEMORY_ALERT_PCT` (70: the attention key's
+  red with the percentage where the count goes, and a press opens the stats
+  board, where the memory key is), free otherwise — and a press
   opens whichever board the key is currently *showing*, so it can never open
   something the key never mentioned. It is exported and pure for the reason
   `detailLayout` is: it is written into two boards (this deck and the web one)

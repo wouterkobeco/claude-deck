@@ -1463,6 +1463,26 @@ export const configDeps = {
       })),
     };
 
+    // Input, on its own chart: it runs two orders of magnitude above output
+    // here (cache reads dominate), so sharing an axis would flatten output to
+    // a sliver. Stacked by kind, since "how much was cache" is the question.
+    const INPUT_KINDS = [
+      ["input", (r) => r.in],
+      ["cache-read", (r) => r.cacheRead],
+      ["cache-write", (r) => r.cacheWrite5m + r.cacheWrite1h + r.cacheWrite],
+    ];
+    const inputOf = (r) => INPUT_KINDS.reduce((a, [, f]) => a + f(r), 0);
+    const peakIn = scale(perBucket.map(inputOf));
+    const input = {
+      peak: `${compactCount(peakIn)}/${unit}`,
+      cols: perBucket.map((r, i) => ({
+        label: title(new Date(r.hour)),
+        tick: tickAt(i),
+        bars: INPUT_KINDS.filter(([, f]) => f(r)).map(([state, f]) => ({ state, pct: (f(r) / peakIn) * 100 })),
+        value: inputOf(r) ? INPUT_KINDS.filter(([, f]) => f(r)).map(([k, f]) => `${k} ${compactCount(f(r))}`).join(" · ") : "—",
+      })),
+    };
+
     // A model belongs to exactly one vendor, so one pass builds the lookup and
     // each bar wears the colour its meter has in the chart above — rather than
     // every model reading as one pool.
@@ -1495,7 +1515,7 @@ export const configDeps = {
       })),
     };
 
-    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, models, sessions };
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions };
   },
 };
 

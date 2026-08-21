@@ -194,6 +194,11 @@ const STATE_FILL = {
   // Amber, and deliberately not another cool hue: this is the rung that costs
   // money per run, and it should not blend into the two that are prepaid.
   "codex-api": "#ffb300",
+  // The input chart's three kinds: fresh input in the page's blue, cache reads
+  // a dimmer blue (most of the bar, least of the cost), cache writes purple.
+  input: "#4fc3f7",
+  "cache-read": "#2a6f8f",
+  "cache-write": "#ab47bc",
   busy: "#43a047",
   shell: "#43a047",
   requires_action: "#e53935",
@@ -296,7 +301,7 @@ const facts = (blocked, stats) =>
     .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, sessions, models }, status) {
+function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
@@ -341,6 +346,11 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
           : `<h2>Output tokens<span class="peak">peak ${esc(tokens.peak)}</span></h2>${columns(tokens)}${
               tokens.providers.length > 1 ? legend(tokens.providers) : ""
             }${tokens.cost ? `<p class="cost">${esc(tokens.cost)}</p>` : ""}`
+      }
+      ${
+        !input || input.cols.length === 0
+          ? ""
+          : `<h2>Input tokens<span class="peak">peak ${esc(input.peak)}</span></h2>${columns(input)}${legend(["input", "cache-read", "cache-write"])}`
       }
       ${
         models.length === 0
