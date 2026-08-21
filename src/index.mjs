@@ -1617,6 +1617,13 @@ export const configDeps = {
 // the labels themselves land on something meaningful: a day boundary at 6h
 // buckets, roughly a working week at daily ones.
 const PERIODS = {
+  // Half of "24h" at the same hourly step, so it's inherently below the
+  // 24-column band that comment describes further down — there's no finer
+  // unit than an hour to make up the difference, since the stored records
+  // are hourly. A short window is just a short chart.
+  "12h": { name: "12 hours", span: 12 * 3600000, step: 3600000, unit: "h", every: 3,
+    format: (d) => `${d.getHours()}h`,
+    title: (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
   "24h": { name: "24 hours", span: 24 * 3600000, step: 3600000, unit: "h", every: 3,
     format: (d) => `${d.getHours()}h`,
     title: (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
@@ -1629,6 +1636,16 @@ const PERIODS = {
   "3mo": { name: "3 months", span: 90 * 86400000, step: 2 * 86400000, unit: "2d", every: 9,
     format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
     title: (d) => d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) },
+  // Double "3mo"'s span at double its step (4 days rather than 2), landing on
+  // the same 45 columns rather than drifting outside the 24-52 band.
+  "6mo": { name: "6 months", span: 180 * 86400000, step: 4 * 86400000, unit: "4d", every: 9,
+    format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
+    title: (d) => d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) },
+  // A capped year at "all"'s own weekly step (53 columns) — "all" is what's
+  // left for whatever is actually open-ended past this.
+  "1y": { name: "1 year", span: 365 * 86400000, step: 7 * 86400000, unit: "week", every: 9,
+    format: (d) => d.toLocaleDateString([], { day: "numeric", month: "short" }),
+    title: (d) => `week of ${d.toLocaleDateString([], { day: "numeric", month: "short" })}` },
   // No span: "all" is however far back the logs go, which is up to a year for
   // tokens and a month for state history.
   all: { name: "all time", span: null, step: 7 * 86400000, unit: "week", every: 4,

@@ -76,9 +76,10 @@ The page's **Activity** tab is everything a 72px key can't carry:
   daemon wasn't running is drawn striped rather than empty — a sleeping
   machine and an idle one both produce silence, and they must not look alike.
 
-Pick the window at the top — **24 hours** (hourly), **7 days** (6-hourly),
-**30 days** (daily) or **all time** (weekly) — and everything on the page
-follows it. Hover any column for its bucket and its number.
+Pick the window at the top — **12** or **24 hours** (hourly), **7 days**
+(6-hourly), **30 days** (daily), **3** or **6 months** (every 2 or 4 days),
+**1 year** or **all time** (weekly) — and everything on the page follows it.
+Hover any column for its bucket and its number.
 - **Where the time went**: time each project spent working, waiting, and
   blocked on you over the same window, with a pie beside it showing each
   project's share. Slices wear the colour the project wears on the deck, so

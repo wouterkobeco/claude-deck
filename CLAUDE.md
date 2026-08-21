@@ -710,9 +710,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   one set of numbers that is honest at arm's length reads fine at two feet,
   and the reverse was what was wrong.
   **`PERIODS` in `index.mjs` is the whole window feature** —
-  24h/7d/30d/3mo/all-time, each with the bucket it groups into, chosen to keep the
-  column count in the 24–52 band (fewer and a bar chart is a table; more and
-  the columns are thinner than the gaps). Every step is a whole number of
+  12h/24h/7d/30d/3mo/6mo/1y/all-time, each with the bucket it groups into,
+  chosen to keep the column count in the 24–52 band (fewer and a bar chart is
+  a table; more and the columns are thinner than the gaps) — except 12h,
+  which is inherently under that band at 12 columns: it halves 24h at the
+  same hourly step, and there's no finer unit than an hour to make up the
+  difference since the stored records are hourly, so a short window is just
+  a short chart. 6mo is 3mo doubled at double the step (4 days rather than
+  2), landing back on 3mo's own 45 columns rather than drifting past 52. 1y
+  is a capped year at "all"'s own weekly step (53 columns); "all" itself is
+  whatever is actually open-ended past a year. Every other step is a whole
+  number of
   hours because the stored records *are* hourly, so changing window is a
   regrouping rather than a re-read — that is why a year of history costs the
   same page load as a day. The window arrives as `?p=`, and the page renders
