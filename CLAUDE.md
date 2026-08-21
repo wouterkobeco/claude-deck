@@ -625,6 +625,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   than `deps.activity()`, kept apart because the two are cached on completely
   different clocks (`getUsage` 5m, `getStats` and blocked-today 30s, against a
   regroup of records the picker drives).
+  **Under the rate limits: cswap's accounts, then memory.** Both reuse the
+  `limits` meter pair — the memory one with its own captions and no reset
+  line, which is what the optional second argument and an `undefined` reset
+  are for — so a meter looks the same whatever it measures.
   **The account name sits under "Rate limits", not beside the version.** It's
   the same `getAccountName()` the deck's own stats board reads, off
   `~/.claude.json` rather than the OAuth token — the two are on this page

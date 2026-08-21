@@ -247,10 +247,10 @@ const periodBar = (token, periods, here) =>
 // hold a percentage and the window it is a percentage *of* at once — and 81%
 // twenty minutes before a reset means something quite different from 81% on
 // day one of seven. Here each window is one meter with its own reset under it.
-const limits = (usage) =>
+const limits = (usage, [a, b] = ["Session · 5 hours", "Week · 7 days"]) =>
   `<div class="limits">${[
-    ["Session · 5 hours", usage.session, usage.sessionResets],
-    ["Week · 7 days", usage.week, usage.weekResets],
+    [a, usage.session, usage.sessionResets],
+    [b, usage.week, usage.weekResets],
   ]
     .map(
       ([caps, pct, resets]) => `<div class="limit">
@@ -259,7 +259,7 @@ const limits = (usage) =>
         <div class="ltrack"><i style="width:${
           typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
         }%;background:${usageColor(pct ?? 0)}"></i></div>
-        <div class="lsub">${resets ? `resets in ${esc(resets)}` : "reset time unknown"}</div>
+        <div class="lsub">${resets === undefined ? "" : resets ? `resets in ${esc(resets)}` : "reset time unknown"}</div>
       </div>`
     )
     .join("")}</div>`;
@@ -275,6 +275,17 @@ const accounts = (list) =>
           (a) => `<div class="account${a.active ? " active" : ""}">${esc(a.name)}${a.active ? " · active" : ""}</div>${limits(a.usage)}`
         )
         .join("")}`;
+
+// This machine's memory, the same two meters the deck's memory key draws.
+// `limits` takes a session/week pair, so the rows are passed under those
+// names with their own captions.
+const memory = (mem) =>
+  mem
+    ? `<h2>Memory</h2>${limits(
+        { session: mem.pressure, week: mem.swap },
+        ["RAM pressure", "Swap in use"]
+      )}`
+    : "";
 
 // Today's blocked time and the all-time totals, as a grid that reflows rather
 // than the seven-row list they were on a page of their own — they sit above
@@ -320,6 +331,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, sessions, mod
       ${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}
       ${limits(status.usage)}
       ${accounts(status.accounts ?? [])}
+      ${memory(status.memory)}
       ${facts(status.blocked, status.stats)}
       <h2>Where the tokens went</h2>
       ${periodBar(token, periods, period)}

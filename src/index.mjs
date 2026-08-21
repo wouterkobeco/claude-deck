@@ -1277,6 +1277,7 @@ export const configDeps = {
       blocked: blockedTodayTile().value,
       version: pkg.version,
       account: await getAccountName(),
+      memory: await getMemory(),
       accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }).map((a) => ({
         name: a.email,
         active: a.active,
