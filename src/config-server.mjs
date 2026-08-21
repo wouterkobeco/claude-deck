@@ -303,17 +303,15 @@ function resetPhrase(compact) {
 // in its place, when the reset itself isn't known — there's nothing to
 // state, and a bar under an unstated reset reads as "just reset" when it
 // really means "we don't know".
-function resetRow(label, staticCaps, pct, resetCompact) {
+function resetRow(label, pct, resetCompact) {
   const phrase = resetPhrase(resetCompact);
-  return phrase ? { caps: `${label} resets in ${phrase}`, pct } : { caps: staticCaps, pct, unknown: true, sub: "reset time unknown" };
+  return phrase ? { caps: `${label} resets in ${phrase}`, pct } : { caps: label, pct, unknown: true, sub: "reset time unknown" };
 }
 
-// The two windows of a subscription.
+// The two windows of a subscription. No "· 5 hours"/"· 7 days" reminder on
+// the static caption — a week being 7 days isn't information.
 const rateLimits = (usage) =>
-  limits([
-    resetRow("Session", "Session · 5 hours", usage.session, usage.sessionResets),
-    resetRow("Week", "Week · 7 days", usage.week, usage.weekResets),
-  ]);
+  limits([resetRow("Session", usage.session, usage.sessionResets), resetRow("Week", usage.week, usage.weekResets)]);
 
 // Every subscription claude-swap manages, each with the same two meters, read
 // off its cache. Nothing when cswap isn't installed — the block is absent, not
