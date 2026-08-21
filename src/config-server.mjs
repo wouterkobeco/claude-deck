@@ -277,11 +277,11 @@ const limits = (usage, [a, b] = ["Session · 5 hours", "Week · 7 days"]) =>
 const accounts = (list) =>
   list.length === 0
     ? ""
-    : `<h2>Accounts</h2>${list
+    : list
         .map(
           (a) => `<div class="account${a.active ? " active" : ""}">${esc(a.name)}${a.active ? " · active" : ""}</div>${limits(a.usage)}`
         )
-        .join("")}`;
+        .join("");
 
 // This machine's memory, the same two meters the deck's memory key draws.
 // `limits` takes a session/week pair, so the rows are passed under those
@@ -335,9 +335,13 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
     ${iconHeader(token, "activity", "Activity")}
     <main class="wide">
       <h2 class="first">Rate limits</h2>
-      ${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}
-      ${limits(status.usage)}
-      ${accounts(status.accounts ?? [])}
+      ${
+        // With cswap the active account is first in that list and already
+        // carries the live numbers, so the plain pair would say it twice.
+        status.accounts?.length
+          ? accounts(status.accounts)
+          : `${status.account ? `<div class="account">${esc(status.account)}</div>` : ""}${limits(status.usage)}`
+      }
       ${memory(status.memory)}
       ${facts(status.blocked, status.stats)}
       <h2>Where the tokens went</h2>
