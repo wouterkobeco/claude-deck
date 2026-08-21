@@ -32,9 +32,11 @@ const projects = () => [
   { key: REMOTE, name: "x", host: "pi", accent: ACCENTS[1] },
   { key: NASTY, name: '<script>"x', host: null, accent: ACCENTS[2] },
 ];
+let nameCalls = [];
 const { server, url } = await createConfigServer({
   projects,
   setAccent: (...args) => calls.push(args),
+  setName: (...args) => nameCalls.push(args),
 });
 const base = new URL(url).origin;
 const token = new URL(url).searchParams.get("t");
@@ -50,6 +52,7 @@ const page = await fetch(url);
 eq(page.status, 200, "the page is served");
 const html = await page.text();
 eq(html.includes("alpha"), true, "the page lists a local project");
+eq(html.includes('class="pname">alpha<'), true, "the name sits in its own hoverable span");
 eq(html.includes("pi:/home/pi/x"), true, "and a remote one by its full key");
 // Eight swatches per project, three projects.
 eq(html.split('name="accent"').length - 1, 24, "eight swatches per project");
@@ -103,6 +106,34 @@ const ok = await post(`folder=${encodeURIComponent(ALPHA)}&accent=${encodeURICom
 eq(ok.status, 303, "a valid POST redirects back to the page");
 eq(ok.headers.get("location"), `/?t=${token}`, "carrying the token, or the redirect would 403");
 eq(calls, [[ALPHA, ACCENTS[3]]], "and setAccent was called once with what was asked for");
+
+// Renaming. Same shape as /accent: the token gate, the live-project guard,
+// and setName called with the trimmed value.
+const rename = (body, t = token) =>
+  fetch(`${base}/rename?t=${t}`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+nameCalls = [];
+eq(
+  (await rename(`folder=${encodeURIComponent(ALPHA)}&name=${encodeURIComponent("  Renamed  ")}`, "wrong")).status,
+  403,
+  "a rename with a bad token is refused"
+);
+eq(nameCalls.length, 0, "and nothing was mutated");
+eq((await rename(`folder=%2Fprojects%2Fgone&name=x`)).status, 400, "a folder that is not live is refused");
+eq(nameCalls.length, 0, "and nothing was mutated");
+const renamed = await rename(`folder=${encodeURIComponent(ALPHA)}&name=${encodeURIComponent("  Renamed  ")}`);
+eq(renamed.status, 303, "a valid rename redirects back to the page");
+eq(renamed.headers.get("location"), `/?t=${token}`, "carrying the token");
+eq(nameCalls, [[ALPHA, "  Renamed  "]], "setName gets the raw value — trimming is applyRename's job, not the route's");
+// An empty name is a valid POST too — it's how a rename is cleared back to
+// the derived one, not a malformed request.
+nameCalls = [];
+eq((await rename(`folder=${encodeURIComponent(ALPHA)}&name=`)).status, 303, "an empty name clears the override rather than erroring");
+eq(nameCalls, [[ALPHA, ""]]);
 
 // Reordering. Every row carries the key the drag script reads back, and a
 // handle that is the only draggable thing on it — dragging from anywhere on

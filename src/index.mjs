@@ -14,7 +14,7 @@ import { publishSessions } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
 import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
 import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
-import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
+import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
@@ -157,7 +157,7 @@ async function liveSessions() {
     // The same basename the key's caps bar shows: a project is named by its
     // window's folder, never by a session's cwd.
     if (!liveProjects.has(key)) {
-      liveProjects.set(key, { name: s.folder.split("/").filter(Boolean).pop() ?? "", host: s.host ?? null });
+      liveProjects.set(key, { name: folderNames.get(key) ?? s.folder.split("/").filter(Boolean).pop() ?? "", host: s.host ?? null });
     }
   }
   // Not awaited: the file is for a window that has not restarted yet, so it is
@@ -243,6 +243,11 @@ function collectTokensInBackground() {
 // reason twenty projects share eight accents is that only the ones on the
 // board at once have to differ.
 const folderAccent = new Map();
+// A folder's custom display name, when one has been set from the config
+// page — read by keyFields (the deck's caps bar) and liveProjects (the config
+// page's own list and the activity page's project table), so a rename reaches
+// every place a project's name is shown from the one map.
+const folderNames = new Map();
 function claimAccent(folder, liveFolders) {
   const taken = new Set([...liveFolders].filter((f) => f !== folder).map((f) => folderAccent.get(f)));
   return ACCENTS.find((c) => !taken.has(c)) ?? ACCENTS[folderAccent.size % ACCENTS.length];
@@ -258,8 +263,9 @@ function claimAccent(folder, liveFolders) {
  * machine happens to be wearing today. Exported for the same reason
  * assignSlots is — none of this is visible without a deck.
  */
-export function loadAccents(entries, order = []) {
+export function loadAccents(entries, order = [], names = []) {
   for (const [folder, accent] of entries) folderAccent.set(folder, accent);
+  for (const [folder, name] of names) folderNames.set(folder, name);
   projectOrder.length = 0;
   projectOrder.push(...order);
   reindexProjects();
@@ -642,7 +648,7 @@ function keyFields(session) {
         session.name ??
         session.cwd.split("/").filter(Boolean).pop() ??
         session.cwd,
-    project: session.folder.split("/").filter(Boolean).pop() ?? "",
+    project: folderNames.get(folderKeyFor(session)) ?? session.folder.split("/").filter(Boolean).pop() ?? "",
     // `ts` is 0 when the registry entry carried neither statusUpdatedAt nor
     // updatedAt; formatAge would otherwise report the age of the epoch.
     age: session.ts ? formatAge(Date.now() / 1000 - session.ts) : "",
@@ -1175,10 +1181,10 @@ function blockedTodayTile() {
 // enough to be worth a frame, it is the wrong file.
 let lastAccentsWritten = null;
 function persistAccents() {
-  const snapshot = JSON.stringify([[...folderAccent], projectOrder]);
+  const snapshot = JSON.stringify([[...folderAccent], projectOrder, [...folderNames]]);
   if (snapshot === lastAccentsWritten) return;
   lastAccentsWritten = snapshot;
-  writeProjects(folderAccent, projectOrder);
+  writeProjects(folderAccent, projectOrder, folderNames);
 }
 
 // The board page's tiles, in the deck's own order and with the deck's own
@@ -1296,6 +1302,10 @@ export const configDeps = {
     // Immediately rather than on the next poll, so a pick survives a daemon
     // killed a second later. persistAccents' snapshot makes that poll's own
     // call a no-op.
+    persistAccents();
+  },
+  setName: (folder, name) => {
+    applyRename(folderNames, folder, name);
     persistAccents();
   },
   reorder: (folder, before) => {
@@ -1974,7 +1984,7 @@ async function run() {
   // Read here rather than at module scope: importing this file must not touch
   // the real ~/.claude, or every check inherits this machine's live palette.
   const remembered = readProjects();
-  loadAccents(remembered.accents, remembered.order);
+  loadAccents(remembered.accents, remembered.order, remembered.names);
   // Which build is driving the deck — worth stating, since a worktree and the
   // main checkout can each be started against the same device.
   console.log(`claude-streamdeck v${pkg.version} — connected to ${deck.PRODUCT_NAME}`);

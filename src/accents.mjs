@@ -58,6 +58,7 @@ export const ACCENTS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#fff176", "#4db6ac", "
  */
 export function readProjects(root = CLAUDE_DIR) {
   const accents = new Map();
+  const names = new Map();
   const positioned = [];
   try {
     for (const [key, value] of Object.entries(JSON.parse(readFileSync(fileIn(root), "utf8")))) {
@@ -66,25 +67,33 @@ export function readProjects(root = CLAUDE_DIR) {
       const accent = typeof value === "string" ? value : value?.accent;
       if (typeof accent === "string") accents.set(key, accent);
       if (typeof value?.order === "number") positioned.push([key, value.order]);
+      // A string-shaped value (the pre-rename file) has no name to read; the
+      // object shape's `name` reaches a DOM text node in config-server and an
+      // SVG caps bar in render.mjs, so a non-string here is dropped the same
+      // way a non-string accent is.
+      if (typeof value?.name === "string") names.set(key, value.name);
     }
   } catch {
-    return { accents: new Map(), order: [] };
+    return { accents: new Map(), order: [], names: new Map() };
   }
   // Sorted rather than trusted: the numbers are only ever this module's own
   // array indices, but nothing stops a hand-edited file holding gaps, ties or
   // negatives, and the array is what everything downstream reads.
-  return { accents, order: positioned.sort((a, b) => a[1] - b[1]).map(([key]) => key) };
+  return { accents, order: positioned.sort((a, b) => a[1] - b[1]).map(([key]) => key), names };
 }
 
-export function writeProjects(accents, order, root = CLAUDE_DIR) {
+export function writeProjects(accents, order, names, root = CLAUDE_DIR) {
   try {
     const at = new Map(order.map((key, i) => [key, i]));
     const out = {};
-    // Union of both, so a project that has one and not the other still gets a
-    // record — a colour claimed on a poll where assignSlots hasn't run yet,
-    // or a position for something whose accent was evicted by a swap.
-    for (const key of new Set([...accents.keys(), ...order])) {
-      out[key] = { accent: accents.get(key), order: at.get(key) };
+    // Union of all three, so a project missing one still gets a record — a
+    // colour claimed on a poll where assignSlots hasn't run yet, a position
+    // for something whose accent was evicted by a swap, or a rename on a
+    // project with neither yet.
+    for (const key of new Set([...accents.keys(), ...order, ...names.keys()])) {
+      const rec = { accent: accents.get(key), order: at.get(key) };
+      if (names.has(key)) rec.name = names.get(key);
+      out[key] = rec;
     }
     writeFileSync(fileIn(root), JSON.stringify(out, null, 2));
   } catch {
@@ -143,4 +152,24 @@ export function applyAccentChoice(accents, liveKeys, folder, accent) {
     else accents.delete(f);
   }
   accents.set(folder, accent);
+}
+
+/**
+ * A custom display name for `folder`, or clear it back to the derived one.
+ *
+ * Pure, parameterised rather than a module-level map, for the same reason
+ * `applyAccentChoice` is: the persisting caller lives in index.mjs. Unlike an
+ * accent, a name has no contention to resolve — nothing stops two projects
+ * sharing a label, and this isn't the place to police that — so it is just
+ * trim-and-set, or trim-to-empty-and-delete to fall back to the folder's own
+ * basename. Capped well under what a key's caps bar or a config-page row can
+ * hold; a longer string would simply be wrapped/ellipsized where it's drawn,
+ * but a pasted-in essay has no business surviving to disk.
+ */
+export const MAX_NAME_LENGTH = 60;
+
+export function applyRename(names, folder, name) {
+  const trimmed = String(name ?? "").trim().slice(0, MAX_NAME_LENGTH);
+  if (trimmed) names.set(folder, trimmed);
+  else names.delete(folder);
 }

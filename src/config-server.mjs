@@ -62,6 +62,13 @@ const STYLE = `
   .handle { cursor:grab; color:#00000088; font-size:15px; line-height:1;
             letter-spacing:0; user-select:none }
   .handle:active { cursor:grabbing }
+  /* Same box the static caps text sits in, so hovering to reveal the input
+     doesn't reflow the row. Border only on the input — the span has none, so
+     an unedited name looks exactly like plain text until you hover it. */
+  .pname, .pname-input { font: inherit; letter-spacing: inherit; text-transform: inherit;
+                          color: inherit; background: none; flex: 1; min-width: 0 }
+  .pname-input { border: none; border-bottom: 1px dashed #00000088; padding: 0 }
+  .pname-input:focus { outline: none; border-bottom-style: solid }
   .key { background:#1b1b1b; padding:5px 10px; font-size:11px; color:#757575;
          font-family:ui-monospace,monospace; word-break:break-all }
   .swatches { display:flex; gap:6px; margin-top:8px }
@@ -441,7 +448,7 @@ function page(token, projects) {
       <input type="hidden" name="folder" value="${esc(p.key)}">
       <div class="bar" style="background:${esc(p.accent)}">
         <span class="handle" draggable="true" title="drag to reorder">⠿</span>
-        <span>${esc(p.name)}</span>
+        <span class="pname">${esc(p.name)}</span>
       </div>
       <div class="key">${esc(p.key)}</div>
       <div class="swatches">${ACCENTS.map(
@@ -501,6 +508,50 @@ async function send(path, params) {
   const fresh = new DOMParser().parseFromString(html, "text/html");
   document.body.replaceChildren(...fresh.body.childNodes);
 }
+
+// Hovering a project's name swaps it for a text input in place — same box,
+// so nothing reflows — without moving focus there itself: a mouseover that
+// stole focus would yank it away from whatever you were doing elsewhere on
+// the page. Only a real interaction (click, then Enter or click-away) saves.
+document.addEventListener("mouseover", (e) => {
+  const span = e.target.closest(".pname");
+  if (!span) return;
+  const input = document.createElement("input");
+  input.className = "pname-input";
+  input.value = span.textContent;
+  span.replaceWith(input);
+});
+// Reverts an untouched hover back to plain text with no request sent — only
+// losing focus (blur, below) is a save. document.activeElement is what tells
+// "hovered away" apart from "edited, then tabbed/clicked out while the mouse
+// happened to leave first".
+document.addEventListener("mouseout", (e) => {
+  const input = e.target.closest(".pname-input");
+  if (!input || document.activeElement === input) return;
+  const span = document.createElement("span");
+  span.className = "pname";
+  span.textContent = input.value;
+  input.replaceWith(span);
+});
+// Enter must not fall through to the row's own submit (the swatch buttons
+// make this form implicitly submittable) — preventDefault on keydown is what
+// stops that — and then blurs, which is what actually saves.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.classList?.contains("pname-input")) return;
+  e.preventDefault();
+  e.target.blur();
+});
+// blur doesn't bubble, so this listens on the capture phase instead — the
+// same delegation every other listener here uses, just the one phase that
+// reaches this event at all.
+document.addEventListener(
+  "blur",
+  (e) => {
+    if (!e.target.classList?.contains("pname-input")) return;
+    send("/rename", { folder: e.target.closest(".row").dataset.key, name: e.target.value });
+  },
+  true
+);
 
 document.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -745,6 +796,20 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         }
         // A 400 above is a dead end by contrast — only a stale page or a
         // forged request gets one, and the way back for both is the config key.
+        res.writeHead(303, { Location: `/?t=${token}` });
+        return res.end();
+      }
+
+      if (req.method === "POST" && url.pathname === "/rename") {
+        const raw = await readBody(req);
+        if (raw === null) return send(res, 400, "body too large");
+        const form = new URLSearchParams(raw);
+        const folder = form.get("folder");
+        const name = form.get("name") ?? "";
+        // Same guard as /accent: a page left open past a project closing
+        // can't write a name for it either.
+        if (!deps.projects().some((p) => p.key === folder)) return send(res, 400, "unknown project");
+        deps.setName(folder, name);
         res.writeHead(303, { Location: `/?t=${token}` });
         return res.end();
       }

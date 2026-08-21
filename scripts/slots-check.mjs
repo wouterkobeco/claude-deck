@@ -201,9 +201,11 @@ eq(accentFor(rem(3)), ACCENTS[5], "a project with two sessions keeps its colour"
 // like a first run, forever.
 const accentDir = mkdtempSync(join(tmpdir(), "streamdeck-accents-"));
 const roundAccents = new Map([["/projects/x", "#4fc3f7"], ["pi:/home/pi/x", "#ff8a65"]]);
-writeProjects(roundAccents, ["pi:/home/pi/x", "/projects/x"], accentDir);
+const roundNames = new Map([["/projects/x", "Renamed X"]]);
+writeProjects(roundAccents, ["pi:/home/pi/x", "/projects/x"], roundNames, accentDir);
 eq([...readProjects(accentDir).accents], [...roundAccents], "accents round-trip");
 eq(readProjects(accentDir).order, ["pi:/home/pi/x", "/projects/x"], "and so does the order, not the write order");
+eq([...readProjects(accentDir).names], [...roundNames], "and a rename, for a project that has one");
 eq([...readProjects(join(accentDir, "nope")).accents], [], "a missing file reads as nothing remembered");
 eq(readProjects(join(accentDir, "nope")).order, [], "and no order either");
 

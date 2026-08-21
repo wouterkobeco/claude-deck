@@ -752,6 +752,24 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   Verified by driving it in a real browser, since nothing else can: two drags
   and a swatch click, each after a body swap, produced the right `reorder` and
   `setAccent` calls.
+  **A project's name can be overridden from the same page.** Hovering a
+  row's name swaps it for a text input in place — same box, so nothing
+  reflows — without moving focus there, since a mouseover that stole focus
+  would yank it away from whatever else you were doing on the page; Enter or
+  losing focus (click elsewhere) is what saves, over `POST /rename`. Storage
+  is the same file and the same shape as an accent: `accents.mjs`'s
+  `readProjects`/`writeProjects` grew a third map (`names`, keyed the same
+  way) and a third field on each record (`name`), read into a module-level
+  `folderNames` in `index.mjs` beside `folderAccent`. `applyRename` is
+  trim-and-set or trim-to-empty-and-delete — clearing the field is how a
+  rename reverts to the folder's own basename — and unlike an accent there is
+  no contention to resolve: nothing stops two projects sharing a label, and
+  policing that isn't this feature's job. **One map, every place a project's
+  name is shown**: `keyFields` (the deck's own caps bar, looked up by
+  `folderKeyFor` so two hosts sharing a path can rename independently),
+  `liveProjects` (the config page's list and the activity page's project
+  table both read off it), so a rename reaches the deck without a separate
+  wiring path at each site.
   **`POST /order` takes what the pointer was over, not where the row should
   go** — `target` plus `side` (`above`/`below`), never a computed anchor. That
   split was learned the hard way: the arithmetic started in the browser, where

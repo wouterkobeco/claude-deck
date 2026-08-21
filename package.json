@@ -1,6 +1,6 @@
 {
   "name": "claude-deck",
-  "version": "1.1.85",
+  "version": "1.1.86",
   "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
   "main": "src/index.mjs",
   "directories": {
