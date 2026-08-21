@@ -323,6 +323,8 @@ eq(hHtml.includes('class="account">Wouter<'), false, "with cswap accounts the pl
 eq(hHtml.includes("<h2>Accounts</h2>"), false, "and they sit under Rate limits rather than a heading of their own");
 eq(hHtml.includes('class="account active">wouter@kobeco.be · active<'), true, "the active one says so");
 eq(hHtml.split('class="limit">').length - 1, 8, "two per cswap account, two per machine for memory — the live pair is the active account's");
+eq(hHtml.includes("Week resets in 6 days"), true, "a known reset is stated directly in the title, not a separate line");
+eq(hHtml.includes('class="lcap lonly">Session reset time is unknown<'), true, "an unknown reset is one centered line and nothing else — no bar, no percentage");
 eq(hHtml.includes("<h2>Input tokens<span") && hHtml.includes("cache-read 36M"), true, "input gets its own stacked chart");
 eq(hHtml.includes("Memory held by Claude sessions · This Mac<span") && hHtml.includes("17 sessions"), true, "the sessions' own footprint has a chart, named once there are two machines");
 eq(hHtml.includes("<h2>Memory pressure · pi<span"), true, "and the host gets its own");

@@ -171,7 +171,12 @@ const STYLE = `
   .account { font-size:12px; color:#757575; margin:-8px 0 14px }
   .limits + .account { margin-top:18px }
   .limits { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)) }
-  .limit { background:#1b1b1b; border-radius:8px; padding:16px 18px }
+  .limit { background:#1b1b1b; border-radius:8px; padding:16px 18px; box-sizing:border-box;
+           min-height:108px; display:flex; flex-direction:column; justify-content:center }
+  /* The one-line "reset time is unknown" card: a bit larger since it's the
+     only thing in the card, and centered since it no longer sits beside a
+     percentage the way every other caption does. */
+  .lcap.lonly { flex:none; font-size:13px; text-align:center }
   .lrow { display:flex; align-items:baseline; gap:12px }
   .lcap { flex:1; font-size:11px; letter-spacing:.14em; text-transform:uppercase;
           color:#9e9e9e; font-weight:700 }
@@ -182,10 +187,6 @@ const STYLE = `
   /* The half a key has no room for: a percentage means one thing twenty
      minutes before its window turns over and another on day one of seven. */
   .lsub { font-size:12px; color:#757575 }
-  /* Same vertical space the bar + its sub-line took, so a card with an
-     unknown reset isn't a different height from its neighbours. */
-  .lunknown { height:8px; margin:12px 0 8px; padding-top:8px; text-align:center;
-              font-size:12px; color:#757575 }
   /* A grid rather than the seven stacked rows these were on their own page:
      they sit above the charts now, and a column of them would push the thing
      you came for below the fold.
@@ -273,23 +274,24 @@ const periodBar = (token, periods, here) =>
 // hold a percentage and the window it is a percentage *of* at once — and 81%
 // twenty minutes before a reset means something quite different from 81% on
 // day one of seven. Here each window is one meter with its own reset under it.
-// `unknown` rows skip the bar entirely rather than drawing one for a number
-// that would be meaningless (0% isn't "just reset", it's "we don't know") —
-// centered text in its place instead.
+// `unknownOnly` rows are one line and nothing else — no bar, no percentage,
+// no separate sub-line — because there is nothing else to say: a percentage
+// beside an unstated reset reads as "we know the number but not the clock",
+// when the honest answer is "we don't know either". `.limit` centers its
+// content vertically and carries a floor height, so this one line's card is
+// no shorter than its neighbour's four.
 const limits = (rows) =>
   `<div class="limits">${rows
-    .map(
-      ({ caps, pct, sub, unknown }) => `<div class="limit">
-        <div class="lrow"><span class="lcap">${esc(caps)}</span>
-          <span class="lpct">${typeof pct === "number" ? Math.round(pct) + "%" : "—"}</span></div>
-        ${
-          unknown
-            ? `<div class="lunknown">${esc(sub)}</div>`
-            : `<div class="ltrack"><i style="width:${
-                typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
-              }%;background:${usageColor(pct ?? 0)}"></i></div>
-        <div class="lsub">${esc(sub ?? "")}</div>`
-        }
+    .map((row) =>
+      row.unknownOnly
+        ? `<div class="limit"><span class="lcap lonly">${esc(row.caps)}</span></div>`
+        : `<div class="limit">
+        <div class="lrow"><span class="lcap">${esc(row.caps)}</span>
+          <span class="lpct">${typeof row.pct === "number" ? Math.round(row.pct) + "%" : "—"}</span></div>
+        <div class="ltrack"><i style="width:${
+          typeof row.pct === "number" ? Math.min(100, Math.max(0, row.pct)) : 0
+        }%;background:${usageColor(row.pct ?? 0)}"></i></div>
+        <div class="lsub">${esc(row.sub ?? "")}</div>
       </div>`
     )
     .join("")}</div>`;
@@ -306,13 +308,14 @@ function resetPhrase(compact) {
 // A rate-limit window. The title states the reset directly — "Session
 // resets in 5 hours" — rather than a static caption plus a "resets in 5h"
 // line under it, which said the window's name once and its unit twice for
-// one fact. Falls back to the static caption, with no bar and centered text
-// in its place, when the reset itself isn't known — there's nothing to
-// state, and a bar under an unstated reset reads as "just reset" when it
-// really means "we don't know".
+// one fact. When the reset itself isn't known there is nothing to state and
+// nothing else worth showing beside it either — a percentage next to an
+// unstated reset reads as knowing the number but not the clock, not "we
+// don't know at all" — so the whole row collapses to one line naming
+// exactly that.
 function resetRow(label, pct, resetCompact) {
   const phrase = resetPhrase(resetCompact);
-  return phrase ? { caps: `${label} resets in ${phrase}`, pct } : { caps: label, pct, unknown: true, sub: "reset time unknown" };
+  return phrase ? { caps: `${label} resets in ${phrase}`, pct } : { unknownOnly: true, caps: `${label} reset time is unknown` };
 }
 
 // The two windows of a subscription. No "· 5 hours"/"· 7 days" reminder on

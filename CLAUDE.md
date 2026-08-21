@@ -663,10 +663,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   hours" rather than a static "Session · 5 hours" caption plus a "resets in
   5h" line underneath, which said the unit twice — and the caption's "5
   hours"/"7 days" was never information anyway, just the window's own fixed
-  length. `resetRow` falls back to the bare window name ("Session", "Week"),
-  with no bar and centered text in its place (`.lunknown`), only when the
-  reset itself isn't known — a bar under an unstated reset reads as "just
-  reset" when it means "we don't know".
+  length. When the reset itself isn't known, `resetRow` doesn't fall back to
+  a caption at all — the whole row collapses to one centered line, "Session
+  reset time is unknown", and nothing else: no bar, no percentage, since a
+  number beside an unstated reset reads as "we know the figure but not the
+  clock" when the honest answer is "we don't know either". `.limit` is a
+  centered flex column with a floor height (`min-height`) precisely so that
+  one-line card isn't shorter than its four-line neighbour — CSS grid's own
+  row-stretch only equalises cards sharing one `.limits` container (each
+  account gets its own), so the floor height is what keeps every rate-limit
+  card on the page the same height regardless of which account it belongs to.
   **Under "Rate limits": every cswap account, or the plain pair without
   cswap — never both.** The active account leads that list and already
   carries the daemon's live numbers, so drawing the plain pair above it said
