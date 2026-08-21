@@ -358,7 +358,7 @@ eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row p
 // Three token segments, one model bar, two session segments, two token-legend
 // swatches, four state-legend swatches — and the two rate-limit meters that
 // moved onto the top of this page, which are one fill each.
-eq(hHtml.split("<i style=").length - 1, 29, "one element per bar segment, plus the legend swatches and the eight meters");
+eq(hHtml.split("<i style=").length - 1, 26, "one element per bar segment, plus the legend swatches and the eight meters");
 eq(hHtml.split('class="col unseen"').length - 1, 3, "an unwatched hour is striped rather than empty — in the sessions and both memory charts");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.
@@ -605,8 +605,8 @@ eq(board.includes('<p class="sver">Claude Deck v9.9.9</p>'), true, "the sheet ca
 eq((await fetch(`${bBase}/status?t=${bToken}`)).status, 404, "the page they used to live on is gone");
 const act = await (await fetch(`${bBase}/activity?t=${bToken}`)).text();
 eq(act.includes("82%"), true, "the session window's percentage is on the activity page");
-eq(act.includes("resets in 2h"), true, "beside when that window turns over");
-eq(act.includes("resets in 7d"), true, "and the same for the week");
+eq(act.includes("Session resets in 2 hours"), true, "the reset is stated directly in the title");
+eq(act.includes("Week resets in 7 days"), true, "and the same for the week");
 eq(act.includes("41m"), true, "today's blocked time, which the deck lost a slot for once");
 eq(act.includes("9.9.9"), true, "and the daemon's own version");
 eq(act.split("<script>").length - 1, 2, "a stat label named <script> does not reach it as a third tag, beside the header's own and the page's");

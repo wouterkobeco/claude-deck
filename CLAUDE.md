@@ -659,6 +659,12 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   than `deps.activity()`, kept apart because the two are cached on completely
   different clocks (`getUsage` 5m, `getStats` and blocked-today 30s, against a
   regroup of records the picker drives).
+  **A rate-limit meter's title states its own reset**: "Session resets in 5
+  hours" rather than a static "Session · 5 hours" caption plus a "resets in
+  5h" line underneath, which said the unit twice. `resetRow` falls back to
+  the static caption, with no bar and centered text in its place
+  (`.lunknown`), only when the reset itself isn't known — a bar under an
+  unstated reset reads as "just reset" when it means "we don't know".
   **Under "Rate limits": every cswap account, or the plain pair without
   cswap — never both.** The active account leads that list and already
   carries the daemon's live numbers, so drawing the plain pair above it said

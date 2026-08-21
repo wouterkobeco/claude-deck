@@ -175,6 +175,10 @@ const STYLE = `
   /* The half a key has no room for: a percentage means one thing twenty
      minutes before its window turns over and another on day one of seven. */
   .lsub { font-size:12px; color:#757575 }
+  /* Same vertical space the bar + its sub-line took, so a card with an
+     unknown reset isn't a different height from its neighbours. */
+  .lunknown { height:8px; margin:12px 0 8px; padding-top:8px; text-align:center;
+              font-size:12px; color:#757575 }
   /* A grid rather than the seven stacked rows these were on their own page:
      they sit above the charts now, and a column of them would push the thing
      you came for below the fold.
@@ -262,25 +266,53 @@ const periodBar = (token, periods, here) =>
 // hold a percentage and the window it is a percentage *of* at once — and 81%
 // twenty minutes before a reset means something quite different from 81% on
 // day one of seven. Here each window is one meter with its own reset under it.
+// `unknown` rows skip the bar entirely rather than drawing one for a number
+// that would be meaningless (0% isn't "just reset", it's "we don't know") —
+// centered text in its place instead.
 const limits = (rows) =>
   `<div class="limits">${rows
     .map(
-      ({ caps, pct, sub }) => `<div class="limit">
+      ({ caps, pct, sub, unknown }) => `<div class="limit">
         <div class="lrow"><span class="lcap">${esc(caps)}</span>
           <span class="lpct">${typeof pct === "number" ? Math.round(pct) + "%" : "—"}</span></div>
-        <div class="ltrack"><i style="width:${
-          typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
-        }%;background:${usageColor(pct ?? 0)}"></i></div>
-        <div class="lsub">${esc(sub ?? "")}</div>
+        ${
+          unknown
+            ? `<div class="lunknown">${esc(sub)}</div>`
+            : `<div class="ltrack"><i style="width:${
+                typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0
+              }%;background:${usageColor(pct ?? 0)}"></i></div>
+        <div class="lsub">${esc(sub ?? "")}</div>`
+        }
       </div>`
     )
     .join("")}</div>`;
 
-// The two windows of a subscription, each with its reset under it.
+// "5h" -> "5 hours", "45m" -> "45 minutes", "6d" -> "6 days".
+const UNIT_WORDS = { h: "hour", m: "minute", d: "day" };
+function resetPhrase(compact) {
+  const m = /^(\d+)([hmd])$/.exec(compact ?? "");
+  if (!m) return null;
+  const n = Number(m[1]);
+  return `${n} ${UNIT_WORDS[m[2]]}${n === 1 ? "" : "s"}`;
+}
+
+// A rate-limit window. The title states the reset directly — "Session
+// resets in 5 hours" — rather than a static caption plus a "resets in 5h"
+// line under it, which said the window's name once and its unit twice for
+// one fact. Falls back to the static caption, with no bar and centered text
+// in its place, when the reset itself isn't known — there's nothing to
+// state, and a bar under an unstated reset reads as "just reset" when it
+// really means "we don't know".
+function resetRow(label, staticCaps, pct, resetCompact) {
+  const phrase = resetPhrase(resetCompact);
+  return phrase ? { caps: `${label} resets in ${phrase}`, pct } : { caps: staticCaps, pct, unknown: true, sub: "reset time unknown" };
+}
+
+// The two windows of a subscription.
 const rateLimits = (usage) =>
   limits([
-    { caps: "Session · 5 hours", pct: usage.session, sub: usage.sessionResets ? `resets in ${usage.sessionResets}` : "reset time unknown" },
-    { caps: "Week · 7 days", pct: usage.week, sub: usage.weekResets ? `resets in ${usage.weekResets}` : "reset time unknown" },
+    resetRow("Session", "Session · 5 hours", usage.session, usage.sessionResets),
+    resetRow("Week", "Week · 7 days", usage.week, usage.weekResets),
   ]);
 
 // Every subscription claude-swap manages, each with the same two meters, read
