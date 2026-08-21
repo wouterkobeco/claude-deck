@@ -12,7 +12,7 @@ import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
-import { concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
+import { memorySeries, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
 import { collectTokens, compactTokens, earliestBucket, groupTokens, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
@@ -166,7 +166,7 @@ function recordHistory(sessions) {
   // overnight as a working night. See history.mjs's TICK.
   if (now - lastTick >= TICK_MS) {
     lastTick = now;
-    recordTick(now);
+    recordTick(now, undefined, getMemory());
     collectTokensInBackground();
   }
   // Trimming is a whole-file rewrite, so it runs at startup (historyDay starts
@@ -1515,7 +1515,23 @@ export const configDeps = {
       })),
     };
 
-    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions };
+    // Memory pressure, against a fixed 100 rather than the busiest column —
+    // it is a percentage, and 40% has to look like 40% whatever the window
+    // held. Red over the same line the status key alerts on.
+    const mem = memorySeries(records, from, now, step);
+    const peakMem = Math.max(0, ...mem.map((r) => r.pressure));
+    const pressure = {
+      peak: `max ${peakMem}%`,
+      cols: mem.map((r, i) => ({
+        label: title(new Date(r.hour)),
+        tick: tickAt(i),
+        unseen: r.samples === 0,
+        bars: r.samples === 0 ? [] : [{ state: r.pressure > MEMORY_ALERT_PCT ? "memory-high" : "memory", pct: r.pressure }],
+        value: r.samples === 0 ? "not watched" : `pressure ${r.pressure}% · swap ${r.swap}%`,
+      })),
+    };
+
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions, pressure };
   },
 };
 

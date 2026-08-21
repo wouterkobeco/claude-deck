@@ -196,6 +196,8 @@ const STATE_FILL = {
   "codex-api": "#ffb300",
   // The input chart's three kinds: fresh input in the page's blue, cache reads
   // a dimmer blue (most of the bar, least of the cost), cache writes purple.
+  memory: "#4fc3f7",
+  "memory-high": "#e53935",
   input: "#4fc3f7",
   "cache-read": "#2a6f8f",
   "cache-write": "#ab47bc",
@@ -301,7 +303,7 @@ const facts = (blocked, stats) =>
     .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models }, status) {
+function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, pressure }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
@@ -361,6 +363,11 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
         sessions.cols.length === 0
           ? ""
           : `<h2>Sessions in parallel<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+      }
+      ${
+        !pressure || pressure.cols.length === 0 || pressure.cols.every((c) => c.unseen)
+          ? ""
+          : `<h2>Memory pressure<span class="peak">${esc(pressure.peak)}</span></h2>${columns(pressure)}`
       }
       ${
         rows.length === 0

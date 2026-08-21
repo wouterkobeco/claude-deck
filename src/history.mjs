@@ -45,9 +45,18 @@ export const TICK = "tick";
 export const TICK_MS = 300_000;
 
 /** Append one coverage record. Best-effort: a lost tick is a gap in a chart. */
-export function recordTick(now = Date.now(), root = CLAUDE_DIR) {
+// `memory` rides on the tick rather than in a record of its own: the tick is
+// already written every five minutes for as long as the daemon watches, which
+// is exactly the cadence a pressure series wants — RAM pressure moves over
+// minutes, not seconds, and a five-minute sample is what Activity Monitor's
+// own graph amounts to. A tick without it (older, or a failed read) is still
+// a tick; readers that draw the series skip it.
+export function recordTick(now = Date.now(), root = CLAUDE_DIR, memory = null) {
   try {
-    appendFileSync(fileIn(root), JSON.stringify({ ts: now, kind: TICK }) + "\n");
+    const rec = { ts: now, kind: TICK };
+    if (typeof memory?.pressure === "number") rec.mem = Math.round(memory.pressure);
+    if (typeof memory?.swap === "number") rec.swap = Math.round(memory.swap);
+    appendFileSync(fileIn(root), JSON.stringify(rec) + "\n");
   } catch {
     // Same as a lost transition: the next tick writes again.
   }
@@ -286,4 +295,26 @@ export function concurrency(records, from, to, now, step = 3600000) {
     }
   }
   return [...rows.values()];
+}
+
+/**
+ * Memory pressure per bucket, off the ticks that carry it: the *maximum* in
+ * each bucket, not the mean — a day-wide bar that averages a two-hour swap
+ * storm into 30% has hidden the thing the chart is for. `samples` is 0 for a
+ * bucket no tick carried memory through, which draws as unseen.
+ */
+export function memorySeries(records, from, to, step = 3600000) {
+  const size = Math.max(3600000, Math.round(step / 3600000) * 3600000);
+  const start = Math.floor(from / size) * size;
+  const buckets = new Map();
+  for (let h = start; h < to; h += size) buckets.set(h, { hour: h, pressure: 0, swap: 0, samples: 0 });
+  for (const r of records) {
+    if (r.kind !== TICK || typeof r.mem !== "number") continue;
+    const b = buckets.get(Math.floor(r.ts / size) * size);
+    if (!b) continue;
+    b.samples++;
+    b.pressure = Math.max(b.pressure, r.mem);
+    b.swap = Math.max(b.swap, r.swap ?? 0);
+  }
+  return [...buckets.values()];
 }

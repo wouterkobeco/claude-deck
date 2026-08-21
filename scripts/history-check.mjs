@@ -6,7 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GONE, OUTAGE_MS, RETENTION_DAYS, TICK, TICK_MS, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory } from "../src/history.mjs";
+import { GONE, OUTAGE_MS, RETENTION_DAYS, TICK, TICK_MS, concurrency, memorySeries, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory } from "../src/history.mjs";
 
 const eq = (got, want, label) => {
   const a = JSON.stringify(got);
@@ -208,3 +208,26 @@ eq(concurrency([], 0, 3600000, 3600000)[0].samples, 0, "no records means no obse
 
 rmSync(dir, { recursive: true, force: true });
 console.log("OK: change-only records, closing records, duration and clipping, retention, concurrency");
+
+// Memory rides on the tick: the bucket keeps its maximum, a tick without it
+// is still a tick but not a sample, and a bucket with none draws unseen.
+{
+  const H0 = Date.UTC(2026, 7, 20, 9);
+  const recs = [
+    { ts: H0, kind: TICK, mem: 30, swap: 50 },
+    { ts: H0 + TICK_MS, kind: TICK, mem: 75, swap: 90 },
+    { ts: H0 + 2 * TICK_MS, kind: TICK },
+    { ts: H0 + 3600000, id: "a", folder: "/p", state: "busy" },
+  ];
+  const series = memorySeries(recs, H0, H0 + 2 * 3600000);
+  if (JSON.stringify(series) !== JSON.stringify([
+    { hour: H0, pressure: 75, swap: 90, samples: 2 },
+    { hour: H0 + 3600000, pressure: 0, swap: 0, samples: 0 },
+  ])) { console.error("FAILED memorySeries", series); process.exit(1); }
+  const dir = mkdtempSync(join(tmpdir(), "hist-"));
+  recordTick(H0, dir, { pressure: 41.6, swap: 93.2 });
+  recordTick(H0 + TICK_MS, dir, { pressure: null, swap: null });
+  const [a, b] = readHistory(dir);
+  if (a.mem !== 42 || a.swap !== 93 || "mem" in b) { console.error("FAILED recordTick memory", a, b); process.exit(1); }
+  console.log("OK: memory on the tick");
+}

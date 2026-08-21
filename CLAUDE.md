@@ -532,6 +532,13 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   sleep as six sessions working all night, which is the shape the bug takes.
   Ticks carry `kind` and no `id`; every reader that walks records skips them,
   and `summarise` is the one that would otherwise grow a phantom project.
+  **Ticks also carry memory** (`mem`, `swap`, whole percentages) when the
+  daemon had a reading: a five-minute sample is the cadence a pressure series
+  wants, and riding the tick costs no new file and no new cadence.
+  `memorySeries` keeps each bucket's *maximum*, not its mean — a day-wide bar
+  that averages a two-hour swap storm into 30% hides the thing the chart is
+  for — and the activity page draws it against a fixed 100, red over
+  `MEMORY_ALERT_PCT`, with unwatched buckets striped like the sessions chart.
 - `src/tokens.mjs` — what the tokens went on: hourly totals lifted out of
   Claude Code's transcripts, into a log that outlives them. Every assistant
   message carries `message.usage` beside an ISO timestamp, so the history is
