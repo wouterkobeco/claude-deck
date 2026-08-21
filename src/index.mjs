@@ -1558,11 +1558,14 @@ export const configDeps = {
     const memoryCharts = (name, host) => {
       const mem = memorySeries(records, from, now, step, host);
       const peakMem = Math.max(0, ...mem.map((r) => r.pressure));
+      // The newest total the window saw — a machine's RAM doesn't change
+      // between samples, so it's the one figure for the heading.
+      const totalMb = mem.map((r) => r.totalMb).filter(Boolean).pop() ?? null;
       const peakClaude = Math.max(1, ...mem.map((r) => r.claudeMb));
       return {
         name,
         pressure: {
-          peak: `max ${peakMem}%`,
+          peak: `max ${pctWithAmount(peakMem, totalMb)}`,
           cols: mem.map((r, i) => ({
             label: title(new Date(r.hour)),
             tick: tickAt(i),
