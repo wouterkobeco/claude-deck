@@ -20,16 +20,24 @@ export function parseMemory(levelLine, swapLine) {
 }
 
 let cache = { at: 0, value: { pressure: null, swap: null } };
+let inflight = null;
 
-/** Cached 5s, safe on every poll; any failure reads as unknown. */
-export async function getMemory(now = Date.now()) {
-  if (now - cache.at < TTL_MS) return cache.value;
-  let value = cache.value;
-  try {
-    const { stdout } = await run("sysctl", ["-n", "kern.memorystatus_level", "vm.swapusage"]);
-    const [level, swap] = stdout.trim().split("\n");
-    value = parseMemory(level, swap);
-  } catch {}
-  cache = { at: now, value };
-  return value;
+/**
+ * Never awaited on the poll's path: it answers from the last reading and
+ * refreshes behind itself. `sysctl` is a process spawn, and on the machine
+ * this exists to warn about — one deep into swap — a spawn measured 800ms,
+ * which inline stalled a third of the deck's ticks. Any failure keeps the
+ * last value; a first call answers unknown.
+ */
+export function getMemory(now = Date.now()) {
+  if (now - cache.at >= TTL_MS && !inflight) {
+    inflight = run("sysctl", ["-n", "kern.memorystatus_level", "vm.swapusage"])
+      .then(({ stdout }) => {
+        const [level, swap] = stdout.trim().split("\n");
+        cache = { at: Date.now(), value: parseMemory(level, swap) };
+      })
+      .catch(() => { cache = { ...cache, at: Date.now() }; })
+      .finally(() => { inflight = null; });
+  }
+  return cache.value;
 }

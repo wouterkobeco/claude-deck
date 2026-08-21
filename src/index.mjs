@@ -885,7 +885,7 @@ async function drawStatus(deck, btn, sessions, pulse) {
   const now = Date.now() / 1000;
   const attention = attentionQueue(sessions, now);
   const free = freeQueue(sessions, now);
-  const { kind, count, longest, pct } = statusKey(attention, free, now, (await getMemory()).pressure);
+  const { kind, count, longest, pct } = statusKey(attention, free, now, getMemory().pressure);
 
   if (kind === "memory") {
     // The attention key's own shape and red, with the pressure where the
@@ -1242,7 +1242,7 @@ async function boardKeys() {
   return [
     ...keys,
     { id: "__usage", kind: "usage", session, week },
-    { id: "__status", ...statusKey(attention, free, now, (await getMemory()).pressure) },
+    { id: "__status", ...statusKey(attention, free, now, getMemory().pressure) },
   ];
 }
 
@@ -1298,7 +1298,7 @@ export const configDeps = {
       blocked: blockedTodayTile().value,
       version: pkg.version,
       account: await getAccountName(),
-      memory: await getMemory(),
+      memory: getMemory(),
       accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }).map((a) => ({
         name: a.email,
         active: a.active,
@@ -2161,7 +2161,7 @@ async function run() {
         const versionTile = { label: "Version", value: pkg.version };
         // This machine's memory, in the account keys' shape: pressure and
         // swap in use, no border since it's neither active nor inactive.
-        const mem = await getMemory();
+        const mem = getMemory();
         const memoryTile = { kind: "usage", title: "memory", rows: [{ caps: "RAM", pct: mem.pressure }, { caps: "SWAP", pct: mem.swap }] };
         const statTiles = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), memoryTile, versionTile].slice(
           0,
