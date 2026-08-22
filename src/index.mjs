@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import qrcode from "qrcode-terminal";
 import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
-import { fetchSource } from "./remote-fs.mjs";
+import { fetchAccountName, fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
@@ -1392,11 +1392,16 @@ export const configDeps = {
       // Which subscription this session is actually running under — the
       // whole reason to ask per session rather than once for the board: two
       // hosts can be signed into two different accounts (this Mac just
-      // switched with cswap, a remote box may not have). Only known for a
-      // local session: `getAccountName` reads *this* machine's
-      // `~/.claude.json`, and nothing here fetches a remote host's — a
-      // remote session's account is honestly unknown rather than guessed at.
-      account: session.host ? null : await getAccountName(),
+      // switched with cswap, a remote box may not have). A remote session's
+      // is fetched on demand, right here — the one thing about a remote host
+      // this project reads outside the regular poll, because it's a 100+KB
+      // file that only changes on a login switch, not worth asking about
+      // fourteen times a minute for every host whether anyone is looking or
+      // not. Reuses that host's own poll connection's controlPath, so it
+      // rides the already-open ControlPersist socket.
+      account: session.host
+        ? await fetchAccountName(session.host, join(SCRATCH_ROOT, "cm-%h"))
+        : await getAccountName(),
       cwd: session.cwd,
       // The whole list, not taskWindow's slice: the window exists because
       // twelve keys cannot hold twenty tasks, and a scrolling page can.

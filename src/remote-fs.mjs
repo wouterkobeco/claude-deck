@@ -468,3 +468,32 @@ export async function fetchSource(host, scratchRoot) {
     return null;
   }
 }
+
+/**
+ * A remote host's signed-in account, on demand — the *only* thing here that
+ * isn't fetched by the regular poll. Everything else in this module exists to
+ * feed the 6s cadence `remoteSources` runs on every reachable host whether or
+ * not anyone is looking; this instead runs once, only when a human opens a
+ * remote session's detail panel, because `~/.claude.json` is a 100+KB file
+ * that changes on a login switch and nothing else — paying for it on every
+ * poll of every host would be exactly the constant background cost this
+ * project goes out of its way to avoid everywhere else. Reuses the same
+ * `controlPath` the poll's own connection to that host uses, so it rides the
+ * already-open, multiplexed `ControlPersist` socket rather than a fresh
+ * handshake. Best-effort like everything else here: an unreachable host, a
+ * missing file, or a shape this doesn't recognise all read as unknown.
+ */
+export async function fetchAccountName(host, controlPath) {
+  const buf = await run(["ssh", ...sshArgs(host, controlPath), "cat ~/.claude.json 2>/dev/null"], { timeoutMs: 6000 });
+  return buf ? parseAccountJson(buf.toString("utf8")) : null;
+}
+
+/** The one field this reaches into `~/.claude.json` for — same preference order `getAccountName` uses locally. */
+export function parseAccountJson(text) {
+  try {
+    const acct = JSON.parse(text)?.oauthAccount ?? {};
+    return acct.displayName || acct.emailAddress || null;
+  } catch {
+    return null;
+  }
+}

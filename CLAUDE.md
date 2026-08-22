@@ -926,11 +926,22 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   under** (`Account`, in the same facts list as Context/Model/Where) — the
   deck's own detail board doesn't carry this: its four header tiles already
   cost one task slot each out of fourteen, and this is the one fact the web
-  panel can show for free. Known only for a local session — `getAccountName`
-  reads *this* machine's `~/.claude.json`, and nothing here fetches a remote
-  host's, so a remote session honestly reads "—" rather than guessing. Two
-  hosts really can differ: a `cswap switch` here doesn't touch what a remote
-  box is signed into.
+  panel can show for free. A local session reads it off `getAccountName`
+  (this machine's own `~/.claude.json`, already cached); a remote one's is
+  `fetchAccountName` in `remote-fs.mjs` — the *one* thing this project reads
+  from a remote host outside the regular 6s poll, fetched only when a human
+  actually opens that session's panel, reusing that host's own poll
+  connection's `controlPath` so it rides the already-open `ControlPersist`
+  socket rather than a fresh handshake. On demand rather than polled for the
+  same reason `getAccountName`'s own comment gives for the local file: it's
+  100+KB and changes only on a login switch, not worth asking about
+  fourteen times a minute for every host whether anyone is looking or not.
+  `parseAccountJson` is the pure half — same displayName-then-email
+  preference `getAccountName` uses — so the untestable part is only the ssh
+  call itself, the same split every other remote read here makes. Two hosts
+  really can differ: a `cswap switch` here doesn't touch what a remote box
+  is signed into, which is the whole reason to ask per session rather than
+  once for the board.
   **The repeat rule is decided in the browser, and that is right rather than a
   shortcut**: the deck's `lastPress` is per-deck, and per-client is what the
   equivalent is here — two people looking at one board must not steal each

@@ -359,6 +359,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude-swap-backup/{sequence.json,cache/usage.json}` | every claude-swap account's 5h / 7d usage and resets, if cswap is installed — nothing is fetched |
 | `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
 | `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |
+| `ssh <host> ~/.claude.json` | that host's signed-in account, for a remote session's detail panel — fetched only when you open that panel, not on the regular poll |
 
 A session whose folder isn't open in a VS Code window is dropped: there'd be
 nothing to focus.

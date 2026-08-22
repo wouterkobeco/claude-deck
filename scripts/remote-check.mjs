@@ -41,7 +41,7 @@ await writeFile(join(dir3, `${process.pid}.json`), JSON.stringify({ folders: ["/
 assert.equal(readWindowStates(dir3)[0].host, null, "a window with no host reads null, not undefined");
 
 // --- call 1 framing -------------------------------------------------------
-import { sshArgs, splitTreeStream } from "../src/remote-fs.mjs";
+import { sshArgs, splitTreeStream, parseAccountJson } from "../src/remote-fs.mjs";
 
 // Each line is `pid ppid`. The pid set must come out exactly as it did when
 // the line held a pid alone — that set is what `isAlive` is, and a regression
@@ -396,6 +396,18 @@ for (const t of ctxTargets(hostile.concat({ sessionId: "ok-1", cwd: "/x", pid: 8
   assert.ok(!t.remote.includes(".."), `remote path has no traversal: ${t.remote}`);
 }
 
+assert.equal(
+  parseAccountJson(JSON.stringify({ oauthAccount: { displayName: "Jeroen", emailAddress: "claude2@denayer.com" } })),
+  "Jeroen",
+  "displayName wins when both are present, matching getAccountName's own preference"
+);
+assert.equal(
+  parseAccountJson(JSON.stringify({ oauthAccount: { emailAddress: "wouter@kobeco.be" } })),
+  "wouter@kobeco.be",
+  "falls back to the email when there's no display name"
+);
+assert.equal(parseAccountJson(JSON.stringify({})), null, "no oauthAccount at all is unknown, not an error");
+assert.equal(parseAccountJson("not json"), null, "unparseable content is unknown too — never thrown");
 console.log("remote-check: OK");
 
 // --- unreachable hosts -----------------------------------------------------
