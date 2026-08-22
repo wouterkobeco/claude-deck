@@ -1533,23 +1533,35 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   — attention whenever that queue has anything, then **memory** when this
   machine's RAM pressure is over `MEMORY_ALERT_PCT` (70: the attention key's
   red with the percentage where the count goes, and a press opens the stats
-  board, where the memory key is), free otherwise — and a press
-  opens whichever board the key is currently *showing*, so it can never open
-  something the key never mentioned. It is exported and pure for the reason
-  `detailLayout` is: it is written into two boards (this deck and the web one)
-  and neither is visible without the hardware or a browser, so the fold is a
-  rule rather than a branch each board decides for itself.
-  Only the attention side caches `renderParams`; the free side nulls it, since
-  only one of them pulses and stale params would let `pulse()` redraw an
-  attention frame over a free key.
-  **The free board has a third leg the fold itself doesn't cover: busy.**
-  `statusKey`'s pick is unchanged — attention if anything's waiting, free
-  otherwise — but pressing the key *while the free board is up* now continues
-  a small cycle instead of exiting like every other key on that board: free
-  board → the key relabels to a busy count (`drawBusyOnStatus`, reusing
-  `renderFree`'s shape with WORKING/FREE swapped in for FREE/BUSY) → a second
-  press opens `busyQueue`'s own board → any press there exits, same as
-  attention/free always have. `busyQueue` mirrors `freeQueue` exactly (same
+  board, where the memory key is), and the **session total** otherwise. An
+  alarm still opens exactly what it is alarming about, so a red or a pressure
+  key can never open a board it never mentioned. It is exported and pure for
+  the reason `detailLayout` is: it is written into two boards (this deck and
+  the web one) and neither is visible without the hardware or a browser, so
+  the fold is a rule rather than a branch each board decides for itself.
+  Only the attention side caches `renderParams`; the resting side nulls it,
+  since only one of them pulses and stale params would let `pulse()` redraw an
+  attention frame over a quiet key.
+  **The key names the board you are on, never the one a press would open.**
+  Resting it reads `14 SESSIONS`; on the free board `5 FREE`; on the busy
+  board `9 WORKING` — one `drawQueueOnStatus` for both of those, differing
+  only in the word. It used to tease the *next* leg instead (the busy count
+  while the free board was up), which put a number on the key describing
+  neither the board under it nor anything else on screen. The count is
+  non-nested sessions only: a subagent has no key of its own, so it is not one
+  of the things "14 sessions" is counting. There is no age line under the
+  resting count — "longest idle" says something under a free count and nothing
+  under a total.
+  **The resting key is the head of a three-leg cycle: sessions → free →
+  working.** Pressing it *while the free board is up* continues that cycle
+  instead of exiting like every other key on that board: resting → free board
+  → a second press opens `busyQueue`'s own board → any press there exits, same
+  as attention/free always have. With nothing free the first press skips
+  straight to the busy board rather than doing nothing — on a machine where
+  every session is working, a `14 SESSIONS` key that opens nothing reads as a
+  dead key, and the working board is the only leg with anything on it anyway.
+  That is what `busyCount` is doing in the press handler, and why every
+  `drawStatus` call site destructures it. `busyQueue` mirrors `freeQueue` exactly (same
   fold over own state plus nested subagents', same longest-first ranking, just
   filtered on `"busy"` instead of `"idle"`) for the same reason: a session
   whose Agent-tool subagent is still running must read the same on both queues

@@ -31,14 +31,19 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
   spent. Press it for the stats board.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
-  one has waited; when nothing is, it shows how many sessions are idle and
-  could take work now, and how long the longest-idle one has been spare.
-  Pressing it opens the queue it's showing — worst-first when blocked,
-  longest-idle-first when free.
+  one has waited, and pressing it opens that queue, worst first.
 
-  They share a key because they're never both the answer: "10 free" isn't what
-  you want to read while two sessions are waiting on you, and once nothing is
-  blocked the blocked count is a zero that doesn't need a key.
+  When nothing is, it rests on how many sessions are running — `14 SESSIONS` —
+  and a press starts a short cycle through the two halves of that number:
+  first the idle ones (`5 FREE`, longest-idle first), then the working ones
+  (`9 WORKING`, longest-busy first), then back. **The key always names the
+  board you're looking at**, so the count under your finger is the one on the
+  screen.
+
+  Blocked and the rest share a key because they're never both the answer:
+  "10 free" isn't what you want to read while two sessions are waiting on you,
+  and once nothing is blocked the blocked count is a zero that doesn't need a
+  key.
 
 Run more than 13 sessions and the extras get no key — but nothing you can act
 on disappears with them. Both queues are built from every session, not just the

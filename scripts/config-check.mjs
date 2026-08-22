@@ -800,3 +800,19 @@ console.log("OK: token gate, palette and folder validation, escaping, swatch cou
     process.exit(1);
   }
 }
+
+// The status tile's resting readout. The deck's key names whichever board is
+// up — SESSIONS at rest, FREE and WORKING on the two its cycle opens — and
+// the page has no cycle, so it only ever renders the resting one. Same
+// `statusKey` fold either way, which is the whole reason that function is
+// exported rather than being a branch inside each board's own draw call.
+{
+  const { boardGrid } = await import("../src/board-page.mjs");
+  const resting = boardGrid([{ id: "__status", kind: "sessions", count: 14 }], "t");
+  eq(resting.includes(">14<"), true, "the resting status tile counts every session");
+  eq(resting.includes(">sessions<"), true, "and says so, rather than naming a board it is not showing");
+  eq(resting.includes("alert"), false, "nothing is wrong, so nothing is red");
+  const blocked = boardGrid([{ id: "__status", kind: "attention", count: 2, longest: "6m" }], "t");
+  eq(blocked.includes(">blocked<") && blocked.includes("alert"), true, "the attention side still reads as an alarm");
+}
+console.log("OK: status tile");

@@ -491,11 +491,11 @@ function tile(k, token) {
       <div class="lbl">${k.host ? `${esc(k.host)} memory` : "memory"}</div>
     </a>`;
   }
-  if (k.kind === "attention" || k.kind === "free") {
+  if (k.kind === "attention" || k.kind === "sessions") {
     const alert = k.kind === "attention" && k.count > 0;
     return `<div class="key dark tile${alert ? " alert" : ""}"${id}>
       <div class="val">${esc(k.count)}</div>
-      <div class="lbl">${k.kind === "attention" ? "blocked" : "free"}</div>
+      <div class="lbl">${k.kind === "attention" ? "blocked" : "sessions"}</div>
       ${k.longest ? `<div class="sub">${esc(k.longest)}</div>` : ""}
     </div>`;
   }

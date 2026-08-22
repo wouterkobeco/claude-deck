@@ -793,24 +793,27 @@ eq(
   const NOW = 1000;
   const q = (n, age) => Array.from({ length: n }, (_, i) => ({ session_id: `q${i}`, ts: NOW - age + i }));
 
-  eq(statusKey(q(2, 360), q(9, 3000), NOW), { kind: "attention", count: 2, longest: "6m" },
-     "anything blocked wins, however much capacity is free");
-  eq(statusKey([], q(9, 3000), NOW), { kind: "free", count: 9, longest: "50m" },
-     "nothing blocked falls back to the free queue");
+  eq(statusKey(q(2, 360), 14, NOW), { kind: "attention", count: 2, longest: "6m" },
+     "anything blocked wins, however many sessions are running");
+  // The resting readout is the *total*, because the key names the board it is
+  // sitting on: SESSIONS here, FREE and WORKING on the two boards its own
+  // cycle opens. No age line — "longest idle" says something under a free
+  // count and nothing under a total.
+  eq(statusKey([], 14, NOW), { kind: "sessions", count: 14 },
+     "nothing blocked rests on how many sessions there are");
   const P = (local, pi) => [{ host: null, pressure: local }, { host: "pi", pressure: pi }];
-  eq(statusKey([], q(9, 3000), NOW, P(71, 20)), { kind: "memory", pct: 71, host: null }, "memory pressure over the line outranks free");
-  eq(statusKey([], q(9, 3000), NOW, P(72, 90)), { kind: "memory", pct: 90, host: "pi" }, "the worst machine is the one named");
-  eq(statusKey(q(2, 360), [], NOW, P(99, 99)).kind, "attention", "but never a session blocked on you");
-  eq(statusKey([], q(9, 3000), NOW, P(70, null)).kind, "free", "at the line is not over it, and unknown is not over it");
-  eq(statusKey([], [], NOW), { kind: "free", count: 0, longest: "" },
-     "neither is a dark key that opens nothing, not a missing one");
-  // The age is the *oldest* of that queue, which is what both renderers put
-  // under the count — attentionQueue and freeQueue each sort longest-first, so
-  // it is the head either way.
-  eq(statusKey(q(3, 7200), [], NOW).longest, "2h00m", "the age comes off the head of whichever queue is showing");
+  eq(statusKey([], 14, NOW, P(71, 20)), { kind: "memory", pct: 71, host: null }, "memory pressure over the line outranks the resting count");
+  eq(statusKey([], 14, NOW, P(72, 90)), { kind: "memory", pct: 90, host: "pi" }, "the worst machine is the one named");
+  eq(statusKey(q(2, 360), 0, NOW, P(99, 99)).kind, "attention", "but never a session blocked on you");
+  eq(statusKey([], 14, NOW, P(70, null)).kind, "sessions", "at the line is not over it, and unknown is not over it");
+  eq(statusKey([], 0, NOW), { kind: "sessions", count: 0 },
+     "an empty machine is a dark key that opens nothing, not a missing one");
+  // The age is the *oldest* of the attention queue, which is what renderAttention
+  // puts under the count — attentionQueue sorts longest-first, so it is the head.
+  eq(statusKey(q(3, 7200), 0, NOW).longest, "2h00m", "the age comes off the head of the queue being shown");
   // A queue entry with no usable timestamp draws no age rather than one
   // counted from the epoch, same rule keyFields follows.
-  eq(statusKey([{ session_id: "x", ts: 0 }], [], NOW).longest, "", "a session with no timestamp reports no age");
+  eq(statusKey([{ session_id: "x", ts: 0 }], 0, NOW).longest, "", "a session with no timestamp reports no age");
 }
 
 console.log("OK: project grouping, board tiles, status key");
