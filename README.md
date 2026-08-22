@@ -40,6 +40,10 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
   board you're looking at**, so the count under your finger is the one on the
   screen.
 
+  On the working board, a session that finishes doesn't just vanish — it goes
+  grey and its key drains a bar over five seconds before dropping off, so you
+  see it leave instead of wondering whether it was ever there.
+
   Blocked and the rest share a key because they're never both the answer:
   "10 inactive" isn't what you want to read while two sessions are waiting on you,
   and once nothing is blocked the blocked count is a zero that doesn't need a

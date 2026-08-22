@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, statusKey, loadAccents, attentionQueue, freeQueue, busyQueue, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
@@ -817,3 +817,62 @@ eq(
 }
 
 console.log("OK: project grouping, board tiles, status key");
+
+// A session leaving the working board drains rather than vanishing. None of
+// this is visible without the hardware *and* a session finishing while you
+// happen to be on that board, which is exactly the combination nobody
+// reproduces on purpose — so the arithmetic is a pure function with its own
+// map, and this is what drives it.
+{
+  const T = 1_000_000;
+  const sess = (id, state, ts) => ({ session_id: id, state, ts, nested: false, folder: "/p", host: null });
+  // ts is in seconds everywhere else in this file; only the ordering uses it,
+  // so the units just have to be consistent within the case.
+  const a = sess("a", "busy", 100);
+  const b = sess("b", "busy", 200);
+  const hold = new Map();
+
+  let tiles = busyBoardTiles([a, b], [a, b], hold, T);
+  eq(tiles.map((t) => t.session.session_id), ["a", "b"], "both busy sessions are on the board, longest-busy first");
+  eq(tiles.every((t) => t.leavingUntil === null), true, "and neither is leaving");
+
+  // `a` stops working. Its live record restamps ts — going idle is a state
+  // change — which is exactly why ordering uses the remembered busy-time one.
+  const aIdle = sess("a", "idle", 999);
+  tiles = busyBoardTiles([b], [aIdle, b], hold, T + 1000);
+  eq(tiles.map((t) => t.session.session_id), ["a", "b"], "it holds its place rather than being flung to the end");
+  eq(tiles[0].leavingUntil, T + 1000 + BUSY_LEAVE_MS, "with an absolute deadline, so poll and pulse agree");
+  eq(tiles[0].session.state, "idle", "drawn as what it now is, not as what it was");
+  eq(tiles[1].leavingUntil, null, "the one still working is untouched");
+
+  // The deadline does not restamp on every poll — that would hold it forever.
+  tiles = busyBoardTiles([b], [aIdle, b], hold, T + 3000);
+  eq(tiles[0].leavingUntil, T + 1000 + BUSY_LEAVE_MS, "the countdown started when it stopped, not on the poll that noticed again");
+
+  // ...and once it runs out, the tile is gone and the map has forgotten it.
+  tiles = busyBoardTiles([b], [aIdle, b], hold, T + 1000 + BUSY_LEAVE_MS);
+  eq(tiles.map((t) => t.session.session_id), ["b"], "the drained session drops off");
+  eq(hold.has("a"), false, "and is not remembered past its own hold");
+
+  // Back to work inside the hold: no drain, no ghost.
+  const hold2 = new Map();
+  busyBoardTiles([a, b], [a, b], hold2, T);
+  busyBoardTiles([b], [sess("a", "idle", 999), b], hold2, T + 1000);
+  const back = busyBoardTiles([a, b], [a, b], hold2, T + 2000);
+  eq(back.find((t) => t.session.session_id === "a").leavingUntil, null, "a session that goes busy again stops leaving");
+
+  // A session that *ends* is gone, not leaving — there is no key to drain and
+  // holding one would be the board claiming something is running that isn't.
+  const hold3 = new Map();
+  busyBoardTiles([a, b], [a, b], hold3, T);
+  const ended = busyBoardTiles([b], [b], hold3, T + 1000);
+  eq(ended.map((t) => t.session.session_id), ["b"], "a session that disappeared entirely never drains");
+  eq(hold3.has("a"), false, "and is dropped from the map on the spot");
+
+  // The fraction both clocks read off one deadline.
+  eq(leavingFraction(T + BUSY_LEAVE_MS, T), 1, "a fresh departure draws a full bar");
+  eq(leavingFraction(T + BUSY_LEAVE_MS, T + BUSY_LEAVE_MS / 2), 0.5, "half way through, half a bar");
+  eq(leavingFraction(T, T + 9999), 0, "past the deadline it is empty, never negative");
+  eq(leavingFraction(null, T), null, "and a tile that is not leaving has no bar at all");
+}
+console.log("OK: working-board departures");

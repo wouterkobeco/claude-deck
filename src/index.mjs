@@ -76,6 +76,12 @@ let arrivals = 0;
 // folderOrder — a host that goes away is evicted by remoteSources().
 const remoteMemo = new Map();
 
+// Which sessions the working board is still draining, `session_id ->
+// {ts, leftAt}`. Module-level for the same reason `sessionOrder` is: it is
+// the board's memory between polls, and `busyBoardTiles` is the pure half
+// that a check can drive with a map of its own.
+const busyHold = new Map();
+
 // Each reachable host's memory, off the source its last fetch produced — the
 // same place `ppids` is read from. Absent for a host that is failing or that
 // has no /proc/meminfo; present means the numbers are at most one remote poll
@@ -358,6 +364,70 @@ export function busyQueue(sessions, nowSeconds) {
     .filter((s) => !s.nested && mostUrgent([s.state, ...nestedFor(s, nested, true).map((n) => n.state)]) === "busy")
     .sort((a, b) => (a.ts || nowSeconds) - (b.ts || nowSeconds) || a.session_id.localeCompare(b.session_id));
 }
+
+/**
+ * How long a session that has stopped working stays on the working board,
+ * draining, before it drops off.
+ */
+export const BUSY_LEAVE_MS = 5000;
+
+/**
+ * What the working board actually shows: everything busy now, plus anything
+ * that stopped being busy within the last `holdMs`, still on its key with a
+ * bar draining to nothing.
+ *
+ * The point is that a key does not vanish out from under you. On a board
+ * whose whole content is "what is running", a session finishing means a tile
+ * disappearing between two polls with nothing to say it was ever there —
+ * and the eye reads a key that vanished as a key it must have mis-seen. Five
+ * seconds of drain is the difference between "it finished" and "it was never
+ * there".
+ *
+ * `hold` is the caller's own Map, mutated in place — the shape `recordStates`
+ * uses, and for the same reason: the memory has to outlive one call, and the
+ * arithmetic has to be drivable by a check that owns its own map.
+ *
+ * Departure times come back as **absolute deadlines**, not fractions: the
+ * poll computes these every 2s and `pulse()` redraws from them every 400ms,
+ * so a fraction fixed at poll time would step four times per redraw and read
+ * as a stutter. One deadline, two clocks reading it, no drift.
+ *
+ * Ordering is by the `ts` the session had **while it was busy**, not its
+ * current one — going idle restamps `statusUpdatedAt`, so sorting on the live
+ * value would fling a departing key to the end of the board on the very poll
+ * it starts to leave. It keeps its place and drains where it stood.
+ */
+export function busyBoardTiles(queue, sessions, hold, now, holdMs = BUSY_LEAVE_MS) {
+  const busy = new Set(queue.map((s) => s.session_id));
+  const alive = new Map(sessions.map((s) => [s.session_id, s]));
+  for (const s of queue) hold.set(s.session_id, { ts: s.ts, leftAt: null });
+
+  const tiles = queue.map((s) => ({ session: s, leavingUntil: null, sortTs: s.ts }));
+  for (const [id, held] of [...hold]) {
+    if (busy.has(id)) continue;
+    const session = alive.get(id);
+    // A session that ended outright is gone rather than leaving: there is no
+    // key left to drain, and holding a dead one would be the board lying
+    // about what is running.
+    if (!session) {
+      hold.delete(id);
+      continue;
+    }
+    if (held.leftAt === null) held.leftAt = now;
+    if (now - held.leftAt >= holdMs) {
+      hold.delete(id);
+      continue;
+    }
+    tiles.push({ session, leavingUntil: held.leftAt + holdMs, sortTs: held.ts });
+  }
+  return tiles.sort(
+    (a, b) => (a.sortTs || now) - (b.sortTs || now) || a.session.session_id.localeCompare(b.session.session_id)
+  );
+}
+
+/** An absolute departure deadline -> the fraction of bar still to draw, 1 down to 0. */
+export const leavingFraction = (until, now, holdMs = BUSY_LEAVE_MS) =>
+  until === null || until === undefined ? null : Math.max(0, Math.min(1, (until - now) / holdMs));
 
 // Picks one stable file inside a folder to use as the focus target. Stable
 // matters: opening the *same* file on every press reuses its existing tab
@@ -1014,12 +1084,20 @@ export function statusKey(attention, total, now, pressures = []) {
 // status key's own longest-* line already says that once for the board
 // rather than fourteen times). `kind` only reaches the drawn signature, to
 // keep each board's own change-detection separate from the others'.
-async function drawQueueTiles(deck, buttons, queue, kind) {
+async function drawQueueTiles(deck, buttons, entries, kind) {
+  const now = Date.now();
   await Promise.all(
     buttons.map(async (btn, i) => {
-      const session = queue[i] ?? null;
+      const entry = entries[i] ?? null;
+      const session = entry?.session ?? null;
       btn.assigned = session;
       btn.renderParams = null; // see refreshDetail: keeps pulse off stale data
+      // Kept apart from renderParams rather than folded into it: that field is
+      // nulled by every overlay board precisely so `pulse()` finds nothing to
+      // redraw, and the drain is the one thing on an overlay board that *must*
+      // keep redrawing. A separate field means the invariant stays exactly as
+      // strict as it was, and pulse's own view gate is what turns this on.
+      btn.leavingParams = null;
 
       if (!session) {
         if (btn.drawn !== null) {
@@ -1030,11 +1108,16 @@ async function drawQueueTiles(deck, buttons, queue, kind) {
       }
       const { label, project } = keyFields(session);
       const accent = accentFor(folderKeyFor(session));
+      const leaving = leavingFraction(entry.leavingUntil, now);
       // One object drives both the render call and the drawn signature, so a
       // field drawn but not signed can't happen — that's what left a tile's
       // gauge frozen once already, and dropped its task counter a second time.
-      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress };
-      const drawn = `${kind} ${JSON.stringify(params)}`;
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving };
+      if (entry.leavingUntil) btn.leavingParams = { ...params, leavingUntil: entry.leavingUntil };
+      // The drain is signed at whole percent: at 400ms a 5s bar moves 8% a
+      // tick, so a raw float would make every poll a fresh signature and
+      // redraw all twelve keys on a board where one of them is moving.
+      const drawn = `${kind} ${JSON.stringify({ ...params, leaving: leaving === null ? null : Math.round(leaving * 100) })}`;
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await renderKey({ ...btn, ...params }), { format: "rgba" });
       btn.drawn = drawn;
@@ -1055,7 +1138,7 @@ async function refreshFree(deck, buttons, statusButton) {
   const queue = freeQueue(sessions, now);
   const attention = attentionQueue(sessions, now);
   await drawQueueOnStatus(deck, statusButton, queue, now, "INACTIVE");
-  await drawQueueTiles(deck, buttons, queue, "free-tile");
+  await drawQueueTiles(deck, buttons, queue.map((session) => ({ session, leavingUntil: null })), "free-tile");
   return { attention: attention.length, free: queue.length };
 }
 
@@ -1093,8 +1176,15 @@ async function refreshBusy(deck, buttons, statusButton) {
   // draws this key: the poll loop still needs both to decide when to leave.
   const attention = attentionQueue(sessions, now);
   const free = freeQueue(sessions, now);
+  const tiles = busyBoardTiles(queue, sessions, busyHold, Date.now());
+  // The status key counts what is *working*, never the drainers: the number
+  // is the answer to "how much is running", and a session that has stopped
+  // is not part of it however long its key lingers.
   await drawQueueOnStatus(deck, statusButton, queue, now, "WORKING");
-  await drawQueueTiles(deck, buttons, queue, "busy-tile");
+  await drawQueueTiles(deck, buttons, tiles, "busy-tile");
+  // `busy` is likewise the real count, which is what the poll loop leaves the
+  // board on. Leaving the drainers in would hold an empty board up for five
+  // seconds after the last session stopped, showing nothing but bars.
   return { attention: attention.length, free: free.length, busy: queue.length };
 }
 
@@ -1159,7 +1249,7 @@ async function refreshAttention(deck, buttons, statusButton) {
   const sessions = await liveSessions();
   const queue = attentionQueue(sessions, Date.now() / 1000);
   const counts = await drawStatus(deck, statusButton, sessions, false);
-  await drawQueueTiles(deck, buttons, queue, "queue");
+  await drawQueueTiles(deck, buttons, queue.map((session) => ({ session, leavingUntil: null })), "queue");
   // Returned like drawStatus() so the poll loop can keep both counts live
   // from this branch too — this view's own call to drawStatus is
   // buried inside here rather than at the loop's call site.
@@ -1970,7 +2060,7 @@ async function refreshDetail(deck, buttons, view) {
 // `refresh` only redraws on change, but a pulse must redraw on a fixed beat
 // regardless. `btn.drawn` is left alone so the next `refresh`/`drawAttention`
 // still recognises a steady frame as unchanged.
-async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected) {
+async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected, isBusyView = () => false) {
   let bright = false;
   let tick = 0;
   while (!isDisconnected()) {
@@ -2024,6 +2114,31 @@ async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected)
             ];
           })(),
         ]);
+      } catch (err) {
+        console.error("pulse failed:", err.message);
+      }
+    } else if (isBusyView()) {
+      // The one thing an overlay board is allowed to animate: the bar under a
+      // session that has stopped working and is draining off this board. The
+      // 2s poll would step a 5s bar three times, which reads as a key
+      // glitching rather than a countdown, so it is redrawn here at the same
+      // 400ms as everything else that moves.
+      //
+      // Gated on the *live* view rather than on the params being present, so
+      // the instant you leave this board these stop — the params outlive the
+      // view by up to one poll, and a key redrawn from them over the sessions
+      // board would be a tile from a board you already left.
+      try {
+        const now = Date.now();
+        await Promise.all(
+          buttons
+            .filter((btn) => btn.leavingParams)
+            .map(async (btn) => {
+              const leaving = leavingFraction(btn.leavingParams.leavingUntil, now);
+              const buf = await renderKey({ ...btn, ...btn.leavingParams, leaving });
+              await deck.fillKeyBuffer(btn.index, buf, { format: "rgba" });
+            })
+        );
       } catch (err) {
         console.error("pulse failed:", err.message);
       }
@@ -2324,7 +2439,7 @@ async function run() {
 
   // Runs alongside the poll loop below, not inside it — it needs a much
   // faster beat than the 2s poll to read as a pulse.
-  pulse(deck, buttons, statusButton, () => view.kind !== "sessions", () => disconnected);
+  pulse(deck, buttons, statusButton, () => view.kind !== "sessions", () => disconnected, () => view.kind === "busy");
 
   while (!disconnected) {
     try {

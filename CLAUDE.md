@@ -1570,7 +1570,31 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   on an all-idle machine a `14 SESSIONS` key that opens nothing reads as a
   dead key, and the inactive board is the only leg with anything on it anyway.
   That is what `busyCount` is doing in the press handler, and why every
-  `drawStatus` call site destructures it. `busyQueue` mirrors `freeQueue` exactly (same
+  `drawStatus` call site destructures it.
+  **A session that stops working drains off that board rather than
+  vanishing** (`busyBoardTiles`, `BUSY_LEAVE_MS` = 5s). On a board whose whole
+  content is "what is running", a session finishing means a tile disappearing
+  between two polls with nothing to say it was ever there — and a key that
+  vanishes reads as one you must have mis-seen. It keeps its key for five
+  seconds, drawn in its *new* (idle) colour with a bar draining to nothing
+  across the task-counter row, and only then drops off. Three things in it
+  are load-bearing. Ordering uses the `ts` the session had **while busy**, not
+  its live one: going idle restamps `statusUpdatedAt`, so the live value would
+  fling a departing key to the end of the board on the very poll it starts to
+  leave. Departures are **absolute deadlines**, not fractions, because the
+  poll computes them every 2s while `pulse()` redraws them every 400ms — a
+  fraction fixed at poll time would step four times per redraw and read as a
+  stutter. And the status key's count and the poll loop's leave-when-drained
+  test both use the *real* busy queue, never the drainers: the number answers
+  "how much is running", and holding the board up for five seconds after the
+  last session stopped would show nothing but bars.
+  **This is the one thing an overlay board animates**, which is why the drain
+  params live on `btn.leavingParams` rather than `btn.renderParams` — that
+  field is nulled by every overlay board precisely so `pulse()` finds nothing,
+  and the invariant stays exactly as strict as it was. `pulse()`'s own branch
+  is gated on the *live* view being `busy`, so leaving the board stops the
+  redraws on the spot rather than one poll later, when the params are
+  overwritten. `busyQueue` mirrors `freeQueue` exactly (same
   fold over own state plus nested subagents', same longest-first ranking, just
   filtered on `"busy"` instead of `"idle"`) for the same reason: a session
   whose Agent-tool subagent is still running must read the same on both queues

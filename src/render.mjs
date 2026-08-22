@@ -236,7 +236,7 @@ function fitCaps(project, width, fontSize) {
 // advanced by pulse(). Every other caller leaves it at 0 — the steady frame is
 // the brightest one, so a board that never pulses looks the same as it always
 // did.
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell, leaving = null }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room. It never actually sits on its own red
@@ -410,7 +410,17 @@ export async function renderKey({ width, height, state, label, accent, project, 
       }
       ${squares}
       ${
-        progress
+        // A session on its way off the working board: the foot row becomes a
+        // bar that drains to nothing over the hold, instead of the task
+        // counter. It takes that row rather than a strip of its own because
+        // there is no spare row on a 72px key — and because a departing
+        // session's task count is the least interesting thing about it for
+        // the five seconds it has left. Drawn over the same 6px the squares
+        // use, so nothing below shifts.
+        typeof leaving === "number"
+          ? `<rect x="3" y="${height - 9}" width="${width - 6}" height="6" fill="#ffffff26" />
+             <rect x="3" y="${height - 9}" width="${(width - 6) * Math.min(1, Math.max(0, leaving))}" height="6" fill="#ffffffcc" />`
+          : progress
           ? taskSquares(progress, width)
               .map(
                 (s) =>

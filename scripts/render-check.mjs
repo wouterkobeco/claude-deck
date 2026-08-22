@@ -351,6 +351,71 @@ for (const [name, count, longest] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
+// The departure bar: a session that has stopped working keeps its key on the
+// working board for a few seconds with a bar draining to nothing. It takes
+// the task-counter row rather than a strip of its own, so a key that has both
+// draws the bar and not the squares — the assertion that matters, since the
+// two would overlap pixel for pixel.
+for (const [name, leaving] of [
+  ["leaving-full", 1],
+  ["leaving-half", 0.5],
+  ["leaving-empty", 0],
+]) {
+  const buf = await renderKey({
+    width,
+    height,
+    state: "idle",
+    label: "wrapping up",
+    accent: "#4fc3f7",
+    project: "kob-trace",
+    progress: { current: 2, total: 5 },
+    leaving,
+  });
+  if (buf.length !== expected) {
+    console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
+    process.exit(1);
+  }
+  await sharp(buf, { raw: { width, height, channels: 4 } })
+    .png()
+    .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
+}
+// The bar replaces the squares rather than sitting under them: with a full
+// bar the foot row is one solid run of near-white, where the same key without
+// `leaving` has a green done-square in it.
+{
+  const foot = async (leaving) => {
+    const buf = await renderKey({
+      width, height, state: "idle", label: "x", accent: "#4fc3f7", project: "p",
+      progress: { current: 2, total: 5 }, leaving,
+    });
+    // One row through the middle of the foot strip, as RGB triples.
+    const row = height - 6;
+    const px = [];
+    for (let x = 0; x < width; x++) {
+      const i = (row * width + x) * 4;
+      px.push([buf[i], buf[i + 1], buf[i + 2]]);
+    }
+    return px;
+  };
+  const withBar = await foot(1);
+  const withSquares = await foot(null);
+  const isGreen = (p) => p[1] > 150 && p[0] < 150;
+  if (withSquares.filter(isGreen).length === 0) {
+    console.error("FAILED (leaving bar): the control key should have a green done-square in its foot row");
+    process.exit(1);
+  }
+  if (withBar.filter(isGreen).length !== 0) {
+    console.error("FAILED (leaving bar): a draining key must not also draw its task squares");
+    process.exit(1);
+  }
+  const bright = (px) => px.filter((p) => p[0] > 180 && p[1] > 180 && p[2] > 180).length;
+  const half = await foot(0.5);
+  if (!(bright(withBar) > bright(half) && bright(half) > 0)) {
+    console.error(`FAILED (leaving bar): the bar should shrink — full ${bright(withBar)}px, half ${bright(half)}px`);
+    process.exit(1);
+  }
+}
+
 // One task tile per status — the three must be tellable apart at arm's length.
 for (const status of ["completed", "in_progress", "pending"]) {
   const buf = await renderTask({ width, height, number: 3, subject: "serialize client-block mutations", status });
@@ -479,4 +544,4 @@ for (const size of [180, 192, 512]) {
   eq(meta.height, size, `icon-${size} is square`);
 }
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, inactive key, back key, compacting spinner, home-screen icon");
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, inactive key, leaving bar, back key, compacting spinner, home-screen icon");
