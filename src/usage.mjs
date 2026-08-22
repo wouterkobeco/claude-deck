@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { appendFile, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -160,12 +161,80 @@ export async function fetchUsage() {
   return res.json();
 }
 
+// A short, one-way fingerprint of the access token — cheap to compare and
+// never itself exposed, the way cswap's own `credential_fingerprint` isn't
+// either. `subscriptionChange`'s type/tier pair isn't enough to catch a
+// switch on its own: two accounts on the same plan (two Max subscriptions,
+// say) share both fields, and a switch between them would go unnoticed.
+const fingerprint = (token) => (token ? createHash("sha256").update(token).digest("hex").slice(0, 16) : null);
+
+let lastFingerprint;
+let identityCheckAt = 0;
+let identityInflight = null;
+
+// Test-only: usage-check drives the identity watch with a fake credentialsFn
+// against deterministic timestamps, which only means something starting from
+// a known state — the module's own singleton state otherwise carries over
+// from whatever the real keychain looked like during an earlier test in the
+// same run.
+export function _resetIdentityWatchForTests() {
+  lastFingerprint = undefined;
+  identityCheckAt = 0;
+  // A real identityInflight from an earlier test's default (unmocked)
+  // credentials() call can still be pending here — a subprocess spawn takes
+  // longer than a microtask flush — and `watchIdentity`'s own guard would
+  // otherwise skip every check in this test until it eventually settles on
+  // its own schedule. Discarding the reference doesn't cancel the subprocess,
+  // but nothing here still cares what it resolves to.
+  identityInflight = null;
+}
+// A local keychain read, no network — cheap enough to poll far more often
+// than the 5-minute usage TTL, so a `cswap switch` (or any credential
+// rewrite) is caught within seconds rather than sitting under the old
+// account's numbers for the rest of the TTL window.
+const IDENTITY_CHECK_MS = 10_000;
+
+/**
+ * Watches the keychain credential itself for a change, independent of and
+ * far more often than `getUsage`'s own TTL — a switch changes the token the
+ * instant it's written, but the cached *numbers* have no way to know that on
+ * their own. Never awaited from `getUsage`'s synchronous path: a keychain
+ * read is local but not guaranteed instant (contention, a machine already
+ * under load), and trading a stale-for-one-more-poll account for a stalled
+ * poll every 2s would be the wrong swap. On a change it resets `cache.at` to
+ * 0 — not the value itself, which stays until the next `getUsage()` call
+ * actually resolves the real fetch that `cache.at = 0` triggers.
+ */
+function watchIdentity(now, credentialsFn) {
+  if (now - identityCheckAt < IDENTITY_CHECK_MS || identityInflight) return;
+  identityCheckAt = now;
+  identityInflight = credentialsFn()
+    .then(({ accessToken }) => {
+      const fp = fingerprint(accessToken);
+      // undefined on the very first check: that's discovery, not a switch.
+      if (lastFingerprint !== undefined && fp !== lastFingerprint) {
+        console.error("usage: keychain credential changed, forcing a refresh");
+        cache = { ...cache, at: 0 };
+        backoffMs = 0; // a new account's rate-limit history isn't the old one's
+      }
+      lastFingerprint = fp;
+    })
+    .catch(() => {
+      // Best-effort, like every other read here — a failed check just tries
+      // again on the next tick.
+    })
+    .finally(() => {
+      identityInflight = null;
+    });
+}
+
 /**
  * Cached usage, safe to call on every poll. Failures keep the last good value
  * rather than blanking the key, and are logged once per distinct message so a
  * persistent outage doesn't fill the log.
  */
-export async function getUsage(now = Date.now(), fetcher = fetchUsage) {
+export async function getUsage(now = Date.now(), fetcher = fetchUsage, credentialsFn = credentials) {
+  watchIdentity(now, credentialsFn);
   if (now - cache.at < TTL_MS + backoffMs) return cache.value;
   // `cache.at` isn't written until the fetch resolves, so without this a
   // request still in flight looks exactly like no request at all and the next

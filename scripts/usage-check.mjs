@@ -2,7 +2,7 @@
 // field names above can be confirmed against a real account.
 // Run: node scripts/usage-check.mjs [--live]
 import assert from "node:assert/strict";
-import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil, formatReset, subscriptionChange, TTL_MS } from "../src/usage.mjs";
+import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil, formatReset, subscriptionChange, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
 
 assert.deepEqual(
   parseUsage({
@@ -111,6 +111,63 @@ assert.equal(calls, 2);
 await getUsage(Date.now() + TTL_MS, slowFetcher);
 assert.equal(calls, 3, "one success must drop the backoff back to the plain TTL");
 console.log("OK: getUsage 429 backoff");
+
+// A `cswap switch` (or any keychain rewrite) changes the token instantly, but
+// the cached numbers have no way to know until something asks the keychain
+// again — the whole reason getUsage() also watches identity, on a much
+// shorter cadence than the usage TTL itself, and forces an early refetch the
+// moment the fingerprint changes.
+//
+// `cache.at` is always stamped with the real clock (not the injected `now`),
+// even in these checks, so every timestamp below is built off a single real
+// `Date.now()` read (`T0`) and stays within a few seconds of it — comfortably
+// inside the 5-minute TTL throughout. That's what lets the final assertion
+// mean what it says: the forced refetch has to be the identity watch, because
+// the TTL alone never comes close to expiring in this window.
+_resetIdentityWatchForTests();
+const flush = () => new Promise((r) => setImmediate(r));
+const IDENTITY_CHECK_MS = 10_000;
+const T0 = Date.now();
+const credA = async () => ({ accessToken: "acct-A-token", subscriptionType: "max", rateLimitTier: "t" });
+const credB = async () => ({ accessToken: "acct-B-token", subscriptionType: "max", rateLimitTier: "t" });
+let fetchesA = 0;
+const fetcherA = async () => {
+  fetchesA++;
+  return { five_hour: { utilization: 11 } };
+};
+let fetchesB = 0;
+const fetcherB = async () => {
+  fetchesB++;
+  return { five_hour: { utilization: 22 } };
+};
+
+// The very first identity read is discovery, not a change — nothing to
+// compare against yet — so it only establishes account A as the baseline.
+await getUsage(T0, fetcherA, credA);
+await flush();
+await flush();
+assert.equal(fetchesA, 0, "a first-ever identity read must not itself force a fetch");
+
+// Moments later, same account, well under the identity check's own interval:
+// no new probe fires, and the cache (untouched) needs no refetch either.
+await getUsage(T0 + 2000, fetcherA, credA);
+assert.equal(fetchesA, 0, "an unchanged identity, still within its own check interval, does nothing");
+
+// The switch: a new account's token, and enough time for the identity watch
+// to actually fire again — but the fetch it kicks off is fire-and-forget, so
+// this read still can't have seen the result yet.
+await getUsage(T0 + IDENTITY_CHECK_MS + 2000, fetcherA, credB);
+assert.equal(fetchesA, 0, "the read that triggers the identity check can't be the one it affects");
+await flush();
+await flush();
+
+// Now that it has resolved: the very next read forces a real fetch, seconds
+// after the last one and nowhere near the 5-minute TTL — and it's account
+// B's numbers, not a repeat of A's.
+const afterSwitch = await getUsage(T0 + IDENTITY_CHECK_MS + 3000, fetcherB, credB);
+assert.equal(fetchesB, 1, "forced by the fingerprint change, not by the TTL — which hasn't come close to expiring");
+assert.equal(afterSwitch.session, 22, "and the value is account B's, not a stale copy of A's");
+console.log("OK: getUsage forces a refresh when the keychain credential changes");
 
 if (process.argv.includes("--live")) {
   console.log(JSON.stringify(await fetchUsage(), null, 2));

@@ -1389,6 +1389,14 @@ export const configDeps = {
       // "claude-opus-5" is three quarters vendor, on a key or anywhere else.
       model: [(session.model ?? "").replace(/^claude-/, ""), session.effort ?? ""].filter(Boolean).join(" ") || "—",
       host: session.host ?? null,
+      // Which subscription this session is actually running under — the
+      // whole reason to ask per session rather than once for the board: two
+      // hosts can be signed into two different accounts (this Mac just
+      // switched with cswap, a remote box may not have). Only known for a
+      // local session: `getAccountName` reads *this* machine's
+      // `~/.claude.json`, and nothing here fetches a remote host's — a
+      // remote session's account is honestly unknown rather than guessed at.
+      account: session.host ? null : await getAccountName(),
       cwd: session.cwd,
       // The whole list, not taskWindow's slice: the window exists because
       // twelve keys cannot hold twenty tasks, and a scrolling page can.

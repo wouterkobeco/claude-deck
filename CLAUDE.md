@@ -349,6 +349,22 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `USAGE_LOG=1` to append one line per request (timing, status, headers, live
   session count) to `~/.claude/streamdeck-usage.jsonl` before changing any of
   this.
+  **A `cswap switch` rewrites the keychain item instantly, but the cached
+  numbers have no way to know until something asks it again.** Without a
+  separate check, the TTL alone decides that — up to 5 minutes of the old
+  account's percentage under the new account's key, the bug this was written
+  to fix. `watchIdentity` compares a fingerprint of the access token
+  (`sha256`, truncated, never the token itself — the same reason cswap's own
+  `credential_fingerprint` exists) on its own 10-second cadence, independent
+  of and much faster than the usage TTL; a change resets `cache.at` to 0,
+  which is what makes the *next* `getUsage()` call do a real fetch regardless
+  of how much TTL is left. `subscriptionType`/`rateLimitTier` alone — what
+  `subscriptionChange` already compared — isn't enough on its own: two
+  accounts on the same plan share both fields, and a switch between them
+  would go unnoticed. Never awaited from `getUsage`'s own path — fire-and-
+  forget, the same shape `getMemory()` uses, because a keychain read is local
+  but not guaranteed instant, and trading a stale-for-one-more-poll account
+  for a stalled poll every 2s would be the wrong swap.
 - `src/stats.mjs` — all-time stats board (favorite model, total tokens,
   sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output; don't
@@ -906,6 +922,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   them off, a back key carved out of a fixed index. None of those constraints
   exist on a page that scrolls, so `detailPanel` shows the *whole* task list
   and every subagent, and nothing is cut to fit a square.
+  **It's also the one place a session says which subscription it's running
+  under** (`Account`, in the same facts list as Context/Model/Where) — the
+  deck's own detail board doesn't carry this: its four header tiles already
+  cost one task slot each out of fourteen, and this is the one fact the web
+  panel can show for free. Known only for a local session — `getAccountName`
+  reads *this* machine's `~/.claude.json`, and nothing here fetches a remote
+  host's, so a remote session honestly reads "—" rather than guessing. Two
+  hosts really can differ: a `cswap switch` here doesn't touch what a remote
+  box is signed into.
   **The repeat rule is decided in the browser, and that is right rather than a
   shortcut**: the deck's `lastPress` is per-deck, and per-client is what the
   equivalent is here — two people looking at one board must not steal each

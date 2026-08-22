@@ -593,6 +593,7 @@ eq(panel.includes("1 of 3"), true, "with the count the deck's progress bar shows
 eq(panel.split('class="agent"').length - 1, 1, "every subagent too");
 eq(panel.includes("pi:/home/pi/x"), true, "a remote session says which host it is on");
 eq(panel.includes("blocked on you"), true, "requires_action is spelled out where there is room for it");
+eq(panel.includes("<dt>Account</dt><dd>—</dd>"), true, "a remote session's account is honestly unknown, not guessed at");
 
 // Both "you made that up" and "it ended while you were looking at it" — the
 // panel says the same thing either way rather than the handler guessing.
