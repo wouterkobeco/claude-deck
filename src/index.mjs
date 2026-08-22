@@ -1054,7 +1054,7 @@ async function refreshFree(deck, buttons, statusButton) {
   const now = Date.now() / 1000;
   const queue = freeQueue(sessions, now);
   const attention = attentionQueue(sessions, now);
-  await drawQueueOnStatus(deck, statusButton, queue, now, "FREE");
+  await drawQueueOnStatus(deck, statusButton, queue, now, "INACTIVE");
   await drawQueueTiles(deck, buttons, queue, "free-tile");
   return { attention: attention.length, free: queue.length };
 }

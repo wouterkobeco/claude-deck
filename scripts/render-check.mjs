@@ -315,14 +315,14 @@ for (const [name, count, longest, pulse] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
-// The free key, which mirrors the attention key's shape and inverts its
-// meaning: BUSY when nothing is spare, a count when something is. Never
-// coloured and never pulsed — green already means "working" everywhere else
-// here, so a green key for "not working" would fight the palette, and there is
-// nothing wrong to alarm about.
+// The inactive key, which mirrors the attention key's shape and inverts its
+// meaning: the quiet word when nothing is spare, a count when something is.
+// Never coloured and never pulsed — green already means "working" everywhere
+// else here, so a green key for "not working" would fight the palette, and
+// there is nothing wrong to alarm about.
 for (const [name, count, longest] of [
-  ["free-busy", 0, ""],
-  ["free-nine", 9, "42m"],
+  ["inactive-none", 0, ""],
+  ["inactive-nine", 9, "42m"],
 ]) {
   const buf = await renderFree({ width, height, count, longest });
   if (buf.length !== expected) {
@@ -334,14 +334,14 @@ for (const [name, count, longest] of [
     .toFile(new URL(`./render-check-${name}.png`, import.meta.url).pathname);
 }
 
-// The status key's busy leg reuses the same shape with label/quietWord
-// swapped — WORKING/FREE rather than FREE/BUSY, the same cross-referential
-// idiom run the other way.
+// The status key's working leg reuses the same shape with a different label —
+// one renderer for all three legs of the cycle (SESSIONS, INACTIVE, WORKING),
+// differing only in the word, which is what stops them drifting apart.
 for (const [name, count, longest] of [
-  ["busy-free", 0, ""],
-  ["busy-four", 4, "9m"],
+  ["working-none", 0, ""],
+  ["working-four", 4, "9m"],
 ]) {
-  const buf = await renderFree({ width, height, count, longest, label: "WORKING", quietWord: "FREE" });
+  const buf = await renderFree({ width, height, count, longest, label: "WORKING", quietWord: "NONE" });
   if (buf.length !== expected) {
     console.error(`FAILED (${name}): expected ${expected} bytes, got ${buf.length}`);
     process.exit(1);
@@ -479,4 +479,4 @@ for (const size of [180, 192, 512]) {
   eq(meta.height, size, `icon-${size} is square`);
 }
 
-console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, free key, back key, compacting spinner, home-screen icon");
+console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, inactive key, back key, compacting spinner, home-screen icon");

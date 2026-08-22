@@ -1543,18 +1543,24 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   since only one of them pulses and stale params would let `pulse()` redraw an
   attention frame over a quiet key.
   **The key names the board you are on, never the one a press would open.**
-  Resting it reads `14 SESSIONS`; on the free board `5 FREE`; on the busy
-  board `9 WORKING` — one `drawQueueOnStatus` for both of those, differing
-  only in the word. It used to tease the *next* leg instead (the busy count
-  while the free board was up), which put a number on the key describing
+  Resting it reads `14 SESSIONS`; on the inactive board `5 INACTIVE`; on the
+  busy board `9 WORKING` — one `drawQueueOnStatus` for both of those,
+  differing only in the word. **The label is `INACTIVE`, the code is
+  `freeQueue`/`freeCount`/`view.kind === "free"`**, and that split is
+  deliberate rather than drift: "free" is what the queue *means* to the
+  scheduler-ish half of this file (capacity, where the next piece of work can
+  go), and "inactive" is the honest thing to say about a session on a key —
+  a session sitting idle is not being offered to anyone. Same trade the
+  `offline`/`unreachable` key makes one screen over. It used to tease the *next* leg instead (the busy count
+  while the inactive board was up), which put a number on the key describing
   neither the board under it nor anything else on screen. The count is
   non-nested sessions only: a subagent has no key of its own, so it is not one
   of the things "14 sessions" is counting. There is no age line under the
-  resting count — "longest idle" says something under a free count and nothing
-  under a total.
-  **The resting key is the head of a three-leg cycle: sessions → free →
-  working.** Pressing it *while the free board is up* continues that cycle
-  instead of exiting like every other key on that board: resting → free board
+  resting count — "longest idle" says something under an inactive count and
+  nothing under a total.
+  **The resting key is the head of a three-leg cycle: sessions → inactive →
+  working.** Pressing it *while the inactive board is up* continues that cycle
+  instead of exiting like every other key on that board: resting → inactive board
   → a second press opens `busyQueue`'s own board → any press there exits, same
   as attention/free always have. With nothing free the first press skips
   straight to the busy board rather than doing nothing — on a machine where
@@ -1598,7 +1604,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   other, but ordered longest-idle first rather than by first-seen, so what
   survives truncation is the most obviously spare — a defensible cut, unlike
   the sessions board's arbitrary tail.
-  The free side is **never coloured and never pulses**: green already means
+  The inactive side is **never coloured and never pulses**: green already means
   "working" everywhere here, so a green key for "not working" would fight the
   palette, and nothing on it is wrong. Dark with a big white number, like the
   usage key it sits beside — which is also what makes the fold read cleanly,

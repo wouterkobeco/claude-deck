@@ -724,7 +724,7 @@ export async function renderTask({ width, height, number, subject, status }) {
  * with WORKING/FREE in their place (FREE there means nothing is busy, the
  * same cross-referential idiom running the other way).
  */
-export async function renderFree({ width, height, count, longest, label = "FREE", quietWord = "BUSY" }) {
+export async function renderFree({ width, height, count, longest, label = "INACTIVE", quietWord = "NONE" }) {
   const capSize = Math.round(height * 0.11);
   const countSize = Math.round(height * 0.34);
   const quiet = count === 0;

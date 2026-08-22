@@ -35,19 +35,19 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
 
   When nothing is, it rests on how many sessions are running — `14 SESSIONS` —
   and a press starts a short cycle through the two halves of that number:
-  first the idle ones (`5 FREE`, longest-idle first), then the working ones
+  first the idle ones (`5 INACTIVE`, longest-idle first), then the working ones
   (`9 WORKING`, longest-busy first), then back. **The key always names the
   board you're looking at**, so the count under your finger is the one on the
   screen.
 
   Blocked and the rest share a key because they're never both the answer:
-  "10 free" isn't what you want to read while two sessions are waiting on you,
+  "10 inactive" isn't what you want to read while two sessions are waiting on you,
   and once nothing is blocked the blocked count is a zero that doesn't need a
   key.
 
 Run more than 13 sessions and the extras get no key — but nothing you can act
 on disappears with them. Both queues are built from every session, not just the
-ones on the board, so a session that's blocked or free still reaches the status
+ones on the board, so a session that's blocked or inactive still reaches the status
 key. What a full board loses is the glance, not the reach.
 
 Each project gets a colour bar naming it, and keeps that colour — across the
