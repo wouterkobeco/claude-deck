@@ -2230,9 +2230,9 @@ async function run() {
       lastPress = null;
       return;
     }
-    // Attention and busy are the terminal legs of their own cycles: any press
-    // leaves, the way this board always has.
-    if (view.kind === "attention" || view.kind === "busy") {
+    // Attention and inactive are the terminal legs of their own cycles: any
+    // press leaves, the way this board always has.
+    if (view.kind === "attention" || view.kind === "free") {
       setView({ kind: "sessions" });
       // A session key still focuses its window on the way out — that's the
       // whole point of pressing one there.
@@ -2240,14 +2240,14 @@ async function run() {
       lastPress = press;
       return;
     }
-    // Free is the one board with a next step: the status key continues its
-    // own cycle (free -> busy) here instead of exiting like every other key
-    // on this board — the same "press opens what it's showing" rule the key
-    // already follows on the sessions board, carried one step further. Any
-    // other key still exits and focuses, same as attention/busy.
-    if (view.kind === "free") {
+    // Busy is the one board with a next step: the status key continues its
+    // own cycle (working -> inactive) here instead of exiting like every other
+    // key on this board — the same "press opens what it's showing" rule the
+    // key already follows on the sessions board, carried one step further. Any
+    // other key still exits and focuses, same as attention/inactive.
+    if (view.kind === "busy") {
       if (isStatus) {
-        setView({ kind: "busy" });
+        setView({ kind: "free" });
         return;
       }
       setView({ kind: "sessions" });
@@ -2268,12 +2268,14 @@ async function run() {
       // The memory alert opens the stats board, where the memory key lives.
       else if (memoryAlert) setView({ kind: "stats" });
       // Otherwise the key is resting on the session count, and a press starts
-      // its cycle: the free board first. With nothing free it skips straight
-      // to busy rather than doing nothing — on a machine where every session
-      // is working, "14 SESSIONS" that opens nothing reads as a dead key, and
-      // the working board is the only leg with anything to show anyway.
-      else if (freeCount > 0) setView({ kind: "free" });
+      // its cycle: the working board first — what the machine is *doing* is
+      // the more common question, and it is the half of the total that
+      // changes minute to minute. With nothing working it skips straight to
+      // inactive rather than doing nothing: on an all-idle machine a
+      // "14 SESSIONS" key that opens nothing reads as a dead key, and the
+      // inactive board is the only leg with anything to show anyway.
       else if (busyCount > 0) setView({ kind: "busy" });
+      else if (freeCount > 0) setView({ kind: "free" });
       // Nothing to open: it changes no view, so it clears the chain itself —
       // a key that does nothing must still count as "something else in
       // between". setView clears it on the other two paths.
@@ -2370,7 +2372,7 @@ async function run() {
       } else if (view.kind === "free") {
         ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await refreshFree(deck, buttons, statusButton));
         // Same exit as the attention board, for the same reason: a drained
-        // queue is twelve dark keys and a dim BUSY key, which at a glance is
+        // queue is twelve dark keys and a dim NONE key, which at a glance is
         // the daemon having died. Guarded on the view still being this one —
         // refreshFree just awaited a live read, and a press during that await
         // can already have moved elsewhere.

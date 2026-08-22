@@ -1543,8 +1543,8 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   since only one of them pulses and stale params would let `pulse()` redraw an
   attention frame over a quiet key.
   **The key names the board you are on, never the one a press would open.**
-  Resting it reads `14 SESSIONS`; on the inactive board `5 INACTIVE`; on the
-  busy board `9 WORKING` — one `drawQueueOnStatus` for both of those,
+  Resting it reads `14 SESSIONS`; on the busy board `9 WORKING`; on the
+  inactive board `5 INACTIVE` — one `drawQueueOnStatus` for both of those,
   differing only in the word. **The label is `INACTIVE`, the code is
   `freeQueue`/`freeCount`/`view.kind === "free"`**, and that split is
   deliberate rather than drift: "free" is what the queue *means* to the
@@ -1558,14 +1558,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   of the things "14 sessions" is counting. There is no age line under the
   resting count — "longest idle" says something under an inactive count and
   nothing under a total.
-  **The resting key is the head of a three-leg cycle: sessions → inactive →
-  working.** Pressing it *while the inactive board is up* continues that cycle
-  instead of exiting like every other key on that board: resting → inactive board
-  → a second press opens `busyQueue`'s own board → any press there exits, same
-  as attention/free always have. With nothing free the first press skips
-  straight to the busy board rather than doing nothing — on a machine where
-  every session is working, a `14 SESSIONS` key that opens nothing reads as a
-  dead key, and the working board is the only leg with anything on it anyway.
+  **The resting key is the head of a three-leg cycle: sessions → working →
+  inactive.** Working comes first because what the machine is *doing* is the
+  more common question, and it is the half of the total that moves minute to
+  minute; inactive is the one you go looking for when you want somewhere to
+  put the next piece of work. Pressing the key *while the busy board is up*
+  continues the cycle instead of exiting like every other key on that board:
+  resting → busy board → a second press opens `freeQueue`'s own board → any
+  press there exits, same as attention always has. With nothing working the
+  first press skips straight to the inactive board rather than doing nothing —
+  on an all-idle machine a `14 SESSIONS` key that opens nothing reads as a
+  dead key, and the inactive board is the only leg with anything on it anyway.
   That is what `busyCount` is doing in the press handler, and why every
   `drawStatus` call site destructures it. `busyQueue` mirrors `freeQueue` exactly (same
   fold over own state plus nested subagents', same longest-first ranking, just

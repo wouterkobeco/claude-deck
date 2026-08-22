@@ -35,8 +35,8 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
 
   When nothing is, it rests on how many sessions are running — `14 SESSIONS` —
   and a press starts a short cycle through the two halves of that number:
-  first the idle ones (`5 INACTIVE`, longest-idle first), then the working ones
-  (`9 WORKING`, longest-busy first), then back. **The key always names the
+  first the working ones (`9 WORKING`, longest-busy first), then the idle ones
+  (`5 INACTIVE`, longest-idle first), then back. **The key always names the
   board you're looking at**, so the count under your finger is the one on the
   screen.
 
