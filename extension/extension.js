@@ -14,7 +14,7 @@ const vscode = require("vscode");
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
 const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
-const { bundleList, restorePlanCommand, saveCommand } = require("./transfer.js");
+const { bundleList, restorePlanCommand, saveCommand, transferAvailability } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
@@ -285,6 +285,11 @@ function runInDeck(name, command) {
  * title says, and there is no honest default between two projects.
  */
 async function saveForTransfer() {
+  const here = transferAvailability(vscode.env.remoteName);
+  if (!here.ok) {
+    vscode.window.showInformationMessage(here.reason);
+    return;
+  }
   const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
   if (folders.length === 0) {
     vscode.window.showInformationMessage("Claude sessions: this window has no folder open, so there is nothing to save.");
@@ -311,6 +316,11 @@ async function saveForTransfer() {
  * would be exactly the quiet write the daemon itself is not allowed to make.
  */
 async function restoreFromBundle() {
+  const here = transferAvailability(vscode.env.remoteName);
+  if (!here.ok) {
+    vscode.window.showInformationMessage(here.reason);
+    return;
+  }
   let names = [];
   try {
     names = bundleList(readdirSync(BUNDLE_DIR));

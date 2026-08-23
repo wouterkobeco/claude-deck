@@ -73,4 +73,44 @@ function restorePlanCommand(bundle) {
   return `npm run sessions:restore -- ${shellQuote(bundle)}`;
 }
 
-module.exports = { bundleList, isBundleName, restorePlanCommand, saveCommand, shellQuote, BUNDLE_RE };
+/**
+ * Whether these two commands can run in this window at all.
+ *
+ * They can't in a remote one, and the failure is nastier than it sounds. This
+ * extension is `extensionKind: ["ui"]`, so its host runs **locally** even for a
+ * Remote-SSH window — that is the whole reason it can read the local bundle
+ * directory and the local `.deck-root`. But `createTerminal` in a remote window
+ * opens a terminal on the **remote** machine, so the local checkout path it is
+ * handed as `cwd` does not exist there and the terminal dies with
+ * `Starting directory (cwd) "…" does not exist`. Two machines, one command, and
+ * nothing in the API that lets a UI extension open a local terminal in a remote
+ * window.
+ *
+ * Gated on `remoteName` being set at all rather than on `sshHost()` resolving:
+ * a dev container, WSL and a Codespace all put the terminal somewhere other
+ * than here, and only ssh-remote is what `sshHost` recognises. The question
+ * here is "will the terminal land on this machine", which is a different and
+ * broader one than "which host is this".
+ *
+ * Refused rather than worked around, because there is nothing here to work
+ * around: the bundles, the scripts and the daemon are all on the local machine,
+ * and `sessions:save` only ever bundles local sessions anyway. A remote window
+ * has nothing of its own to offer these commands.
+ */
+function transferAvailability(remoteName) {
+  if (!remoteName) return { ok: true };
+  return {
+    ok: false,
+    reason: `Claude sessions: this window is remote (${remoteName}), and its terminals run on that machine. Save and restore run where the deck does — open one of this Mac's own windows and try there.`,
+  };
+}
+
+module.exports = {
+  bundleList,
+  isBundleName,
+  restorePlanCommand,
+  saveCommand,
+  shellQuote,
+  transferAvailability,
+  BUNDLE_RE,
+};
