@@ -202,6 +202,20 @@ assert.deepEqual(
   assert.equal(saveCommand("/Users/w/p/kob trace"), "npm run sessions:save -- '/Users/w/p/kob trace'");
   assert.throws(() => saveCommand(""), /no folder/);
 
+  // The per-window command cannot reach a remote host's sessions — its filter
+  // is a substring match on the window's own folder, and a local path never
+  // matches `/home/wouterd/...`. Measured against the live daemon: 7 remote
+  // sessions, 0 of them matching this checkout's folder. Hence a second
+  // command that filters nothing.
+  const { saveAllCommand } = require("../extension/transfer.js");
+  assert.equal(saveAllCommand(), "npm run sessions:save", "saving everything passes no filter at all");
+  assert.equal(
+    saveAllCommand().includes("--"),
+    false,
+    "no `--`, or npm hands the script an empty argument and it filters on the empty string"
+  );
+  assert.notEqual(saveAllCommand(), saveCommand("/Users/w/p"), "and it is genuinely a different command");
+
   // The extension never writes: it shows the plan and stops there.
   assert.equal(restorePlanCommand("2026-08-23-1104.tgz"), "npm run sessions:restore -- '2026-08-23-1104.tgz'");
   assert.equal(

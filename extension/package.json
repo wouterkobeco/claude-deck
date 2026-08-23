@@ -2,7 +2,7 @@
   "name": "claude-streamdeck-terminal-focus",
   "displayName": "Claude Deck terminal focus",
   "description": "Reveals the terminal of the Claude Code session whose Stream Deck key was pressed.",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "publisher": "wouterkobeco",
   "private": true,
   "license": "ISC",
@@ -29,6 +29,11 @@
       {
         "command": "claudeStreamdeck.saveSessionsForTransfer",
         "title": "Save Claude sessions for another machine",
+        "category": "Claude Stream Deck"
+      },
+      {
+        "command": "claudeStreamdeck.saveAllSessionsForTransfer",
+        "title": "Save all Claude sessions for another machine (incl. remote hosts)",
         "category": "Claude Stream Deck"
       },
       {

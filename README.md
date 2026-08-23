@@ -125,10 +125,11 @@ npm run sessions:restore -- <bundle>.tgz          # show exactly what it would d
 npm run sessions:restore -- <bundle>.tgz --write  # do it
 ```
 
-Both are in VS Code's command palette too — **Claude Stream Deck: Save Claude
-sessions for another machine**, and **… Restore Claude sessions from another
-machine…**, which lists the bundles you have and shows the plan for the one you
-pick. The palette never writes: it opens a terminal with the command, and you
+These are in VS Code's command palette too, under **Claude Stream Deck**:
+*Save Claude sessions for another machine* (this window's project), *Save all
+Claude sessions for another machine* (everything, including remote hosts), and
+*Restore Claude sessions from another machine…*, which lists the bundles you
+have and shows the plan for the one you pick. The palette never writes: it opens a terminal with the command, and you
 add `--write`. Both are local-window only — a Remote-SSH window's terminals run
 on the *other* machine, so they say so rather than failing there.
 

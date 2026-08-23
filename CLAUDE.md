@@ -545,7 +545,14 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   split out for the reason `routing.js` and `restore.js` were: a string that
   reaches a shell, in a file that can't be loaded outside an editor).
   "Save Claude sessions for another machine" bundles *this window's* folder,
-  asking which one on a multi-root window rather than picking; "Restore Claude
+  asking which one on a multi-root window rather than picking. **"Save all
+  Claude sessions…" is a second command rather than that one widening**,
+  because a remote host's sessions cannot be reached through the first at all:
+  its filter is a substring match on the window's folder, and a local path
+  never matches `/home/wouterd/...` — measured against the live daemon, 7
+  remote sessions and 0 of them matching this checkout's folder. A command
+  named for one project must not quietly bundle seven other machines'
+  conversations, so the wide one says so in its own title. "Restore Claude
   sessions from another machine…" lists `~/.claude-deck-sessions/` newest
   first and runs the **plan** — never `--write`. A palette entry that landed
   transcripts on one click would be exactly the quiet write the daemon itself

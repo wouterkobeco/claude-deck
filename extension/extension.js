@@ -14,7 +14,7 @@ const vscode = require("vscode");
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
 const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
-const { bundleList, restorePlanCommand, saveCommand, transferAvailability } = require("./transfer.js");
+const { bundleList, restorePlanCommand, saveAllCommand, saveCommand, transferAvailability } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
@@ -308,6 +308,24 @@ async function saveForTransfer() {
 }
 
 /**
+ * Everything the daemon can see, this machine's and every reachable host's.
+ *
+ * Separate from `saveForTransfer` because a remote host's sessions cannot be
+ * reached through it at all: that command filters by the window's own folder,
+ * and a local path never matches `/home/wouterd/...`. Widening it silently
+ * would make a command named for one project bundle seven other machines'
+ * conversations.
+ */
+async function saveAllForTransfer() {
+  const here = transferAvailability(vscode.env.remoteName);
+  if (!here.ok) {
+    vscode.window.showInformationMessage(here.reason);
+    return;
+  }
+  runInDeck("claude sessions: save all", saveAllCommand());
+}
+
+/**
  * Show what restoring a bundle would do — and stop there.
  *
  * The picker is the part only an editor can offer; the writing is left to the
@@ -382,6 +400,11 @@ function activate(context) {
     ),
     vscode.commands.registerCommand("claudeStreamdeck.saveSessionsForTransfer", () =>
       saveForTransfer().catch((err) => vscode.window.showErrorMessage(`Save Claude sessions failed: ${err.message}`))
+    ),
+    vscode.commands.registerCommand("claudeStreamdeck.saveAllSessionsForTransfer", () =>
+      saveAllForTransfer().catch((err) =>
+        vscode.window.showErrorMessage(`Save Claude sessions failed: ${err.message}`)
+      )
     ),
     vscode.commands.registerCommand("claudeStreamdeck.restoreSessionsFromBundle", () =>
       restoreFromBundle().catch((err) =>

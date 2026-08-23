@@ -60,6 +60,22 @@ function saveCommand(folder) {
 }
 
 /**
+ * Save everything the daemon can see — this machine's sessions and every
+ * reachable remote host's.
+ *
+ * A second command rather than a prompt on the first, and rather than the
+ * first one quietly widening: `saveCommand` is scoped to a window's own
+ * project and named for it, and a remote host's sessions are not that
+ * window's by any reading. They are also unreachable *through* it — the
+ * folder filter is a substring match, and a local window's path never matches
+ * `/home/wouterd/...`, so the per-window command would silently return none of
+ * them however many were running.
+ */
+function saveAllCommand() {
+  return "npm run sessions:save";
+}
+
+/**
  * Show what restoring a bundle *would* do. Never `--write`.
  *
  * The extension deliberately stops at the plan. Restoring writes Claude
@@ -109,6 +125,7 @@ module.exports = {
   bundleList,
   isBundleName,
   restorePlanCommand,
+  saveAllCommand,
   saveCommand,
   shellQuote,
   transferAvailability,
