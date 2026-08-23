@@ -88,8 +88,23 @@ export function transcriptPathFor({ cwd, sessionId }, root = CLAUDE_DIR) {
   return join(projectDirFor(cwd, root), `${sessionId}.jsonl`);
 }
 
+/**
+ * The directory name Claude Code files a cwd's transcripts under: every
+ * non-alphanumeric character replaced by a dash.
+ *
+ * Exported because moving a session between machines has to reproduce it
+ * exactly for the *destination* path — `claude --resume` finds a session by
+ * looking in the current directory's own slug and nowhere else (measured: the
+ * same transcript under a non-matching slug answers "No conversation found").
+ * One copy of the rule, so a transfer can never file a session somewhere
+ * resume won't look.
+ */
+export function projectSlug(cwd) {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 function projectDirFor(cwd, root = CLAUDE_DIR) {
-  return join(root, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+  return join(root, "projects", projectSlug(cwd));
 }
 
 /**

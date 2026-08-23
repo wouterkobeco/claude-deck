@@ -95,6 +95,41 @@ Hover any column for its bucket and its number.
   the table and the pie read as one thing. Idle time isn't counted — a session
   sitting open isn't time that went anywhere.
 
+## Moving sessions to another machine
+
+Claude Code deletes its own transcripts after 30 days, and they only ever
+resume on the machine that made them. Two commands carry one — with its **full
+history** — somewhere else:
+
+```bash
+npm run sessions:save                 # every live local session
+npm run sessions:save -- kob-trace    # or just the projects you name
+```
+
+That writes `~/.claude-deck-sessions/<date>-<time>.tgz` (owner-only): each
+session's whole transcript, the subagent transcripts it spawned, and the
+project's memory notes. A recent bundle here was 4.9 MB of history in a 1.4 MB
+archive.
+
+Copy it over, then on the other machine:
+
+```bash
+npm run sessions:restore                          # list what's available
+npm run sessions:restore -- <bundle>.tgz          # show exactly what it would do
+npm run sessions:restore -- <bundle>.tgz --write  # do it
+```
+
+It never writes without `--write`, and it prints where every session would
+land first. If the other machine keeps a project somewhere else, say so:
+`--to=/Users/you/projects/app=/home/you/code/app`.
+
+Each restored session gets a **new id**, because the machine you copied from
+usually still has the original and two machines writing one history under one
+id ends badly. What you get is a copy that resumes, not the same session in two
+places. Undo/file-history doesn't survive the move — it points at scratch
+directories the other machine hasn't got — and existing memory notes are never
+overwritten. The conversation itself comes across whole.
+
 The state history is `~/.claude/streamdeck-history.jsonl`, kept 30 days; the
 token totals are `~/.claude/streamdeck-tokens.jsonl`, kept a year, read from
 Claude Code's transcripts, the Codex CLI's session logs, and the ship-review
@@ -369,6 +404,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
 | `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |
 | `ssh <host> ~/.claude.json` | that host's signed-in account, for a remote session's detail panel — fetched only when you open that panel, not on the regular poll |
+| `~/.claude-deck-sessions/*.tgz` | *written and read* by the two session-transfer commands only — never by the daemon, never on a poll. Owner-only: a bundle is a verbatim copy of everything a session saw |
 
 A session whose folder isn't open in a VS Code window is dropped: there'd be
 nothing to focus.

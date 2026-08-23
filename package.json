@@ -1,6 +1,6 @@
 {
   "name": "claude-deck",
-  "version": "1.1.98",
+  "version": "1.2.0",
   "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
   "main": "src/index.mjs",
   "directories": {
@@ -31,7 +31,10 @@
     "config-check": "node scripts/config-check.mjs",
     "history-check": "node scripts/history-check.mjs",
     "tokens-check": "node scripts/tokens-check.mjs",
-    "cswap-check": "node scripts/cswap-check.mjs"
+    "cswap-check": "node scripts/cswap-check.mjs",
+    "sessions:save": "node scripts/sessions-save.mjs",
+    "sessions:restore": "node scripts/sessions-restore.mjs",
+    "session-transfer-check": "node scripts/session-transfer-check.mjs"
   },
   "keywords": [
     "claude-code",

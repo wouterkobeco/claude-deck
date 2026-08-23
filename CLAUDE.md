@@ -25,6 +25,9 @@ npm run statusline:install   # add the context-gauge block here, no question
 npm run history-check  # state log: change-only records, durations, retention, concurrency
 npm run tokens-check   # token extraction: incremental reads, grouping, compaction
 npm run remote:install -- <host>  # status line on a remote host, for its gauge
+npm run sessions:save  # bundle live sessions' full history for another machine
+npm run sessions:restore      # list bundles; -- <file> shows the plan, --write lands it
+npm run session-transfer-check # slug/remap/rewrite/plan arithmetic for the above
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
@@ -474,6 +477,53 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   something nobody opened. Published through `liveSessions()` in `index.mjs`,
   which wraps every `getLiveSessions` call site, so the file is written on every
   poll rather than only on the polls of whichever board happens to be up.
+- `src/session-transfer.mjs` — moving a session to **another machine**, with
+  its whole history, as two commands you run (`sessions:save`,
+  `sessions:restore`). Where `publish-sessions.mjs` remembers what to reopen
+  *here*, this carries it somewhere else.
+  **A session is one file**: `~/.claude/projects/<slug>/<id>.jsonl`, the slug
+  being its cwd with every non-alphanumeric replaced by a dash. Nothing else
+  is needed to resume one — no registry entry (those are live-process only),
+  no config. Measured end to end before any of this was written: a transcript
+  whose id and cwd were rewritten, dropped into the matching slug on a path
+  that had never seen it, resumed with its conversation intact.
+  **The slug must match the destination cwd**, and that is the whole
+  cross-machine problem. The same transcript under a non-matching slug answers
+  `No conversation found with session ID` — tested — so `projectSlug` is
+  exported from `sessions.mjs` and imported here rather than re-derived, since
+  two copies of that rule drifting apart files sessions where resume will not
+  look. `remapCwd` is prefix substitution, not replacement: a worktree
+  session's cwd sits *under* its window's folder, and a wholesale swap would
+  collapse every worktree onto the project's own slug.
+  **Every restore mints a fresh id.** A bundle usually comes from a machine
+  that still has the original, and two machines appending divergent histories
+  under one id has no good ending. The cost is honest and worth stating: what
+  you get is a copy that resumes, not the same session in two places.
+  **What does not survive**, deliberately: `file-history-delta`,
+  `file-history-snapshot` and `frame-link` records carry absolute paths into
+  scratch and backup directories the other machine has not got. Rewriting them
+  would invent files, so they travel unchanged — the conversation resumes and
+  only undo/file-history is poorer for it.
+  Subagent transcripts ride along (under the new id, with their `.meta.json`
+  sidecars, which is what carries an agent's description) and so does the
+  project's `memory/` — but a restore **never overwrites memory this machine
+  already has**: a note written here is this machine's own, and only files that
+  don't exist yet are written, with the rest reported rather than silently
+  skipped.
+  Bundles live in **`~/.claude-deck-sessions/`**, `0700`, files `0600` —
+  outside `~/.claude/` on purpose. The transcripts they are made of are deleted
+  on a 30-day sweep (measured: `.last-cleanup` stamped today, oldest surviving
+  transcript 31 days old), outliving that sweep is the entire point of saving
+  one, and the durable copy must not sit inside the directory whose retention
+  policy belongs to the tool doing the deleting. A bundle is also the most
+  sensitive thing this project produces — a verbatim copy of everything a
+  session ever saw — so it is owner-only and deliberately unreachable from the
+  board server, which binds `0.0.0.0`.
+  `sessions:restore` prints its plan and writes nothing without `--write`:
+  this is the one command here that writes *Claude Code's own* transcripts
+  rather than the daemon's notes to itself, which is a category the read-only
+  invariant below otherwise rules out entirely — so it is a command you run,
+  never a poll, and it shows you the landing site first.
 - `src/accents.mjs` — the daemon's third write and its only piece of memory:
   `~/.claude/streamdeck-accents.json`, a `folderKey -> #hex` map so a project
   wears the same accent after a restart. Two functions, both best-effort — an
@@ -1248,7 +1298,16 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   repaints it for real regardless of what pulse left behind.
 - **Read-only, two install steps.** No hooks, no `settings.json` writes, no
   config file. The daemon reads from `~/.claude/`, VS Code's storage and the
-  usage endpoint, and writes four files into it. Two are messages to the
+  usage endpoint, and writes four files into it.
+  **`sessions:restore` is the one thing in this project that writes Claude
+  Code's own data** — a transcript, into `~/.claude/projects/` — and it is
+  deliberately not the daemon that does it. It is a command you run, it prints
+  where every file would land and writes nothing without `--write`, and it
+  only ever creates transcripts that did not exist under ids it minted itself.
+  Nothing about it runs on a poll. Keep it that way: the invariant below is
+  about what the *daemon* does behind your back, and a two-step command you
+  invoke on purpose is a different thing — but only while it stays two steps
+  and stays out of the poll loop. Two are messages to the
   extension: `~/.claude/streamdeck-focus.json`, the terminal-focus request, and
   `~/.claude/streamdeck-sessions.json`, the live session list the extension's
   restore command remembers (`publish-sessions.mjs`). Both are the same shape of
