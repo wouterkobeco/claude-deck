@@ -123,7 +123,8 @@ Both are in VS Code's command palette too — **Claude Stream Deck: Save Claude
 sessions for another machine**, and **… Restore Claude sessions from another
 machine…**, which lists the bundles you have and shows the plan for the one you
 pick. The palette never writes: it opens a terminal with the command, and you
-add `--write`.
+add `--write`. Both are local-window only — a Remote-SSH window's terminals run
+on the *other* machine, so they say so rather than failing there.
 
 It never writes without `--write`, and it prints where every session would
 land first. If the other machine keeps a project somewhere else, say so:

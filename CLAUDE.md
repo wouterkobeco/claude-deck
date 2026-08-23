@@ -538,6 +538,20 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   start. That was the first attempt and it is why `signature()` skips
   `.deck-root` explicitly. An unstamped copy says so rather than guessing a
   path to run npm in.
+  **Both refuse outright in a remote window** (`transferAvailability`), and
+  the reason is the `extensionKind: ["ui"]` split biting from the other side:
+  the extension host runs *locally* even for a Remote-SSH window — which is
+  why it can read the local bundle directory and the local `.deck-root` at all
+  — but `createTerminal` there opens a terminal on the **remote** machine, so
+  the local checkout path handed to it as `cwd` doesn't exist and the terminal
+  dies with `Starting directory (cwd) "…" does not exist`. Reported live from
+  a remote window. Gated on `remoteName` being set at all rather than on
+  `sshHost()` resolving: a dev container, WSL and a Codespace all put the
+  terminal somewhere other than here, and only ssh-remote is what `sshHost`
+  recognises — the question is "will the terminal land on this machine", which
+  is broader than "which host is this". Refused rather than worked around,
+  because there is nothing to work around: bundles, scripts and daemon are all
+  local, and `sessions:save` only ever bundles local sessions anyway.
   `sessions:restore` prints its plan and writes nothing without `--write`:
   this is the one command here that writes *Claude Code's own* transcripts
   rather than the daemon's notes to itself, which is a category the read-only
