@@ -23,6 +23,7 @@ import {
   BUNDLE_DIR_NAME,
   DIR_MODE,
   FILE_MODE,
+  memoryDirName,
   planRestore,
   projectSlug,
   remapCwd,
@@ -95,7 +96,7 @@ console.log(`${basename(archive)} — saved ${manifest.savedAt} on ${manifest.ho
 console.log();
 for (const p of plan) {
   const here = await exists(p.destCwd);
-  console.log(`  ${here ? "·" : "!"} ${p.title ?? p.sourceId.slice(0, 8)}`);
+  console.log(`  ${here ? "·" : "!"} ${p.title ?? p.sourceId.slice(0, 8)}${p.host ? `   (from ${p.host})` : ""}`);
   console.log(`      ${p.sourceCwd}`);
   console.log(`   -> ${p.destCwd}${here ? "" : "   (no such directory on this machine)"}`);
   console.log(`      ${p.sourceId.slice(0, 8)} -> ${p.newId.slice(0, 8)}${p.subagents ? `  +${p.subagents} subagents` : ""}`);
@@ -147,7 +148,7 @@ for (const p of plan) {
 let notes = 0;
 const kept = [];
 for (const proj of manifest.projects ?? []) {
-  const from = join(staging, "memory", proj.slug);
+  const from = join(staging, "memory", memoryDirName(proj));
   if (!(await exists(from))) continue;
   const destFolder = folderMap[manifest.sessions.find((s) => s.cwd === proj.cwd)?.folder];
   const destCwd = destFolder ? remapCwd(proj.cwd, manifest.sessions.find((s) => s.cwd === proj.cwd).folder, destFolder) : null;

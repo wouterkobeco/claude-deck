@@ -74,11 +74,41 @@ export function buildManifest(sessions, now, host) {
       cwd: s.cwd,
       title: s.title ?? null,
       subagents: s.subagents ?? 0,
+      // Which machine it came off, for the restore to show. It changes nothing
+      // about where the session lands — that is `folderMap`'s job either way —
+      // but "this one is the Pi's" is the difference between recognising a
+      // path and guessing at it, when two machines lay their projects out
+      // alike.
+      host: s.host ?? null,
     })),
     // Distinct project directories, for the per-project `memory/` that rides
     // along beside the transcripts.
-    projects: [...new Set(sessions.map((s) => s.cwd))].map((cwd) => ({ cwd, slug: projectSlug(cwd) })),
+    // Keyed by host as well as cwd: two machines really can hold the same path
+    // (`/home/pi/x` on two Raspberry Pis is a live case for this project), and
+    // one memory directory must not stand in for the other's.
+    projects: [...new Map(sessions.map((s) => [`${s.host ?? ""}\u0000${s.cwd}`, s])).values()].map((s) => ({
+      cwd: s.cwd,
+      host: s.host ?? null,
+      slug: projectSlug(s.cwd),
+    })),
   };
+}
+
+/**
+ * What a project's `memory/` is called *inside* a bundle.
+ *
+ * Namespaced by host, because a slug alone collides across machines:
+ * `/home/pi/x` exists on two of this project's Raspberry Pis, and one of
+ * their memory directories standing in for the other's would be a quiet,
+ * unrecoverable mix-up. `@` rather than `:` because this is a path component
+ * on whatever filesystem the bundle is unpacked on.
+ *
+ * Here rather than in either script because both of them build it — the save
+ * to write it, the restore to find it — and two spellings that drift apart
+ * lose a project's memory with no error anywhere.
+ */
+export function memoryDirName(project) {
+  return project.host ? `${project.host}@${project.slug}` : project.slug;
 }
 
 /**
@@ -182,6 +212,7 @@ export function planRestore(manifest, folderMap, newIdFor = () => randomUUID()) 
       destCwd,
       destSlug: projectSlug(destCwd),
       title: s.title ?? null,
+      host: s.host ?? null,
       subagents: s.subagents ?? 0,
     });
   }

@@ -13,6 +13,7 @@ import {
   buildManifest,
   bundleName,
   isSessionId,
+  memoryDirName,
   planRestore,
   projectSlug,
   remapCwd,
@@ -137,6 +138,41 @@ console.log("OK: buildManifest");
   assert.equal(isSessionId("nope"), false);
 }
 console.log("OK: planRestore");
+
+// Sessions saved off a remote host. The bundle has to keep them apart from
+// local ones with the same path — `/home/pi/x` exists on two of this project's
+// Raspberry Pis, and that is not a hypothetical.
+{
+  const m = buildManifest(
+    [
+      { session_id: ID_A, folder: "/home/pi/x", cwd: "/home/pi/x", title: "pi one", host: "192.168.2.6" },
+      { session_id: ID_B, folder: "/home/pi/x", cwd: "/home/pi/x", title: "pi two", host: "192.168.2.70" },
+    ],
+    Date.now(),
+    "MBP-1336"
+  );
+  assert.equal(m.sessions[0].host, "192.168.2.6", "a session records which machine it came off");
+  assert.equal(
+    m.projects.length,
+    2,
+    "one path on two hosts is two projects — a slug alone would collapse them and lose one's memory"
+  );
+  assert.equal(memoryDirName(m.projects[0]), "192.168.2.6@-home-pi-x");
+  assert.equal(memoryDirName(m.projects[1]), "192.168.2.70@-home-pi-x");
+  assert.notEqual(memoryDirName(m.projects[0]), memoryDirName(m.projects[1]), "and they never share a directory in the bundle");
+  // A local project keeps the bare slug, so bundles written before hosts were
+  // a thing still find their memory.
+  assert.equal(memoryDirName({ slug: "-Users-w-p-trace", host: null }), "-Users-w-p-trace");
+
+  // A remote session restores onto a local path like any other: the host is
+  // shown, never used to place it. Placement is the folder mapping's job.
+  const { plan } = planRestore(m, { "/home/pi/x": "/Users/w/p/x" }, () => ID_B);
+  assert.equal(plan.length, 2, "both restore — they differ by host, not by where they land");
+  assert.equal(plan[0].host, "192.168.2.6", "and each says where it came from");
+  assert.equal(plan[0].destCwd, "/Users/w/p/x");
+  assert.equal(plan[0].destSlug, "-Users-w-p-x");
+}
+console.log("OK: remote-origin sessions");
 
 assert.equal(bundleName(Date.parse("2026-08-23T10:52:00")), "2026-08-23-1052", "bundle names sort chronologically");
 console.log("OK: session transfer");

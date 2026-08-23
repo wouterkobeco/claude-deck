@@ -510,6 +510,28 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   already has**: a note written here is this machine's own, and only files that
   don't exist yet are written, with the rest reported rather than silently
   skipped.
+  **A remote host's sessions save too**, and the fetch is the interesting part.
+  The poll never pulls a whole transcript — `TREE_CMD` excludes the depth-two
+  jsonl under `projects` because the board only wants its last 64KB, which
+  `TAILS_CMD` gets — so `fetchWholeFiles` is a third call, on nobody's
+  schedule but the person who ran the command. It is **framed as a tar**
+  rather than a fourth delimiter: `TAILS_CMD` already learned that framing a
+  live file is subtle (the `wc -c`-then-`tail -c` version spliced files
+  together when one grew between the two reads), and whole multi-megabyte
+  files are exactly where a second hand-rolled framing would go wrong again.
+  Paths still arrive on stdin, never interpolated, and the remote shell drops
+  what does not exist before tar sees the list — tar fails a whole archive on
+  one missing member, and "this session has no subagents" is ordinary.
+  Which remote sessions exist comes from `streamdeck-sessions.json`, not from
+  a read of the script's own: attaching a session to a window is `matchFolder`
+  plus the IDE locks plus a fetched tree, a join the daemon has already done.
+  The honest cost, and it is stated rather than discovered — **saving a remote
+  session needs the daemon running**.
+  `memoryDirName` namespaces a bundle's memory directories by host because a
+  slug alone collides across machines (`/home/pi/x` on two of this project's
+  Pis), and it lives in the shared module because both scripts build that name
+  — the save to write it, the restore to find it — and two spellings drifting
+  apart lose a project's memory with no error anywhere.
   Bundles live in **`~/.claude-deck-sessions/`**, `0700`, files `0600` —
   outside `~/.claude/` on purpose. The transcripts they are made of are deleted
   on a 30-day sweep (measured: `.last-cleanup` stamped today, oldest surviving

@@ -497,3 +497,63 @@ export function parseAccountJson(text) {
     return null;
   }
 }
+
+/**
+ * Call 3, and the only one that isn't part of the poll: **whole** files, for
+ * saving a remote host's sessions to a bundle.
+ *
+ * The poll deliberately never fetches these. `TREE_CMD` excludes a session
+ * transcript (the depth-two jsonl under `projects`) because it runs to
+ * megabytes and the
+ * board only ever needs its last 64KB, which `TAILS_CMD` gets. A bundle needs
+ * the whole thing, which is a different job on a different schedule — a
+ * command someone ran, never a tick.
+ *
+ * **Framed as a tar rather than a custom delimiter.** `TAILS_CMD` frames with
+ * NUL and had to learn the hard way that framing a live file is subtle (the
+ * `wc -c` then `tail -c` version spliced files together when one grew between
+ * the two reads). Whole multi-megabyte files are exactly where a second
+ * hand-rolled framing would go wrong again, so this hands the problem to the
+ * tool that already solves it. `-z` because these compress to ~30%, measured,
+ * and the wire is the slow part.
+ *
+ * Paths arrive on **stdin, one per line**, never interpolated — same rule as
+ * `TAILS_CMD`, and here it also does the filtering: `tar` fails the whole
+ * archive on a member that isn't there, and "this session has no subagents" is
+ * an ordinary state rather than an error, so the remote shell drops what does
+ * not exist before tar ever sees the list.
+ */
+export const BUNDLE_CMD =
+  "cd ~/.claude 2>/dev/null || exit 0; " +
+  `while IFS= read -r p; do [ -e "$p" ] && printf '%s\\n' "$p"; done | tar -czf - -T - 2>/dev/null`;
+
+/**
+ * Fetch `paths` (relative to the host's `~/.claude`) into `destDir`.
+ *
+ * Resolves `false` rather than throwing on any failure, like everything else
+ * that talks to another machine here — the caller reports which sessions it
+ * could not get and saves the rest, since a bundle missing one project is
+ * worth more than no bundle at all.
+ *
+ * The timeout is minutes rather than `run`'s 15s default: this is tens of
+ * megabytes over ssh, and the only thing worse than a slow save is one that
+ * kills itself halfway and says nothing.
+ */
+export async function fetchWholeFiles(host, controlPath, paths, destDir, timeoutMs = 180_000) {
+  if (!paths.length) return true;
+  const tgz = await run(["ssh", ...sshArgs(host, controlPath), BUNDLE_CMD], {
+    input: paths.join("\n") + "\n",
+    timeoutMs,
+  });
+  // An empty archive is not a failure: a host where none of the paths existed
+  // sends a valid, empty tar. A *missing* one is — ssh itself failed.
+  if (!tgz) return false;
+  await mkdir(destDir, { recursive: true });
+  const staged = join(destDir, ".fetch.tgz");
+  await writeFile(staged, tgz);
+  // `tar -x` refuses absolute and `..` members, which is the guard that
+  // matters: every path here was built from another machine's registry.
+  const ok = await run(["tar", "-xzf", staged, "-C", destDir], { timeoutMs });
+  await rm(staged, { force: true });
+  return ok !== null;
+}

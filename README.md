@@ -102,9 +102,15 @@ resume on the machine that made them. Two commands carry one — with its **full
 history** — somewhere else:
 
 ```bash
-npm run sessions:save                 # every live local session
+npm run sessions:save                 # every live session, local and remote
 npm run sessions:save -- kob-trace    # or just the projects you name
 ```
+
+Sessions running in a Remote-SSH window are saved too: their transcripts are
+fetched whole over the same ssh connection the board already uses (the board
+itself only ever reads the last 64KB of one). That needs the daemon running —
+it's the only thing that knows which remote sessions exist. A host that can't
+be reached is named rather than quietly left out.
 
 That writes `~/.claude-deck-sessions/<date>-<time>.tgz` (owner-only): each
 session's whole transcript, the subagent transcripts it spawned, and the
