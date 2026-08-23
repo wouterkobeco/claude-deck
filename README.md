@@ -128,8 +128,10 @@ npm run sessions:restore -- <bundle>.tgz --write  # do it
 These are in VS Code's command palette too, under **Claude Stream Deck**:
 *Backup Claude sessions*, which asks which machines to bundle — this one and
 any remote host, ticked by default with their session counts — and *Restore
-Claude sessions from a backup…*, which lists the backups you have and shows the
-plan for the one you pick. The palette never writes: it opens a terminal with
+Claude sessions from a backup…*, which lists the backups you have, asks **which
+machine to restore onto** — this one, or any host the backup came from — and
+shows the plan. Restoring a host's own sessions back onto that host is the easy
+case: their paths already match, so nothing is remapped. The palette never writes: it opens a terminal with
 the command, and you add `--write`.
 
 From a Remote-SSH window you can still **see** your backups — they live on the

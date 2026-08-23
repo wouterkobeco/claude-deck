@@ -555,9 +555,25 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   worked around that for one release and is gone with it: a picker expresses
   every combination, including the two that pair could not. The script grew
   `--host=` (repeatable, `local` for this machine) to match, independent of
-  the positional folder filter still there for typing by hand. "Restore Claude
-  sessions from another machine…" lists `~/.claude-deck-sessions/` newest
-  first and runs the **plan** — never `--write`. A palette entry that landed
+  the positional folder filter still there for typing by hand.
+  **Restore asks *which machine to land on* after which backup**
+  (`restoreTargets`): this machine, plus every host the backup itself came
+  off, plus whatever the daemon currently sees. The backup's own hosts are why
+  its `manifest.json` is read — sessions taken off BEAST restore onto BEAST
+  with **no path remapping whatsoever**, since their cwds already are that
+  machine's, and that host drops out of the daemon's view the moment its
+  window closes, which is exactly when someone reaches for a backup. The
+  manifest is the archive's first member, so this costs a few hundred bytes.
+  `--onto=<host>` on the script does the landing: rewritten transcripts go
+  into a tree shaped like `~/.claude` either way — which for a local restore
+  simply *is* `~/.claude`, and for a remote one is staging that gets pushed
+  whole (`pushWholeFiles`, the mirror of the fetch, tar over ssh for the same
+  framing reason). One write path, two landings, rather than two that drift.
+  **The memory guard cannot follow it over**: a local restore refuses to write
+  over a memory file that already exists, and a remote landing is a `tar -x`,
+  which overwrites — said out loud after the fact rather than implied away.
+  "Restore Claude sessions from a backup…" lists `~/.claude-deck-sessions/`
+  newest first and runs the **plan** — never `--write`. A palette entry that landed
   transcripts on one click would be exactly the quiet write the daemon itself
   is not allowed to make; typing `--write` is the consent.
   The extension runs the repo's own scripts rather than reimplementing them,

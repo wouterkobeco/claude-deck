@@ -557,3 +557,47 @@ export async function fetchWholeFiles(host, controlPath, paths, destDir, timeout
   await rm(staged, { force: true });
   return ok !== null;
 }
+
+/**
+ * The mirror of `fetchWholeFiles`: push a local tree into a host's
+ * `~/.claude`, and ask which of a list of directories exist there.
+ *
+ * This is the only thing in the project that **writes** to another machine
+ * besides `remote:install`, and it writes Claude Code's own transcripts, so
+ * it is reached from one command with an explicit `--write` and from nothing
+ * else — never a poll, never the daemon. `remote:install` set the precedent
+ * for the shape: a command you run, that refuses rather than overwrites.
+ *
+ * `tar -xzf -` on the far end for the same reason the fetch uses tar: framing
+ * is the part this project has already got wrong once, and the tool that
+ * solves it is right there. Members are relative (`projects/<slug>/…`), and
+ * tar refuses absolute and `..` members, which is the guard that matters when
+ * the paths were built from a bundle another machine wrote.
+ */
+export async function pushWholeFiles(host, controlPath, localDir, timeoutMs = 180_000) {
+  const tgz = await run(["tar", "-czf", "-", "-C", localDir, "."], { timeoutMs });
+  if (!tgz) return false;
+  const out = await run(
+    ["ssh", ...sshArgs(host, controlPath), "mkdir -p ~/.claude && cd ~/.claude && tar -xzf - && echo pushed"],
+    { input: tgz, timeoutMs }
+  );
+  return out !== null && out.toString("utf8").includes("pushed");
+}
+
+/**
+ * Which of `dirs` exist on the host — so a restore plan can say "there is no
+ * such directory over there" before it writes, exactly as the local one does.
+ *
+ * Answers `null` when the host could not be asked at all, which the caller
+ * must not read as "none of them exist": an unreachable host is unknown, and
+ * drawing it as absent would put a warning beside every line for no reason.
+ */
+export async function remoteDirsExist(host, controlPath, dirs) {
+  if (!dirs.length) return new Set();
+  const out = await run(
+    ["ssh", ...sshArgs(host, controlPath), 'while IFS= read -r d; do [ -d "$d" ] && printf "%s\\n" "$d"; done'],
+    { input: dirs.join("\n") + "\n" }
+  );
+  if (out === null) return null;
+  return new Set(out.toString("utf8").split("\n").filter(Boolean));
+}

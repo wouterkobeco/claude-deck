@@ -18,6 +18,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rm, writeFile, chmod, cp, stat } from "node:fs/promises";
 import { homedir } from "node:os";
+import { pushWholeFiles, remoteDirsExist } from "../src/remote-fs.mjs";
 import { basename, join } from "node:path";
 import {
   BUNDLE_DIR_NAME,
@@ -36,6 +37,23 @@ const BUNDLE_DIR = join(homedir(), BUNDLE_DIR_NAME);
 const args = process.argv.slice(2);
 const write = args.includes("--write");
 const target = args.find((a) => !a.startsWith("-")) ?? null;
+// Which machine the sessions land on. Default is this one; `--onto=<host>`
+// sends them to a Remote-SSH host instead — which is the natural destination
+// for sessions that came *off* that host, since their paths already match and
+// nothing needs remapping at all.
+const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const ontoArg = args.find((a) => a.startsWith("--onto="))?.slice(7) ?? null;
+const onto = ontoArg && ontoArg !== "local" ? ontoArg : null;
+if (onto && !HOST_RE.test(onto)) {
+  console.error(`Not a hostname: ${onto}`);
+  process.exit(1);
+}
+// Its own scratch root under /tmp, and short: this path anchors ssh's
+// ControlPath socket, and os.tmpdir() on macOS is long enough to hit the
+// ~104-byte sockaddr limit — a failure that presents as "host unreachable"
+// with nothing pointing at the real cause. remote-fs.mjs records the same.
+const sshRoot = `/tmp/streamdeck-restore-${process.pid}`;
+
 // `--to <src>=<dest>` maps a project this machine keeps somewhere else.
 const overrides = Object.fromEntries(
   args
@@ -93,25 +111,45 @@ for (const s of manifest.sessions ?? []) folderMap[s.folder] = overrides[s.folde
 const { plan, skipped } = planRestore(manifest, folderMap);
 
 console.log(`${basename(archive)} — saved ${manifest.savedAt} on ${manifest.host ?? "an unnamed machine"}`);
+console.log(`restoring onto ${onto ?? "this machine"}`);
 console.log();
+// Asked once, of whichever machine is the destination. `null` back from a
+// host means it could not be asked — unknown, which must not be drawn as
+// "no such directory" beside every line.
+let present = null;
+if (onto) {
+  await mkdir(sshRoot, { recursive: true, mode: 0o700 });
+  present = await remoteDirsExist(onto, join(sshRoot, "cm-%h"), [...new Set(plan.map((p) => p.destCwd))]);
+  if (present === null) console.log(`  (${onto} could not be reached, so nothing below is checked)`);
+}
 for (const p of plan) {
-  const here = await exists(p.destCwd);
+  const here = onto ? (present === null ? true : present.has(p.destCwd)) : await exists(p.destCwd);
   console.log(`  ${here ? "·" : "!"} ${p.title ?? p.sourceId.slice(0, 8)}${p.host ? `   (from ${p.host})` : ""}`);
   console.log(`      ${p.sourceCwd}`);
-  console.log(`   -> ${p.destCwd}${here ? "" : "   (no such directory on this machine)"}`);
+  console.log(`   -> ${p.destCwd}${here ? "" : `   (no such directory on ${onto ?? "this machine"})`}`);
   console.log(`      ${p.sourceId.slice(0, 8)} -> ${p.newId.slice(0, 8)}${p.subagents ? `  +${p.subagents} subagents` : ""}`);
 }
 for (const s of skipped) console.log(`  ! skipped ${s.id?.slice(0, 8)} — ${s.why}`);
 
 if (!write) {
   await rm(staging, { recursive: true, force: true });
-  console.log(`\nNothing written. Add --write to restore, or --to=<source path>=<local path> to place a project elsewhere.`);
+  await rm(sshRoot, { recursive: true, force: true });
+  console.log(
+    `\nNothing written. Add --write to restore, --onto=<host> to land them on another machine, or --to=<source path>=<local path> to place a project elsewhere.`
+  );
   process.exit(0);
 }
 
+// Written into a tree shaped like `~/.claude` either way — which for a local
+// restore simply *is* `~/.claude`, and for a remote one is a staging tree that
+// gets pushed whole. One write path with two landings, rather than two write
+// paths that would drift.
+const landing = onto ? join(sshRoot, "payload") : CLAUDE_DIR;
+if (onto) await mkdir(landing, { recursive: true, mode: 0o700 });
+
 let restored = 0;
 for (const p of plan) {
-  const destDir = join(CLAUDE_DIR, "projects", p.destSlug);
+  const destDir = join(landing, "projects", p.destSlug);
   await mkdir(destDir, { recursive: true });
 
   const src = join(staging, "sessions", `${p.sourceId}.jsonl`);
@@ -153,10 +191,14 @@ for (const proj of manifest.projects ?? []) {
   const destFolder = folderMap[manifest.sessions.find((s) => s.cwd === proj.cwd)?.folder];
   const destCwd = destFolder ? remapCwd(proj.cwd, manifest.sessions.find((s) => s.cwd === proj.cwd).folder, destFolder) : null;
   if (!destCwd) continue;
-  const to = join(CLAUDE_DIR, "projects", projectSlug(destCwd), "memory");
+  const to = join(landing, "projects", projectSlug(destCwd), "memory");
   await mkdir(to, { recursive: true });
   for (const f of await readdir(from)) {
-    if (await exists(join(to, f))) {
+    // Never over the top of memory that is already there. For a local restore
+    // that is a real check; for a remote one this staging tree is empty, so
+    // the guard has to happen on the far side — which `tar -x` does not do.
+    // Said out loud below rather than pretended about.
+    if (!onto && (await exists(join(to, f)))) {
       kept.push(f);
       continue;
     }
@@ -165,9 +207,30 @@ for (const proj of manifest.projects ?? []) {
   }
 }
 
-await rm(staging, { recursive: true, force: true });
+// The landing, for a remote destination: one tar over the connection the
+// plan's probe already opened.
+if (onto) {
+  process.stdout.write(`  sending to ${onto}… `);
+  const ok = await pushWholeFiles(onto, join(sshRoot, "cm-%h"), landing);
+  console.log(ok ? "ok" : "failed");
+  if (!ok) {
+    await rm(staging, { recursive: true, force: true });
+    await rm(sshRoot, { recursive: true, force: true });
+    console.error(`Nothing landed on ${onto}. Its ~/.claude is untouched.`);
+    process.exit(1);
+  }
+}
 
-console.log(`\nRestored ${restored} session${restored === 1 ? "" : "s"}${notes ? `, ${notes} memory file${notes === 1 ? "" : "s"}` : ""}.`);
+await rm(staging, { recursive: true, force: true });
+await rm(sshRoot, { recursive: true, force: true });
+
+console.log(
+  `\nRestored ${restored} session${restored === 1 ? "" : "s"}${notes ? `, ${notes} memory file${notes === 1 ? "" : "s"}` : ""} onto ${onto ?? "this machine"}.`
+);
 if (kept.length) console.log(`  kept this machine's own copy of: ${[...new Set(kept)].join(", ")}`);
-console.log(`\nOpen each one with:`);
+// A remote landing is a `tar -x`, which overwrites rather than merging — so
+// the memory guard that protects a local restore cannot run there, and saying
+// so beats implying a safety that isn't present.
+if (onto && notes) console.log(`  note: ${onto}'s own memory files with these names were overwritten`);
+console.log(`\nOpen each one with${onto ? ` (on ${onto})` : ""}:`);
 for (const p of plan) console.log(`  cd ${p.destCwd} && ${resumeCommand(p.newId)}`);

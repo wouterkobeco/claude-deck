@@ -235,8 +235,39 @@ assert.deepEqual(
   assert.deepEqual(machineChoices([]), [], "no sessions is an empty list, which the caller turns into a message");
   assert.deepEqual(machineChoices(undefined), [], "and so is no daemon at all");
 
+  // Where a backup can land. This machine always, plus every host the backup
+  // itself came off — that one matters most and is why the manifest is read:
+  // sessions taken off a host restore onto it with no remapping at all, and
+  // that host drops out of the daemon's view the moment its window closes,
+  // which is exactly when someone reaches for a backup.
+  const { restoreTargets } = require("../extension/transfer.js");
+  assert.deepEqual(
+    restoreTargets(["192.168.2.70"], []),
+    [{ host: "local", label: "This machine" }, { host: "192.168.2.70", label: "192.168.2.70" }],
+    "a host that is only in the backup is still offered"
+  );
+  assert.deepEqual(
+    restoreTargets(["192.168.2.70"], ["192.168.2.70", "192.168.2.6"]),
+    [
+      { host: "local", label: "This machine" },
+      { host: "192.168.2.70", label: "192.168.2.70" },
+      { host: "192.168.2.6", label: "192.168.2.6" },
+    ],
+    "backup hosts first, then whatever else is live, each once"
+  );
+  assert.deepEqual(restoreTargets([], []), [{ host: "local", label: "This machine" }], "this machine is always a destination");
+  assert.deepEqual(restoreTargets(["not a host!"], []), [{ host: "local", label: "This machine" }], "a bad hostname is dropped");
+  assert.deepEqual(restoreTargets(null, null), [{ host: "local", label: "This machine" }], "and unreadable inputs are not a throw");
+
   // The extension never writes: it shows the plan and stops there.
   assert.equal(restorePlanCommand("2026-08-23-1104.tgz"), "npm run sessions:restore -- '2026-08-23-1104.tgz'");
+  assert.equal(
+    restorePlanCommand("2026-08-23-1104.tgz", "192.168.2.70"),
+    "npm run sessions:restore -- '2026-08-23-1104.tgz' --onto='192.168.2.70'",
+    "and names the destination machine when it is not this one"
+  );
+  assert.equal(restorePlanCommand("2026-08-23-1104.tgz", "local").includes("--onto"), false, "this machine is the default, not a flag");
+  assert.throws(() => restorePlanCommand("2026-08-23-1104.tgz", "evil; rm -rf /"), /not a hostname/);
   assert.equal(
     restorePlanCommand("2026-08-23-1104.tgz").includes("--write"),
     false,

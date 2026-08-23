@@ -4,6 +4,7 @@
 // one that owns a terminal whose shell is in that chain reveals it. The rest
 // find no match and do nothing — the request routes itself, so there is no
 // port, no token, and no window addressing to get wrong.
+const { execFileSync } = require("node:child_process");
 const { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } = require("node:fs");
 const { homedir } = require("node:os");
 const { join } = require("node:path");
@@ -14,7 +15,7 @@ const vscode = require("vscode");
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
 const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
-const { bundleList, canRunHere, machineChoices, restorePlanCommand, saveCommand } = require("./transfer.js");
+const { bundleList, canRunHere, machineChoices, restorePlanCommand, restoreTargets, saveCommand } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
@@ -363,7 +364,42 @@ async function restoreFromBundle() {
       : "Newest first — pick one to copy its command; it has to be run on this Mac",
   });
   if (!bundle) return; // dismissed
-  const command = restorePlanCommand(bundle);
+
+  // Which machines this backup came off. Read straight out of the archive
+  // rather than from what the daemon can see, because the most likely
+  // destination is the host a session came *from* — and that host drops out
+  // of the daemon's view the moment its window closes, which is exactly when
+  // you go looking for a backup. manifest.json is the archive's first member,
+  // so this reads a few hundred bytes, not the megabytes behind it.
+  let fromHosts = [];
+  try {
+    const raw = execFileSync("tar", ["-xzOf", join(BUNDLE_DIR, bundle), "manifest.json"], { encoding: "utf8" });
+    fromHosts = [...new Set((JSON.parse(raw).sessions ?? []).map((x) => x.host).filter(Boolean))];
+  } catch {
+    // Unreadable manifest: still offer this machine and whatever is live.
+  }
+  const liveHosts = (() => {
+    try {
+      return [...new Set(JSON.parse(readFileSync(SESSIONS_FILE, "utf8")).map((r) => r.host).filter(Boolean))];
+    } catch {
+      return [];
+    }
+  })();
+  const targets = restoreTargets(fromHosts, liveHosts);
+  let onto = "local";
+  if (targets.length > 1) {
+    const pick = await vscode.window.showQuickPick(
+      targets.map((t) => ({
+        label: t.label,
+        description: fromHosts.includes(t.host) ? "these sessions came from here — no paths to remap" : undefined,
+        host: t.host,
+      })),
+      { title: `Restore ${bundle} onto…`, placeHolder: "Which machine should these sessions land on?" }
+    );
+    if (!pick) return; // dismissed
+    onto = pick.host;
+  }
+  const command = restorePlanCommand(bundle, onto);
   if (here.ok) {
     runInDeck("claude sessions: restore", command);
     return;

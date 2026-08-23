@@ -99,6 +99,30 @@ function saveCommand(hosts) {
 }
 
 /**
+ * Where a backup's sessions can land: this machine, plus every host that
+ * appears in the backup itself, plus any host the daemon currently sees.
+ *
+ * A backup's *own* hosts matter most and are why the manifest is read at all.
+ * Sessions taken off BEAST restore onto BEAST with no path remapping
+ * whatsoever — their cwds already are that machine's — which makes the
+ * machine they came from the single most likely destination and one the
+ * daemon cannot offer once that host's window has closed.
+ *
+ * This machine is always first and always offered: it is the one destination
+ * that needs nothing to be reachable.
+ */
+function restoreTargets(manifestHosts, liveHosts) {
+  const seen = new Set();
+  const out = [{ host: "local", label: "This machine" }];
+  for (const h of [...(manifestHosts ?? []), ...(liveHosts ?? [])]) {
+    if (!h || h === "local" || seen.has(h) || !HOST_RE.test(h)) continue;
+    seen.add(h);
+    out.push({ host: h, label: h });
+  }
+  return out;
+}
+
+/**
  * Show what restoring a bundle *would* do. Never `--write`.
  *
  * The extension deliberately stops at the plan. Restoring writes Claude
@@ -107,9 +131,11 @@ function saveCommand(hosts) {
  * write the daemon is not allowed to make either. The plan names the files and
  * the command that lands them; typing `--write` is the consent.
  */
-function restorePlanCommand(bundle) {
+function restorePlanCommand(bundle, onto = "local") {
   if (!isBundleName(bundle)) throw new Error(`not a bundle: ${bundle}`);
-  return `npm run sessions:restore -- ${shellQuote(bundle)}`;
+  if (onto !== "local" && !HOST_RE.test(onto)) throw new Error(`not a hostname: ${onto}`);
+  const target = onto === "local" ? "" : ` --onto=${shellQuote(onto)}`;
+  return `npm run sessions:restore -- ${shellQuote(bundle)}${target}`;
 }
 
 /**
@@ -147,6 +173,7 @@ module.exports = {
   isBundleName,
   machineChoices,
   restorePlanCommand,
+  restoreTargets,
   saveCommand,
   canRunHere,
   shellQuote,
