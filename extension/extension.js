@@ -14,7 +14,7 @@ const vscode = require("vscode");
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
 const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
-const { bundleList, machineChoices, restorePlanCommand, saveCommand, transferAvailability } = require("./transfer.js");
+const { bundleList, canRunHere, machineChoices, restorePlanCommand, saveCommand } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
@@ -293,9 +293,11 @@ function runInDeck(name, command) {
  * daemon, and that is said rather than left as an empty picker.
  */
 async function saveForTransfer() {
-  const here = transferAvailability(vscode.env.remoteName);
+  const here = canRunHere(vscode.env.remoteName);
   if (!here.ok) {
-    vscode.window.showInformationMessage(here.reason);
+    vscode.window.showInformationMessage(
+      `Claude sessions: this window is remote (${here.remoteName}), and its terminals run on that machine. Backups are made where the deck runs — open one of this Mac's own windows. (It can back up that host's sessions from there.)`
+    );
     return;
   }
   let rows = [];
@@ -337,29 +339,42 @@ async function saveForTransfer() {
  * would be exactly the quiet write the daemon itself is not allowed to make.
  */
 async function restoreFromBundle() {
-  const here = transferAvailability(vscode.env.remoteName);
-  if (!here.ok) {
-    vscode.window.showInformationMessage(here.reason);
-    return;
-  }
   let names = [];
   try {
     names = bundleList(readdirSync(BUNDLE_DIR));
   } catch {
-    // No directory at all is the ordinary "never saved anything here" case.
+    // No directory at all is the ordinary "never backed anything up" case.
   }
   if (names.length === 0) {
     vscode.window.showInformationMessage(
-      `Claude sessions: no bundles in ${BUNDLE_DIR}. Copy one there from the other machine, or run "Save Claude sessions for another machine" here.`
+      `Claude sessions: no backups in ${BUNDLE_DIR}. Make one with "Backup Claude sessions", or copy one there from another machine.`
     );
     return;
   }
+  // Listed even in a remote window: the backup directory is on *this* machine
+  // and the extension host reads it from here whatever the window is attached
+  // to. What you have backed up is worth knowing from anywhere; only landing
+  // it needs a terminal on this machine.
+  const here = canRunHere(vscode.env.remoteName);
   const bundle = await vscode.window.showQuickPick(names, {
-    title: "Restore Claude sessions from another machine",
-    placeHolder: "Newest first — this shows the plan, and writes nothing",
+    title: here.ok ? "Restore Claude sessions from a backup" : `Backups on this Mac (this window is on ${here.remoteName})`,
+    placeHolder: here.ok
+      ? "Newest first — this shows the plan, and writes nothing"
+      : "Newest first — pick one to copy its command; it has to be run on this Mac",
   });
   if (!bundle) return; // dismissed
-  runInDeck("claude sessions: restore", restorePlanCommand(bundle));
+  const command = restorePlanCommand(bundle);
+  if (here.ok) {
+    runInDeck("claude sessions: restore", command);
+    return;
+  }
+  // Nowhere here to run it, so hand over the thing that would: a terminal on
+  // the other machine cannot reach this Mac's checkout, and telling someone to
+  // retype a command they can see is worse than putting it on the clipboard.
+  await vscode.env.clipboard.writeText(command);
+  vscode.window.showInformationMessage(
+    `Copied to your clipboard: ${command} — run it in a terminal on this Mac (in the claude-streamdeck checkout). This window is remote, so its terminals are on ${here.remoteName}.`
+  );
 }
 
 // Sweep state files whose extension host is gone. A window that crashes or is

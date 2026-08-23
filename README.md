@@ -126,12 +126,16 @@ npm run sessions:restore -- <bundle>.tgz --write  # do it
 ```
 
 These are in VS Code's command palette too, under **Claude Stream Deck**:
-*Save Claude sessions for another machine*, which asks which machines to bundle
-— this one and any remote host, ticked by default with their session counts —
-and *Restore Claude sessions from another machine…*, which lists the bundles you
-have and shows the plan for the one you pick. The palette never writes: it opens a terminal with the command, and you
-add `--write`. Both are local-window only — a Remote-SSH window's terminals run
-on the *other* machine, so they say so rather than failing there.
+*Backup Claude sessions*, which asks which machines to bundle — this one and
+any remote host, ticked by default with their session counts — and *Restore
+Claude sessions from a backup…*, which lists the backups you have and shows the
+plan for the one you pick. The palette never writes: it opens a terminal with
+the command, and you add `--write`.
+
+From a Remote-SSH window you can still **see** your backups — they live on the
+Mac, and the extension reads them from there — and picking one copies its
+command to your clipboard. Actually running it has to happen in a local window,
+since a remote window's terminals are on the other machine.
 
 It never writes without `--write`, and it prints where every session would
 land first. If the other machine keeps a project somewhere else, say so:

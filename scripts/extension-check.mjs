@@ -247,20 +247,24 @@ assert.deepEqual(
   // A remote window's terminal runs on the *other* machine, while this
   // extension's host runs here (`extensionKind: ["ui"]`) — so handing
   // createTerminal a local checkout path there dies with `Starting directory
-  // (cwd) "…" does not exist`. Reported live from a Remote-SSH window before
-  // this guard existed.
-  const { transferAvailability } = require("../extension/transfer.js");
-  assert.equal(transferAvailability(undefined).ok, true, "a local window can run them");
-  assert.equal(transferAvailability("").ok, true, "and so does an empty remoteName, which is what local really looks like");
+  // (cwd) "…" does not exist`. Reported live from a Remote-SSH window.
+  const { canRunHere } = require("../extension/transfer.js");
+  assert.deepEqual(canRunHere(undefined), { ok: true }, "a local window can run them");
+  assert.deepEqual(canRunHere(""), { ok: true }, "and so does an empty remoteName, which is what local really looks like");
   for (const remote of ["ssh-remote", "dev-container", "wsl", "codespaces", "attached-container"]) {
-    const v = transferAvailability(remote);
-    assert.equal(v.ok, false, `${remote} puts the terminal somewhere else`);
-    assert.match(v.reason, /remote/, "and says so rather than failing at the terminal");
+    assert.deepEqual(canRunHere(remote), { ok: false, remoteName: remote }, `${remote} puts the terminal somewhere else`);
   }
+  // It gates *running*, never listing: the backup directory is on this machine
+  // and the extension host reads it from here whatever the window is attached
+  // to, so a remote window still gets to see what has been backed up. The
+  // caller is what turns `ok:false` into a clipboard copy rather than a
+  // refusal — this only reports the fact.
+  assert.equal("reason" in canRunHere("ssh-remote"), false, "it reports the fact, and the wording belongs to whoever asked");
+
   // Deliberately broader than sshHost's own test: that one answers "which
   // host", this one answers "will the terminal land here", and every remote
   // kind fails the second whether or not sshHost recognises it.
-  assert.equal(transferAvailability("dev-container").ok, false, "not just ssh-remote");
+  assert.equal(canRunHere("dev-container").ok, false, "not just ssh-remote");
 }
 
 console.log("OK: extension routing, session restore, session transfer");

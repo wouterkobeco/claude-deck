@@ -544,7 +544,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **Both commands are in the VS Code palette** (`extension/transfer.js` —
   split out for the reason `routing.js` and `restore.js` were: a string that
   reaches a shell, in a file that can't be loaded outside an editor).
-  "Save Claude sessions for another machine" opens a **machine picker** — this
+  "Backup Claude sessions" opens a **machine picker** — this
   machine and every remote host the daemon can see, each with its session
   count, multi-select with everything pre-ticked (`restoreSessions`' shape,
   and for its reason: the common case is all of them). It took the window's
@@ -570,7 +570,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   start. That was the first attempt and it is why `signature()` skips
   `.deck-root` explicitly. An unstamped copy says so rather than guessing a
   path to run npm in.
-  **Both refuse outright in a remote window** (`transferAvailability`), and
+  **Only the *running* is gated in a remote window** (`canRunHere`), and
   the reason is the `extensionKind: ["ui"]` split biting from the other side:
   the extension host runs *locally* even for a Remote-SSH window — which is
   why it can read the local bundle directory and the local `.deck-root` at all
@@ -581,9 +581,15 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   `sshHost()` resolving: a dev container, WSL and a Codespace all put the
   terminal somewhere other than here, and only ssh-remote is what `sshHost`
   recognises — the question is "will the terminal land on this machine", which
-  is broader than "which host is this". Refused rather than worked around,
-  because there is nothing to work around: bundles, scripts and daemon are all
-  local, and `sessions:save` only ever bundles local sessions anyway.
+  is broader than "which host is this".
+  **Listing is not gated, because it works.** The backup directory is on this
+  machine and the local extension host reads it from a remote window perfectly
+  well — so "Restore Claude sessions from a backup…" still shows what you have
+  there and copies the command to the clipboard, rather than refusing to say
+  what exists. Knowing what is backed up is useful from anywhere; only landing
+  it has to happen here. `canRunHere` reports the fact (`{ok, remoteName}`)
+  and the wording belongs to whichever command asked, since backup and restore
+  want to say different things about it.
   `sessions:restore` prints its plan and writes nothing without `--write`:
   this is the one command here that writes *Claude Code's own* transcripts
   rather than the daemon's notes to itself, which is a category the read-only
