@@ -544,15 +544,18 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   **Both commands are in the VS Code palette** (`extension/transfer.js` —
   split out for the reason `routing.js` and `restore.js` were: a string that
   reaches a shell, in a file that can't be loaded outside an editor).
-  "Save Claude sessions for another machine" bundles *this window's* folder,
-  asking which one on a multi-root window rather than picking. **"Save all
-  Claude sessions…" is a second command rather than that one widening**,
-  because a remote host's sessions cannot be reached through the first at all:
-  its filter is a substring match on the window's folder, and a local path
-  never matches `/home/wouterd/...` — measured against the live daemon, 7
-  remote sessions and 0 of them matching this checkout's folder. A command
-  named for one project must not quietly bundle seven other machines'
-  conversations, so the wide one says so in its own title. "Restore Claude
+  "Save Claude sessions for another machine" opens a **machine picker** — this
+  machine and every remote host the daemon can see, each with its session
+  count, multi-select with everything pre-ticked (`restoreSessions`' shape,
+  and for its reason: the common case is all of them). It took the window's
+  own *folder* first, and a remote host's sessions could not be reached that
+  way at all — the script's filter is a substring match, and a local window's
+  path never matches `/home/wouterd/...`; measured against the live daemon, 7
+  remote sessions and 0 of them reachable. A separate "save all" command
+  worked around that for one release and is gone with it: a picker expresses
+  every combination, including the two that pair could not. The script grew
+  `--host=` (repeatable, `local` for this machine) to match, independent of
+  the positional folder filter still there for typing by hand. "Restore Claude
   sessions from another machine…" lists `~/.claude-deck-sessions/` newest
   first and runs the **plan** — never `--write`. A palette entry that landed
   transcripts on one click would be exactly the quiet write the daemon itself

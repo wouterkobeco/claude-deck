@@ -19,7 +19,22 @@ import { BUNDLE_DIR_NAME, DIR_MODE, FILE_MODE, buildManifest, bundleName, memory
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 const BUNDLE_DIR = join(homedir(), BUNDLE_DIR_NAME);
-const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"))[0] ?? null;
+const argv = process.argv.slice(2);
+const filter = argv.filter((a) => !a.startsWith("-"))[0] ?? null;
+// `--host=local` / `--host=<name>`, repeatable. The palette builds these from
+// the machine picker; a folder filter is still there for typing by hand. Null
+// when none were given, which means every machine — the two are independent,
+// so `--host=beast kob` is "beast's kob projects".
+const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const wanted = argv
+  .filter((a) => a.startsWith("--host="))
+  .map((a) => a.slice(7))
+  // Validated even though the picker builds them: this reaches `ssh` as a
+  // hostname, and "the caller is trusted" is the assumption that stops being
+  // true the first time someone scripts it.
+  .filter((h) => h === "local" || HOST_RE.test(h));
+const hostFilter = wanted.length ? new Set(wanted) : null;
+const wantHost = (host) => !hostFilter || hostFilter.has(host ?? "local");
 
 const run = (argv, cwd) =>
   new Promise((resolve, reject) => {
@@ -34,7 +49,8 @@ const exists = (p) =>
     () => false
   );
 
-const matches = (s) => !filter || s.folder.includes(filter) || s.cwd.includes(filter);
+const matches = (s) =>
+  wantHost(s.host) && (!filter || s.folder.includes(filter) || s.cwd.includes(filter));
 
 // Nested sessions have no session of their own to resume — an Agent-tool
 // subagent runs inside its parent and an SDK one was started by a script — so
@@ -60,7 +76,8 @@ const remote = published.filter((s) => s.host && matches(s));
 const sessions = [...local, ...remote.map((s) => ({ ...s, session_id: s.id }))];
 
 if (sessions.length === 0) {
-  console.log(filter ? `No sessions matching "${filter}".` : "No sessions to save.");
+  const what = [filter && `"${filter}"`, hostFilter && `on ${[...hostFilter].join(", ")}`].filter(Boolean).join(" ");
+  console.log(what ? `No sessions matching ${what}.` : "No sessions to save.");
   process.exit(0);
 }
 

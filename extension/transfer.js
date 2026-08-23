@@ -46,33 +46,56 @@ function bundleList(names) {
   return (names ?? []).filter(isBundleName).sort().reverse();
 }
 
+// A hostname reaches `ssh`. The picker builds these from the daemon's own
+// published list, but "the caller is trusted" is the assumption that stops
+// being true the first time someone scripts it.
+const HOST_RE = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 /**
- * Save the sessions of one window's folder.
+ * The machines that have something to save, from the list the daemon
+ * publishes — this one first, then each remote host, with how many sessions
+ * each is holding.
  *
- * The folder is passed as the save command's filter rather than saving
- * everything: this command is offered per window and named for it, and a
- * command that quietly bundled another project's conversations too would be
- * doing more than it said.
+ * `"local"` is the sentinel for this machine, matching what the save command
+ * takes. A real host called `local` would collide, which is a name nobody
+ * gives an ssh target and not worth a second flag to rule out.
+ *
+ * The count is computed here rather than left to the picker because it is the
+ * whole reason a picker is worth showing: "BEAST — 7 sessions" is a choice, a
+ * bare address is a guess.
  */
-function saveCommand(folder) {
-  if (!folder) throw new Error("no folder to save");
-  return `npm run sessions:save -- ${shellQuote(folder)}`;
+function machineChoices(rows) {
+  const counts = new Map();
+  for (const r of rows ?? []) {
+    if (!r || typeof r.id !== "string") continue;
+    const host = r.host ?? "local";
+    if (host !== "local" && !HOST_RE.test(host)) continue;
+    counts.set(host, (counts.get(host) ?? 0) + 1);
+  }
+  const remote = [...counts.keys()].filter((h) => h !== "local").sort();
+  return [...(counts.has("local") ? ["local"] : []), ...remote].map((host) => ({
+    host,
+    label: host === "local" ? "This machine" : host,
+    count: counts.get(host),
+  }));
 }
 
 /**
- * Save everything the daemon can see — this machine's sessions and every
- * reachable remote host's.
+ * Save the sessions of the machines picked.
  *
- * A second command rather than a prompt on the first, and rather than the
- * first one quietly widening: `saveCommand` is scoped to a window's own
- * project and named for it, and a remote host's sessions are not that
- * window's by any reading. They are also unreachable *through* it — the
- * folder filter is a substring match, and a local window's path never matches
- * `/home/wouterd/...`, so the per-window command would silently return none of
- * them however many were running.
+ * Machines, not the window's own folder, which is what this used to take. A
+ * remote host's sessions were unreachable that way: the script's folder filter
+ * is a substring match, and a local window's path never matches
+ * `/home/wouterd/...` — measured against the live daemon, 7 remote sessions
+ * and 0 of them reachable from this checkout's window. Picking the machine
+ * says what it does and can express every combination, which is why the
+ * separate "save all" command that worked around it is gone rather than kept
+ * beside it.
  */
-function saveAllCommand() {
-  return "npm run sessions:save";
+function saveCommand(hosts) {
+  const picked = (hosts ?? []).filter((h) => h === "local" || HOST_RE.test(h));
+  if (!picked.length) throw new Error("no machine to save");
+  return `npm run sessions:save -- ${picked.map((h) => `--host=${shellQuote(h)}`).join(" ")}`;
 }
 
 /**
@@ -124,8 +147,8 @@ function transferAvailability(remoteName) {
 module.exports = {
   bundleList,
   isBundleName,
+  machineChoices,
   restorePlanCommand,
-  saveAllCommand,
   saveCommand,
   shellQuote,
   transferAvailability,

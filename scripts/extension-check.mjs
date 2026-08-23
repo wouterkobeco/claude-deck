@@ -199,22 +199,41 @@ assert.deepEqual(
   // otherwise close the quote and hand the rest of the line to the shell.
   assert.equal(shellQuote("/Users/w/p/plain"), "'/Users/w/p/plain'");
   assert.equal(shellQuote("/Users/w/it's mine"), `'/Users/w/it'\\''s mine'`);
-  assert.equal(saveCommand("/Users/w/p/kob trace"), "npm run sessions:save -- '/Users/w/p/kob trace'");
-  assert.throws(() => saveCommand(""), /no folder/);
-
-  // The per-window command cannot reach a remote host's sessions — its filter
-  // is a substring match on the window's own folder, and a local path never
-  // matches `/home/wouterd/...`. Measured against the live daemon: 7 remote
-  // sessions, 0 of them matching this checkout's folder. Hence a second
-  // command that filters nothing.
-  const { saveAllCommand } = require("../extension/transfer.js");
-  assert.equal(saveAllCommand(), "npm run sessions:save", "saving everything passes no filter at all");
+  // Machines, not folders. The per-window filter could not reach a remote host
+  // at all — a substring match on a local path never matches
+  // `/home/wouterd/...`, measured against the live daemon as 7 remote sessions
+  // and 0 of them reachable — which is why this takes hosts now, and why the
+  // separate save-all command that worked around it is gone.
+  const { machineChoices } = require("../extension/transfer.js");
+  assert.equal(saveCommand(["local"]), "npm run sessions:save -- --host='local'");
   assert.equal(
-    saveAllCommand().includes("--"),
-    false,
-    "no `--`, or npm hands the script an empty argument and it filters on the empty string"
+    saveCommand(["local", "192.168.2.70"]),
+    "npm run sessions:save -- --host='local' --host='192.168.2.70'",
+    "several machines in one bundle, which is what replaced save-all"
   );
-  assert.notEqual(saveAllCommand(), saveCommand("/Users/w/p"), "and it is genuinely a different command");
+  assert.throws(() => saveCommand([]), /no machine/, "an empty pick is a dismissal, never a save-everything");
+  assert.throws(() => saveCommand(["evil; rm -rf /"]), /no machine/, "a hostname that isn't one is dropped, not escaped");
+
+  // The picker's own list, built off the daemon's published rows.
+  assert.deepEqual(
+    machineChoices([
+      { id: "a", host: null },
+      { id: "b", host: null },
+      { id: "c", host: "192.168.2.70" },
+      { id: "d", host: "192.168.2.6" },
+      { id: "e", host: "192.168.2.70" },
+      { id: "f", host: "not a hostname!" },
+      { nonsense: true },
+    ]),
+    [
+      { host: "local", label: "This machine", count: 2 },
+      { host: "192.168.2.6", label: "192.168.2.6", count: 1 },
+      { host: "192.168.2.70", label: "192.168.2.70", count: 2 },
+    ],
+    "this machine first, then hosts sorted, each with the count that makes it a choice rather than a guess"
+  );
+  assert.deepEqual(machineChoices([]), [], "no sessions is an empty list, which the caller turns into a message");
+  assert.deepEqual(machineChoices(undefined), [], "and so is no daemon at all");
 
   // The extension never writes: it shows the plan and stops there.
   assert.equal(restorePlanCommand("2026-08-23-1104.tgz"), "npm run sessions:restore -- '2026-08-23-1104.tgz'");

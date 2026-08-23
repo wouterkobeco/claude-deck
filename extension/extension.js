@@ -14,7 +14,7 @@ const vscode = require("vscode");
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
 const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
-const { bundleList, restorePlanCommand, saveAllCommand, saveCommand, transferAvailability } = require("./transfer.js");
+const { bundleList, machineChoices, restorePlanCommand, saveCommand, transferAvailability } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
@@ -277,12 +277,20 @@ function runInDeck(name, command) {
 }
 
 /**
- * Bundle this window's sessions — full history — for another machine.
+ * Bundle whole machines' sessions — full history — for another machine.
  *
- * Scoped to this window's folders rather than the whole machine, because the
- * command is offered per window and named for it. A multi-root window asks
- * which folder: bundling all of them silently would be doing more than the
- * title says, and there is no honest default between two projects.
+ * A machine picker rather than this window's own folder, which is what this
+ * offered first: a remote host's sessions could not be reached that way at
+ * all, since the script's folder filter is a substring match and a local
+ * window's path never matches `/home/wouterd/...` — measured against the live
+ * daemon, 7 remote sessions and 0 of them reachable. Multi-select with
+ * everything pre-picked, the same shape `restoreSessions` uses and for the
+ * same reason: the common case is "all of them", and the picker exists for
+ * the one that isn't.
+ *
+ * The machine list comes from what the daemon publishes, which is also the
+ * only thing that knows a remote host has sessions at all. No list means no
+ * daemon, and that is said rather than left as an empty picker.
  */
 async function saveForTransfer() {
   const here = transferAvailability(vscode.env.remoteName);
@@ -290,39 +298,34 @@ async function saveForTransfer() {
     vscode.window.showInformationMessage(here.reason);
     return;
   }
-  const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-  if (folders.length === 0) {
-    vscode.window.showInformationMessage("Claude sessions: this window has no folder open, so there is nothing to save.");
+  let rows = [];
+  try {
+    rows = JSON.parse(readFileSync(SESSIONS_FILE, "utf8"));
+  } catch {
+    // No daemon, or none that has published yet.
+  }
+  const machines = machineChoices(rows);
+  if (machines.length === 0) {
+    vscode.window.showInformationMessage(
+      "Claude sessions: nothing to save — no running sessions found. Saving needs the deck daemon running: it is the only thing that knows what a remote host has open."
+    );
     return;
   }
-  let folder = folders[0];
-  if (folders.length > 1) {
-    const pick = await vscode.window.showQuickPick(folders, {
+  const picks = await vscode.window.showQuickPick(
+    machines.map((m) => ({
+      label: m.label,
+      description: `${m.count} session${m.count === 1 ? "" : "s"}`,
+      host: m.host,
+      picked: true,
+    })),
+    {
+      canPickMany: true,
       title: "Save Claude sessions for another machine",
-      placeHolder: "Which project?",
-    });
-    if (!pick) return; // dismissed
-    folder = pick;
-  }
-  runInDeck("claude sessions: save", saveCommand(folder));
-}
-
-/**
- * Everything the daemon can see, this machine's and every reachable host's.
- *
- * Separate from `saveForTransfer` because a remote host's sessions cannot be
- * reached through it at all: that command filters by the window's own folder,
- * and a local path never matches `/home/wouterd/...`. Widening it silently
- * would make a command named for one project bundle seven other machines'
- * conversations.
- */
-async function saveAllForTransfer() {
-  const here = transferAvailability(vscode.env.remoteName);
-  if (!here.ok) {
-    vscode.window.showInformationMessage(here.reason);
-    return;
-  }
-  runInDeck("claude sessions: save all", saveAllCommand());
+      placeHolder: "Which machines? Every session on them is bundled, with its full history.",
+    }
+  );
+  if (!picks || picks.length === 0) return; // dismissed, or everything unticked
+  runInDeck("claude sessions: save", saveCommand(picks.map((p) => p.host)));
 }
 
 /**
@@ -400,11 +403,6 @@ function activate(context) {
     ),
     vscode.commands.registerCommand("claudeStreamdeck.saveSessionsForTransfer", () =>
       saveForTransfer().catch((err) => vscode.window.showErrorMessage(`Save Claude sessions failed: ${err.message}`))
-    ),
-    vscode.commands.registerCommand("claudeStreamdeck.saveAllSessionsForTransfer", () =>
-      saveAllForTransfer().catch((err) =>
-        vscode.window.showErrorMessage(`Save Claude sessions failed: ${err.message}`)
-      )
     ),
     vscode.commands.registerCommand("claudeStreamdeck.restoreSessionsFromBundle", () =>
       restoreFromBundle().catch((err) =>
