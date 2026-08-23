@@ -14,6 +14,7 @@ const vscode = require("vscode");
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
 const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
+const { bundleList, restorePlanCommand, saveCommand } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
 const POLL_MS = 400;
@@ -35,6 +36,12 @@ const SNAPSHOT_KEY = "restorableSessions";
 // the daemon can tell a live window from a crashed one exactly
 // (`process.kill(pid, 0)`) instead of guessing from a timestamp.
 const WINDOWS_DIR = join(homedir(), ".claude", "streamdeck-windows");
+
+// Where saved session bundles live. Outside ~/.claude on purpose — the
+// transcripts they are made of are swept at 30 days and outliving that sweep
+// is the point — and owner-only, since a bundle is a verbatim copy of
+// everything a session ever saw. See src/session-transfer.mjs.
+const BUNDLE_DIR = join(homedir(), ".claude-deck-sessions");
 const STATE_FILE = join(WINDOWS_DIR, `${process.pid}.json`);
 
 let timer = null;
@@ -238,6 +245,92 @@ async function restoreSessions(context) {
   }
 }
 
+/**
+ * Where this copy of the extension was installed from, stamped into its own
+ * manifest by `ext-prompt.mjs` at install time.
+ *
+ * The alternative was a setting, which would make everyone configure a path
+ * the installer already knew by construction. An unstamped copy — installed by
+ * hand, or by a version of the installer that predates this — says so rather
+ * than guessing a location and running npm in it.
+ */
+function deckRoot() {
+  // Beside this file, because this file *is* the installed copy — no extension
+  // id to hardcode and no activation context to thread through.
+  try {
+    const root = readFileSync(join(__dirname, ".deck-root"), "utf8").trim();
+    if (root) return root;
+  } catch {
+    // Fall through to the same message: an unstamped copy and an unreadable
+    // marker are the same problem from here.
+  }
+  throw new Error(
+    "this copy of the extension doesn't know where claude-streamdeck lives — run `npm install` in that checkout, then reload this window"
+  );
+}
+
+/** A terminal in the deck's own checkout, running one of its commands. */
+function runInDeck(name, command) {
+  const terminal = vscode.window.createTerminal({ name, cwd: deckRoot() });
+  terminal.sendText(command);
+  terminal.show();
+}
+
+/**
+ * Bundle this window's sessions — full history — for another machine.
+ *
+ * Scoped to this window's folders rather than the whole machine, because the
+ * command is offered per window and named for it. A multi-root window asks
+ * which folder: bundling all of them silently would be doing more than the
+ * title says, and there is no honest default between two projects.
+ */
+async function saveForTransfer() {
+  const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  if (folders.length === 0) {
+    vscode.window.showInformationMessage("Claude sessions: this window has no folder open, so there is nothing to save.");
+    return;
+  }
+  let folder = folders[0];
+  if (folders.length > 1) {
+    const pick = await vscode.window.showQuickPick(folders, {
+      title: "Save Claude sessions for another machine",
+      placeHolder: "Which project?",
+    });
+    if (!pick) return; // dismissed
+    folder = pick;
+  }
+  runInDeck("claude sessions: save", saveCommand(folder));
+}
+
+/**
+ * Show what restoring a bundle would do — and stop there.
+ *
+ * The picker is the part only an editor can offer; the writing is left to the
+ * command it prints. Restoring is the one thing in this project that writes
+ * Claude Code's own transcripts, and a palette entry that did it on one click
+ * would be exactly the quiet write the daemon itself is not allowed to make.
+ */
+async function restoreFromBundle() {
+  let names = [];
+  try {
+    names = bundleList(readdirSync(BUNDLE_DIR));
+  } catch {
+    // No directory at all is the ordinary "never saved anything here" case.
+  }
+  if (names.length === 0) {
+    vscode.window.showInformationMessage(
+      `Claude sessions: no bundles in ${BUNDLE_DIR}. Copy one there from the other machine, or run "Save Claude sessions for another machine" here.`
+    );
+    return;
+  }
+  const bundle = await vscode.window.showQuickPick(names, {
+    title: "Restore Claude sessions from another machine",
+    placeHolder: "Newest first — this shows the plan, and writes nothing",
+  });
+  if (!bundle) return; // dismissed
+  runInDeck("claude sessions: restore", restorePlanCommand(bundle));
+}
+
 // Sweep state files whose extension host is gone. A window that crashes or is
 // force-quit never runs deactivate(), and the daemon's liveness check only
 // asks "does a process with this pid exist" — which stops meaning "that window
@@ -274,6 +367,14 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("claudeStreamdeck.restoreSessions", () =>
       restoreSessions(context).catch((err) =>
+        vscode.window.showErrorMessage(`Restore Claude sessions failed: ${err.message}`)
+      )
+    ),
+    vscode.commands.registerCommand("claudeStreamdeck.saveSessionsForTransfer", () =>
+      saveForTransfer().catch((err) => vscode.window.showErrorMessage(`Save Claude sessions failed: ${err.message}`))
+    ),
+    vscode.commands.registerCommand("claudeStreamdeck.restoreSessionsFromBundle", () =>
+      restoreFromBundle().catch((err) =>
         vscode.window.showErrorMessage(`Restore Claude sessions failed: ${err.message}`)
       )
     )

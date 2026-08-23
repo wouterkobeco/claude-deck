@@ -119,6 +119,12 @@ npm run sessions:restore -- <bundle>.tgz          # show exactly what it would d
 npm run sessions:restore -- <bundle>.tgz --write  # do it
 ```
 
+Both are in VS Code's command palette too — **Claude Stream Deck: Save Claude
+sessions for another machine**, and **… Restore Claude sessions from another
+machine…**, which lists the bundles you have and shows the plan for the one you
+pick. The palette never writes: it opens a terminal with the command, and you
+add `--write`.
+
 It never writes without `--write`, and it prints where every session would
 land first. If the other machine keeps a project somewhere else, say so:
 `--to=/Users/you/projects/app=/home/you/code/app`.

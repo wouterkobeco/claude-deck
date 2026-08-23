@@ -172,4 +172,44 @@ assert.deepEqual(
   "a worktree session lands on its window's folder, and a nested one is never published at all"
 );
 
-console.log("OK: extension routing, session restore");
+// The two transfer commands. Same reason routing.js and restore.js are split
+// out: this is a string that gets typed into a shell, from a name read off a
+// directory anyone can drop a file into.
+{
+  const { bundleList, isBundleName, restorePlanCommand, saveCommand, shellQuote } = require("../extension/transfer.js");
+
+  // Newest first, because the name format is chronological by construction.
+  assert.deepEqual(
+    bundleList(["2026-08-21-0930.tgz", "2026-08-23-1104.tgz", "2026-08-22-1200.tgz"]),
+    ["2026-08-23-1104.tgz", "2026-08-22-1200.tgz", "2026-08-21-0930.tgz"],
+    "bundles are offered newest first"
+  );
+  // Anything that isn't one of ours is not offered — the directory is an
+  // ordinary one and the name reaches a shell.
+  assert.deepEqual(
+    bundleList(["notes.txt", "2026-08-23-1104.tgz", "; rm -rf ~.tgz", "..", "2026-08-23-1104.tgz.bak"]),
+    ["2026-08-23-1104.tgz"],
+    "only date-stamped .tgz names this tool writes are offered"
+  );
+  assert.deepEqual(bundleList(undefined), [], "no directory at all is no bundles, not a throw");
+  assert.equal(isBundleName("2026-08-23-1104.tgz"), true);
+  assert.equal(isBundleName("../../etc/passwd"), false);
+
+  // A project called `it's mine` is an ordinary thing to have, and would
+  // otherwise close the quote and hand the rest of the line to the shell.
+  assert.equal(shellQuote("/Users/w/p/plain"), "'/Users/w/p/plain'");
+  assert.equal(shellQuote("/Users/w/it's mine"), `'/Users/w/it'\\''s mine'`);
+  assert.equal(saveCommand("/Users/w/p/kob trace"), "npm run sessions:save -- '/Users/w/p/kob trace'");
+  assert.throws(() => saveCommand(""), /no folder/);
+
+  // The extension never writes: it shows the plan and stops there.
+  assert.equal(restorePlanCommand("2026-08-23-1104.tgz"), "npm run sessions:restore -- '2026-08-23-1104.tgz'");
+  assert.equal(
+    restorePlanCommand("2026-08-23-1104.tgz").includes("--write"),
+    false,
+    "the palette entry shows the plan and never lands it — that consent is typed, not clicked"
+  );
+  assert.throws(() => restorePlanCommand("x.tgz; rm -rf /"), /not a bundle/);
+}
+
+console.log("OK: extension routing, session restore, session transfer");

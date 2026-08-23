@@ -519,6 +519,25 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   sensitive thing this project produces — a verbatim copy of everything a
   session ever saw — so it is owner-only and deliberately unreachable from the
   board server, which binds `0.0.0.0`.
+  **Both commands are in the VS Code palette** (`extension/transfer.js` —
+  split out for the reason `routing.js` and `restore.js` were: a string that
+  reaches a shell, in a file that can't be loaded outside an editor).
+  "Save Claude sessions for another machine" bundles *this window's* folder,
+  asking which one on a multi-root window rather than picking; "Restore Claude
+  sessions from another machine…" lists `~/.claude-deck-sessions/` newest
+  first and runs the **plan** — never `--write`. A palette entry that landed
+  transcripts on one click would be exactly the quiet write the daemon itself
+  is not allowed to make; typing `--write` is the consent.
+  The extension runs the repo's own scripts rather than reimplementing them,
+  and knows where the repo is because `ext-prompt.mjs` writes the checkout path
+  into a **`.deck-root` file beside the installed copy** at install time. Its
+  own file, not a field in the manifest: stamping the manifest means
+  re-serialising it, and a re-serialised copy differs from its source in
+  whitespace and escaping (`\u2026` against a literal ellipsis) — which
+  `signature()` reads as changed code *forever*, i.e. a reload prompt on every
+  start. That was the first attempt and it is why `signature()` skips
+  `.deck-root` explicitly. An unstamped copy says so rather than guessing a
+  path to run npm in.
   `sessions:restore` prints its plan and writes nothing without `--write`:
   this is the one command here that writes *Claude Code's own* transcripts
   rather than the daemon's notes to itself, which is a category the read-only

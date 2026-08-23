@@ -24,7 +24,7 @@
 // Never fatal: every path here exits 0. A prestart that can fail the daemon it
 // precedes is a worse trade than a missing extension.
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,12 @@ import { fileURLToPath } from "node:url";
 const home = homedir();
 const installedDir = join(home, ".vscode/extensions/claude-streamdeck-terminal-focus");
 const sourceDir = fileURLToPath(new URL("../extension", import.meta.url));
+// The checkout this copy is being installed from — stamped into the installed
+// manifest so the extension can run this repo's own npm scripts.
+const repoRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+// Read by the extension itself (`join(__dirname, ROOT_MARKER)`), skipped by
+// `signature()`, never present in the checkout.
+const ROOT_MARKER = ".deck-root";
 const forced = process.argv.includes("--yes");
 
 // null covers both "not installed" and "installed but unreadable" — the fix is
@@ -60,6 +66,10 @@ const signature = (dir) => {
     const hash = createHash("sha1");
     for (const name of readdirSync(dir).sort()) {
       if (name.endsWith(".md")) continue;
+      // Written into the installed copy at install time and never present in
+      // the source, so counting it would make the two differ forever — a
+      // reload prompt on every start, over a file VS Code does not load.
+      if (name === ROOT_MARKER) continue;
       const body = readFileSync(join(dir, name), "utf8");
       hash.update(`${name}\0`);
       hash.update(name === "package.json" ? body.replace(/"version"\s*:\s*"[^"]*",?/, "") : body);
@@ -75,6 +85,25 @@ const install = () => {
   // too, or the window keeps loading it.
   rmSync(installedDir, { recursive: true, force: true });
   cpSync(sourceDir, installedDir, { recursive: true });
+  // Where this copy came from, in a file beside it. The session save/restore
+  // commands run `npm run` in that directory, and the installed extension has
+  // no other way to know where it is — it is a copy under ~/.vscode/extensions
+  // with no `src/` next to it. The installer is the one thing that knows the
+  // path by construction, so it writes it down rather than making anyone
+  // configure what is already known.
+  //
+  // Its own file rather than a field in the manifest: stamping the manifest
+  // means re-serialising it, and a re-serialised copy differs from its source
+  // in whitespace and escaping (`\u2026` vs a literal ellipsis) — which the
+  // signature reads as changed code, forever. Measured, not guessed: that is
+  // exactly what the first attempt did.
+  try {
+    writeFileSync(join(installedDir, ROOT_MARKER), repoRoot);
+  } catch {
+    // A copy that cannot be stamped still focuses terminals and still restores
+    // this window's own sessions; only the two transfer commands go quiet, and
+    // they say why.
+  }
 };
 
 const installed = versionOf(installedDir);
