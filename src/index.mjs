@@ -78,6 +78,32 @@ const sessionOrder = new Map();
 const nestedOrder = new Map();
 let arrivals = 0;
 
+// When each session was last revealed, in seconds. The purple key means "this
+// stopped and you have not looked at it yet", so pressing the key *is* the
+// thing that answers it — reveal the window and there is no longer any news.
+const seenAt = new Map();
+
+/**
+ * The just-stopped colour, minus the sessions you have already been to.
+ *
+ * `recentlyIdle` is the palette's half of the rule and stays pure in
+ * `render.mjs`; this is the half that needs the board's memory. Compared
+ * against `ts` rather than against a clock: `ts` is when the session went
+ * idle, so a press before that is a press about *older* news and must not
+ * suppress this one. That is what makes a session that works again and stops
+ * again go purple a second time — the new `ts` is past the old visit — which
+ * is the behaviour you want and the reason this is not a boolean.
+ */
+export const stillUnread = (session) => recentlyIdle(session) && (seenAt.get(session.session_id) ?? 0) < session.ts;
+
+// Pressing a key is the acknowledgement. Called beside every `focusWindow` —
+// the sessions board, the queue boards' way out, and the iPad's own tap —
+// rather than inside it, because focusWindow gates its work on the window
+// being VS Code's and "I have seen this" is true either way.
+export const markSeen = (session) => {
+  if (session?.session_id) seenAt.set(session.session_id, Date.now() / 1000);
+};
+
 // Ties keep their input order, so an unslotted session lands after every
 // slotted one rather than being compared against another Infinity — which
 // `a - b` turns into NaN, and a NaN comparator sorts arbitrarily.
@@ -672,6 +698,11 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   for (const id of [...sessionOrder.keys()]) {
     if (!live.has(id)) sessionOrder.delete(id);
   }
+  // Same prune, same reason: a session id is dead for good once its process
+  // is, and nothing should be remembering visits to it.
+  for (const id of [...seenAt.keys()]) {
+    if (!live.has(id)) seenAt.delete(id);
+  }
   const liveNested = new Set(nested.map((s) => s.session_id));
   for (const id of [...nestedOrder.keys()]) {
     if (!liveNested.has(id)) nestedOrder.delete(id);
@@ -975,7 +1006,7 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
     // `recent` too, so "literally the session's own key" stays literally true:
     // pressing a purple key onto a grey one would read as the state having
     // changed under you.
-    { kind: "label", label, project, recent: recentlyIdle(session) },
+    { kind: "label", label, project, recent: stillUnread(session) },
     { kind: "stat", label: "STATE", value: age ? `${session.state} ${age}` : session.state },
     // A ring when the number is known — `pie` is what renderStat draws, `value`
     // is the dash it falls back to when the status line never wrote a context
@@ -1233,7 +1264,7 @@ async function drawQueueTiles(deck, buttons, entries, kind) {
       // One object drives both the render call and the drawn signature, so a
       // field drawn but not signed can't happen — that's what left a tile's
       // gauge frozen once already, and dropped its task counter a second time.
-      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: recentlyIdle(session) };
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: stillUnread(session) };
       if (entry.leavingUntil) btn.leavingParams = { ...params, leavingUntil: entry.leavingUntil };
       // The drain is signed at whole percent: at 400ms a 5s bar moves 8% a
       // tick, so a raw float would make every poll a fresh signature and
@@ -1497,7 +1528,7 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
       // `recentlyIdle` the deck calls, so the two boards cannot disagree
       // about which grey a key is.
       shell: s.state === "shell",
-      recent: recentlyIdle(s),
+      recent: stillUnread(s),
       label,
       context: typeof s.context === "number" ? s.context : null,
       // taskSquares already decides which square is done, active or still to
@@ -2057,7 +2088,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // subagent's work onto the key because a subagent has no key of its
       // own, but "did this just stop" is a question about the session you are
       // looking at. When the fold lands on idle they are all idle anyway.
-      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: recentlyIdle(session) };
+      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: stillUnread(session) };
       btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are
@@ -2414,7 +2445,10 @@ async function run() {
       // Not awaited and it cannot throw, same as a key press: focusWindow
       // swallows its own failures and the board has nothing to report either
       // way.
-      if (session) focusWindow(session, requestedAt);
+      if (session) {
+        markSeen(session);
+        focusWindow(session, requestedAt);
+      }
     },
   };
 
@@ -2550,7 +2584,10 @@ async function run() {
       setView({ kind: "sessions" });
       // A session key still focuses its window on the way out — that's the
       // whole point of pressing one there.
-      if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
+      if (btn?.assigned) {
+        markSeen(btn.assigned);
+        focusWindow(btn.assigned, requestedAt);
+      }
       lastPress = press;
       return;
     }
@@ -2616,7 +2653,10 @@ async function run() {
     // Both presses focus the window: between the two you may well have
     // alt-tabbed somewhere else, and a press that opens the detail board but
     // leaves you looking at Safari has done half its job.
-    if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
+    if (btn?.assigned) {
+      markSeen(btn.assigned);
+      focusWindow(btn.assigned, requestedAt);
+    }
     // setView cleared the chain, so the press that opened detail can't also
     // seed the next one — see the detail branch above for the other half.
     if (isRepeat) setView({ kind: "detail", session_id: sessionId });

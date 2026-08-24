@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, resumeView, seedSessionOrder, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, resumeView, seedSessionOrder, stillUnread, markSeen, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 import { recentlyIdle, RECENT_IDLE_S, SPLASH_LETTERS, SPLASH_MS } from "../src/render.mjs";
 
@@ -991,6 +991,36 @@ eq(SPLASH_MS, 5000, "the sweep is five seconds, whatever the letter count");
   eq(resumeView(JSON.stringify({ kind: "detail", session_id: 7 })), null, "and its id must be a string");
   eq(resumeView(undefined), null, "no variable is an ordinary start");
   eq(resumeView("not json"), null, "and neither is nonsense");
+}
+
+// The purple key means "this stopped and you have not looked at it yet", so
+// pressing it is what answers the question. stillUnread is the board's half of
+// that; recentlyIdle above is the palette's.
+{
+  const now = Date.now() / 1000;
+  const sess = { session_id: "seen-me", state: "idle", ts: now - 30 };
+  eq(stillUnread(sess), true, "a session that just stopped is unread");
+  markSeen(sess);
+  eq(stillUnread(sess), false, "and pressing its key drops it to plain idle");
+
+  // Compared against ts, not against a clock. A ts *after* the visit is a
+  // session that worked again and stopped again since you were last there, so
+  // the key has something new to say — which is the whole reason the mark is a
+  // timestamp and not a boolean. (Written as a ts in the near future because
+  // the visit above was stamped from the real clock a line ago; there is no
+  // way to be "30 seconds later" in a check that does not sleep.)
+  eq(stillUnread({ ...sess, ts: now + 30 }), true, "stopping again since the visit is new news");
+
+  // A visit cannot make a key purple that wasn't, and never overrides the
+  // palette's own rule.
+  markSeen({ session_id: "busy-one", ts: now });
+  eq(stillUnread({ session_id: "busy-one", state: "busy", ts: now - 30 }), false, "a busy session is still busy");
+  eq(stillUnread({ session_id: "never-pressed", state: "idle", ts: now - 3600 }), false, "and a long-idle one is still grey");
+
+  // Nothing to mark is not an error: the queue boards call this on their way
+  // out, where a press can land on an empty key.
+  markSeen(null);
+  markSeen({});
 }
 
 console.log("OK: project grouping, board tiles, status key");
