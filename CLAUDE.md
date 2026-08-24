@@ -140,10 +140,10 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   reload, which this project treats as routine — would strip the guard out
   from under a fetch that is still running.
 - `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`,
-  `accentFor`, `attentionQueue`, `detailLayout`, `pageOf` and
-  `restartDecision` for the checks — the rule being that anything deciding
-  something the hardware would have to show you gets to be a pure function with
-  a case in `slots-check`; the `import.meta.url === argv[1]` guard at the
+  `accentFor`, `attentionQueue`, `detailLayout`, `pageOf`, `restartDecision`,
+  `resumeView` and `stillUnread` for the checks — the rule, which outlives any
+  list of names, being that anything deciding something the hardware would have
+  to show you gets to be a function with a case in `slots-check`; the `import.meta.url === argv[1]` guard at the
   bottom is what keeps importing it from starting a daemon. Also owns **which
   board is showing**: one `view` value local to `run()`, never a flag per
   board, so "stats and detail are both somehow on" isn't representable. Its six
@@ -334,7 +334,7 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   light identity bar (57–94), `MARKER_COLORS` and the usage gauge are a few
   bright pixels drawn on top. Everything small is light-on-dark; that one rule
   is why white body text, 3×6px markers and a 3px gauge all stay readable on
-  fifteen keys in four states. `colors-check` asserts the floors, so a hex
+  fifteen keys in five states. `colors-check` asserts the floors, so a hex
   nudged to taste can't quietly make one marker invisible on one key in one
   state — which is otherwise only findable by looking at that key, in that
   state, on the actual deck. Two floors there are deliberately lower than the
@@ -342,6 +342,40 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   enough to clear the others converges on the white idle square) and the gauge,
   which is checked against the dark track it's inset onto rather than the
   accent it would otherwise vanish into.
+  **`idle_recent` is a fifth background and it is a colour, not a state.**
+  A session idle for under `RECENT_IDLE_S` (5 min) draws deep purple rather
+  than the idle grey: the first has something to read, the second is
+  furniture. Nothing else knows about it — not `STATE_URGENCY`, the queues,
+  the history log or the registry — because "which of two greys" is a
+  rendering question and `idle` is still the state.
+  **The hue is that 50 ΔE floor talking, not taste, and the obvious design
+  was measured and rejected.** "Same colour, dimmer" cannot satisfy the
+  state-separation floor at all: idle sits at L\* 36, so 50 ΔE of pure
+  lightness lands at L\* −14. Every muted candidate was scored before a hex
+  was chosen — blue-grey 800 (11 ΔE from idle), slate (22), steel (22),
+  teal 900 (26) — and all four would have been two greys nobody could tell
+  apart across a room, which is the exact failure this check exists to
+  catch. `#4527a0` is the largest separation available (76) that collides
+  with no other state's hue and can't read as the red key at a glance. Every
+  other floor then passed by construction, because `colors-check` iterates
+  `STATE_COLORS` rather than naming its members.
+  **Two halves decide it, and they live apart on purpose.** `recentlyIdle`
+  is the palette's half and stays pure here: idle, fresh `ts`, and *not*
+  `startedEmpty` — a session nobody has typed into has a fresh `ts` from the
+  moment it registered and has done nothing, so without that exclusion
+  opening a VS Code window lights a key for five minutes. `stillUnread` in
+  `index.mjs` is the half that needs the board's memory: pressing a key is
+  what marks it read, since the colour means "this stopped and you haven't
+  looked" and revealing the window answers exactly that. The mark is a
+  **timestamp compared against the session's own `ts`**, never a boolean — a
+  press from before the session went idle is a press about older news and
+  must not suppress this one, and the same comparison is what makes a session
+  that works again and stops again go purple a second time. `markSeen` sits
+  beside every `focusWindow` call rather than inside it, because
+  `focusWindow` gates its work on the window being VS Code's and "I have seen
+  this" is true either way. `recent` is carried separately from `state` for
+  the reason `shell` is: `state` is the block's, folded over subagents, and
+  "did *this* just stop" is a question about the one session.
 - `src/usage.mjs` — the two rate-limit windows for the bottom-right key. These
   numbers exist only server-side, so it reads the CLI's own OAuth token from the
   login keychain and asks the API, cached 5 minutes. The only outbound network
@@ -1599,6 +1633,42 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   read. The daemon's own per-poll "reload these windows" line covers that side.
   And the cost of a restart is now paid more often, which is the whole reason
   `sessionOrder` had to learn to persist first: see the ordering invariant.
+  **The restart says so on the keys**: every key black, the fifteen letters of
+  "NEW VERSION START" in white, then each turning green left to right across
+  `SPLASH_MS` (4s). Fifteen letters on fifteen keys with no remainder is what
+  those words buy; they **wrap** (`NEWVE / RSION / START`) and there is no
+  layout where they don't, because the deck is five columns and VERSION is
+  seven letters. Spanning letters across key boundaries is not an option on
+  this hardware — the keys are not contiguous pixels, there is black plastic
+  between them, and a letter cut by the bezel is one nobody can read. Change
+  the words and the constraint is the count: 5/5/5 is the only shape that
+  also lands a word per row.
+  **The sweep runs in the *old* process, before the exec**, which is the only
+  place it can: the new image is up in well under a second and would have to
+  stall on purpose to show anything. So it is the restart's actual progress
+  bar rather than a splash screen — while it runs, the daemon you are watching
+  is still the outgoing one. Four seconds is deliberately longer than the work
+  needs: a board that changes with no explanation is what this exists to
+  prevent, and a restart nobody saw is indistinguishable from a glitch.
+  `SPLASH_MS` is the **whole** sweep and the per-letter interval is derived
+  from it, so adding a word cannot quietly stretch a restart.
+  **`pulse()` had to be stopped for it.** It runs on its own 400ms tick and
+  would blink a `requires_action` key straight through the middle of the
+  splash, which reads as the update having gone wrong. `isRestarting` is the
+  overlay boards' rule reached the one way they cannot use — nulling
+  `renderParams` would throw away what this process still needs if the exec
+  turns out to be impossible — and it *skips* rather than exits, so a deck
+  that can't be exec'd away from is still animated by the only loop left.
+  **The board you were on comes back** (`resumeView`), carried in the
+  environment because that is the one thing that survives replacing a process
+  image; a file would be a ninth one, for a value that is meaningless two
+  seconds later. Only `kind` and the detail board's `session_id`: `tiles` are
+  recaptured on the new process's first poll, which is what `holdTiles` is
+  for, and a queue board's **page is deliberately dropped** — landing on page
+  3 of a queue that re-ranked while the daemon restarted is a page nobody
+  chose. It is validated against a closed set of board kinds, because the
+  value reaches the poll loop's own board dispatch and a kind that isn't a
+  board leaves the daemon drawing nothing at all.
 - **One install step, in the status line, and `npm start` now offers it.**
   Context usage is the exception to the above: Claude Code hands a session's
   context percentage to the status line and nowhere else, so
