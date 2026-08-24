@@ -18,9 +18,50 @@ export const STATE_COLORS = {
   // and gives white 5.0:1.
   waiting: "#886000", // dark gold — waiting on input
   idle: "#555555", // gray
+  // A session that stopped in the last few minutes is not the same thing as
+  // one that has been sitting since this morning: the first has something to
+  // read, the second is furniture. Both are `idle` everywhere else in the
+  // project — this is a colour, not a state, and nothing in `STATE_URGENCY`,
+  // the queues, the history log or the registry knows about it.
+  //
+  // **It has to be a hue, and that is the palette's own rule talking, not
+  // taste.** `colors-check` holds every pair of key backgrounds 50 ΔE apart,
+  // and a *dimmer grey* cannot reach that: idle sits at L* 36, so 50 ΔE of
+  // pure lightness lands at L* -14. Measured against every muted candidate —
+  // blue-grey 800, slate, steel, teal 900 — all four came in at 11-26 ΔE and
+  // all four would have been two greys nobody could tell apart across a room,
+  // which is exactly the failure this check exists to catch. Deep purple is
+  // the largest separation available (76 from idle) that collides with no
+  // other state's hue and cannot be mistaken for the red key at a glance.
+  idle_recent: "#4527a0", // deep purple — idle, but only just
 };
 
 // Colours for the nested-session squares, and for the shell marker. Deliberately
+// How long a session keeps the just-stopped colour. Five minutes is the span
+// over which "did that finish?" is still the question you are asking; past it
+// you are looking for the key on purpose rather than noticing it.
+export const RECENT_IDLE_S = 300;
+
+/**
+ * Whether this session earns the just-stopped background.
+ *
+ * Lives beside the palette because it *is* palette logic — which of two greys
+ * a key gets — and because both boards have to answer it identically: the deck
+ * and the iPad draw the same session, and a key that is purple on one and grey
+ * on the other is worse than neither having the colour.
+ *
+ * `ts` is when the current state began, so for an idle session it is exactly
+ * how long it has been idle. Two exclusions, both because "recently active"
+ * has to mean *active*: a session that has never been typed into
+ * (`startedEmpty`) has a fresh `ts` from the moment it registered and has done
+ * nothing at all, and a session with no `ts` is one whose registry entry could
+ * not be read — absent, not new.
+ */
+export function recentlyIdle(session, nowSeconds = Date.now() / 1000) {
+  if (!session || session.state !== "idle" || session.startedEmpty) return false;
+  return session.ts > 0 && nowSeconds - session.ts < RECENT_IDLE_S;
+}
+
 // brighter than STATE_COLORS: those are key backgrounds and are dark by design,
 // so a busy square drawn in the busy background colour would disappear into a
 // busy key.
@@ -236,7 +277,7 @@ function fitCaps(project, width, fontSize) {
 // advanced by pulse(). Every other caller leaves it at 0 — the steady frame is
 // the brightest one, so a board that never pulses looks the same as it always
 // did.
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell, leaving = null }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell, recent = false, leaving = null }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room. It never actually sits on its own red
@@ -250,7 +291,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
       ? pulse
         ? "#ffc107"
         : STATE_COLORS.waiting
-      : STATE_COLORS[state] ?? STATE_COLORS.idle;
+      : STATE_COLORS[recent && state === "idle" ? "idle_recent" : state] ?? STATE_COLORS.idle;
   const capSize = Math.round(height * 0.11);
   // Accents are all light, so the caps go dark rather than white. The bar
   // carries the project name alone: an age shared it for one release and

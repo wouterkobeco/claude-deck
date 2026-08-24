@@ -16,7 +16,7 @@ import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, reco
 import { collectTokens, compactTokens, earliestBucket, groupTokens, HOUR_MS, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle } from "./render.mjs";
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
@@ -972,7 +972,10 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
   // task.
   const { label, project } = keyFields(session);
   const header = [
-    { kind: "label", label, project },
+    // `recent` too, so "literally the session's own key" stays literally true:
+    // pressing a purple key onto a grey one would read as the state having
+    // changed under you.
+    { kind: "label", label, project, recent: recentlyIdle(session) },
     { kind: "stat", label: "STATE", value: age ? `${session.state} ${age}` : session.state },
     // A ring when the number is known — `pie` is what renderStat draws, `value`
     // is the dash it falls back to when the status line never wrote a context
@@ -1230,7 +1233,7 @@ async function drawQueueTiles(deck, buttons, entries, kind) {
       // One object drives both the render call and the drawn signature, so a
       // field drawn but not signed can't happen — that's what left a tile's
       // gauge frozen once already, and dropped its task counter a second time.
-      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving };
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: recentlyIdle(session) };
       if (entry.leavingUntil) btn.leavingParams = { ...params, leavingUntil: entry.leavingUntil };
       // The drain is signed at whole percent: at 400ms a 5s bar moves 8% a
       // tick, so a raw float would make every poll a fresh signature and
@@ -1490,8 +1493,11 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
       state: mostUrgent([s.state, ...own.map((n) => n.state)]),
       // Carried separately for the same reason renderKey takes it separately:
       // `state` is the block's, and the blue shell marker is about this
-      // session alone.
+      // session alone. So is `recent` — and it goes through the same
+      // `recentlyIdle` the deck calls, so the two boards cannot disagree
+      // about which grey a key is.
       shell: s.state === "shell",
+      recent: recentlyIdle(s),
       label,
       context: typeof s.context === "number" ? s.context : null,
       // taskSquares already decides which square is done, active or still to
@@ -2047,7 +2053,11 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // `shell` is carried separately because `state` is now the block's, and
       // the margin's blue dot is about this session alone — without it, a key
       // going green for a busy subsession would erase its own shell marker.
-      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates };
+      // `recent` is this session's own, never the block's: `state` folds a
+      // subagent's work onto the key because a subagent has no key of its
+      // own, but "did this just stop" is a question about the session you are
+      // looking at. When the fold lands on idle they are all idle anyway.
+      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: recentlyIdle(session) };
       btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are
@@ -2162,7 +2172,7 @@ async function refreshDetail(deck, buttons, view) {
               progress: tile.session.progress,
               context: tile.session.context,
             }
-          : { state: session.state, label: tile.label, accent, project: tile.project };
+          : { state: session.state, label: tile.label, accent, project: tile.project, recent: tile.recent ?? false };
       const drawn = `detail ${tile.kind} ${JSON.stringify(params)}`;
       if (btn.drawn === drawn) return;
 

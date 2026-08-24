@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, seedSessionOrder, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
+import { recentlyIdle, RECENT_IDLE_S } from "../src/render.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
 const eq = (got, want, label) => {
@@ -447,7 +448,13 @@ const DECK = 15;
 const plain = detailLayout({ session: dSession, tasks: [dTask("read the code"), dTask("lock it", "in_progress")], nested: [], age: "40m", slotCount: DECK });
 eq(plain.length, DECK, "layout fills every key on the deck");
 eq(plain[DETAIL_BACK_INDEX], { kind: "back" }, "the back key sits on the bottom-left button");
-eq(plain[0], { kind: "label", label: "serializing client-block mutations", project: "kob-trace" }, "the title is one key, the session's own");
+// `recent` rides along so the key you land on is drawn exactly like the key
+// you pressed. This session is busy, so it is false whatever its `ts` says.
+eq(
+  plain[0],
+  { kind: "label", label: "serializing client-block mutations", project: "kob-trace", recent: false },
+  "the title is one key, the session's own"
+);
 eq(plain[1], { kind: "stat", label: "STATE", value: "busy 40m" }, "state tile carries the age");
 eq(plain[2], { kind: "stat", label: "CONTEXT", value: "41%", pie: 41 }, "context tile");
 eq(plain[3], { kind: "stat", label: "MODEL", value: "opus-5 high" }, "model tile drops the vendor prefix");
@@ -520,7 +527,7 @@ const cleared = detailLayout({
   age: "",
   slotCount: DECK,
 });
-eq(cleared[0], { kind: "label", label: "", project: "kob-trace" }, "cleared session shows no title");
+eq(cleared[0], { kind: "label", label: "", project: "kob-trace", recent: false }, "cleared session shows no title");
 
 // Before Claude Code has generated an aiTitle — the first turn or two of every
 // session — the body is the last thing typed. The two rungs under it are a name
@@ -532,17 +539,17 @@ const untitled = { ...dSession, aiTitle: null, name: "kob-trace-01", cwd: "/proj
 const layout = (session) => detailLayout({ session, tasks: [], nested: [], age: "", slotCount: DECK })[0];
 eq(
   layout({ ...untitled, lastPrompt: "process the backend change queue" }),
-  { kind: "label", label: "process the backend change queue", project: "kob-trace" },
+  { kind: "label", label: "process the backend change queue", project: "kob-trace", recent: false },
   "an untitled session reads as what you asked it"
 );
 eq(
   layout({ ...untitled, aiTitle: "Drain the change queue", lastPrompt: "process the backend change queue" }),
-  { kind: "label", label: "Drain the change queue", project: "kob-trace" },
+  { kind: "label", label: "Drain the change queue", project: "kob-trace", recent: false },
   "and hands over to the title once one exists"
 );
 eq(
   layout(untitled),
-  { kind: "label", label: "kob-trace-01", project: "kob-trace" },
+  { kind: "label", label: "kob-trace-01", project: "kob-trace", recent: false },
   "with no prompt found at all it still says something, never CLEAR"
 );
 
@@ -929,6 +936,33 @@ eq(
   seedSessionOrder(["z", "y"]);
   assignSlots([s("x", P), s("y", P), s("z", P)], three);
   eq(three, ["z", "y", "x"], "remembered order wins, and a session that wasn't remembered lands after");
+}
+
+// recentlyIdle: which of the two greys a key gets. Only `idle` splits — every
+// other state keeps the colour it always had — and it is the same function
+// both boards call, so the deck and the iPad cannot disagree about a key.
+{
+  const now = 10_000;
+  const sess = (state, ts, extra = {}) => ({ state, ts, ...extra });
+  eq(recentlyIdle(sess("idle", now - 60), now), true, "idle a minute ago is recent");
+  eq(recentlyIdle(sess("idle", now - RECENT_IDLE_S + 1), now), true, "and right up to the edge");
+  eq(recentlyIdle(sess("idle", now - RECENT_IDLE_S), now), false, "but not at it");
+  eq(recentlyIdle(sess("idle", now - 3600), now), false, "an hour of sitting is not recent");
+
+  // Every other state keeps its own colour: this only ever splits idle in
+  // two, so a busy key is green whether it started ten seconds or ten hours
+  // ago, and a blocked one stays red.
+  for (const state of ["busy", "shell", "waiting", "requires_action", "compacting"]) {
+    eq(recentlyIdle(sess(state, now - 60), now), false, `${state} is not affected`);
+  }
+
+  // "Recently active" has to mean active. A session nobody has typed into has
+  // a fresh ts from the moment it registered and has done nothing at all —
+  // opening a window would otherwise light a key for five minutes.
+  eq(recentlyIdle(sess("idle", now - 60, { startedEmpty: true }), now), false, "a session never typed into is not recent");
+  // No ts is a registry entry that could not be read: absent, not new.
+  eq(recentlyIdle(sess("idle", 0), now), false, "a missing timestamp is not recent");
+  eq(recentlyIdle(null, now), false, "and neither is nothing at all");
 }
 
 console.log("OK: project grouping, board tiles, status key");

@@ -511,7 +511,11 @@ function tile(k, token) {
   // over its subagents, the same mostUrgent() call refresh() makes.
   const blocked = k.state === "requires_action";
   // compacting has no colour of its own: the deck draws it on busy's green.
-  const background = blocked ? STATE_COLORS.waiting : k.state === "compacting" ? STATE_COLORS.busy : STATE_COLORS[k.state] ?? STATE_COLORS.idle;
+  // `idle_recent` is the deck's own rule, reached through the same `recent`
+  // flag boardTiles sets with `recentlyIdle` — a session that is purple on the
+  // deck and grey on the iPad would be worse than neither board having it.
+  const stateKey = k.recent && k.state === "idle" ? "idle_recent" : k.state;
+  const background = blocked ? STATE_COLORS.waiting : k.state === "compacting" ? STATE_COLORS.busy : STATE_COLORS[stateKey] ?? STATE_COLORS.idle;
   // The deck's renderCompacting: a sweeping ring and the word, no title and no
   // gauge. CSS spins it, so the poll's diffing keeps it turning between ticks.
   const content = k.state === "compacting" ? `<div class="compact"><i></i><b>COMPACTING</b></div>` : body(k);
