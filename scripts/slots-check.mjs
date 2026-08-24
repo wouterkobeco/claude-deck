@@ -960,6 +960,10 @@ eq(
   // a fresh ts from the moment it registered and has done nothing at all —
   // opening a window would otherwise light a key for five minutes.
   eq(recentlyIdle(sess("idle", now - 60, { startedEmpty: true }), now), false, "a session never typed into is not recent");
+  // `/clear` is an ordinary turn: the session goes idle and restamps ts with
+  // nothing behind it, so the key would promise something to read on top of
+  // the word CLEAR. Same two flags keyFields lets blank a key's body.
+  eq(recentlyIdle(sess("idle", now - 60, { clearedEmpty: true }), now), false, "a cleared session is not recent");
   // No ts is a registry entry that could not be read: absent, not new.
   eq(recentlyIdle(sess("idle", 0), now), false, "a missing timestamp is not recent");
   eq(recentlyIdle(null, now), false, "and neither is nothing at all");

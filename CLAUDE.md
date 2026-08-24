@@ -360,10 +360,17 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   other floor then passed by construction, because `colors-check` iterates
   `STATE_COLORS` rather than naming its members.
   **Two halves decide it, and they live apart on purpose.** `recentlyIdle`
-  is the palette's half and stays pure here: idle, fresh `ts`, and *not*
-  `startedEmpty` — a session nobody has typed into has a fresh `ts` from the
-  moment it registered and has done nothing, so without that exclusion
-  opening a VS Code window lights a key for five minutes. `stillUnread` in
+  is the palette's half and stays pure here: idle, fresh `ts`, and neither
+  `startedEmpty` nor `clearedEmpty`. Those two are exactly the flags
+  `keyFields` lets blank a key's body, and that is not a coincidence — the
+  same "nothing to say yet" that empties the text disqualifies the colour,
+  and the two must not disagree on one key. Both are cases where `ts` is
+  fresh and nothing happened: a session nobody has typed into dates its `ts`
+  from the moment it registered, so without that exclusion opening a VS Code
+  window lights a key for five minutes; and `/clear` is a turn like any
+  other, so the session goes idle and restamps `ts` with nothing behind it,
+  which would draw "there is something here to read" over the word CLEAR —
+  the one thing that key is already saying there isn't. `stillUnread` in
   `index.mjs` is the half that needs the board's memory: pressing a key is
   what marks it read, since the colour means "this stopped and you haven't
   looked" and revealing the window answers exactly that. The mark is a

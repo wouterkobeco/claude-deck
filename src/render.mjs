@@ -51,14 +51,25 @@ export const RECENT_IDLE_S = 300;
  * on the other is worse than neither having the colour.
  *
  * `ts` is when the current state began, so for an idle session it is exactly
- * how long it has been idle. Two exclusions, both because "recently active"
- * has to mean *active*: a session that has never been typed into
- * (`startedEmpty`) has a fresh `ts` from the moment it registered and has done
- * nothing at all, and a session with no `ts` is one whose registry entry could
- * not be read — absent, not new.
+ * how long it has been idle. Three exclusions, all because "recently active"
+ * has to mean *active*, and all three are cases where `ts` is fresh and
+ * nothing happened.
+ *
+ * `startedEmpty` — never typed into, so its `ts` dates from the moment it
+ * registered; without this, opening a VS Code window lights a key for five
+ * minutes. `clearedEmpty` — `/clear` is a turn like any other, so the session
+ * goes idle and restamps `ts` with nothing behind it: the key would draw
+ * "there is something here to read" over the word CLEAR, which is the one
+ * thing it is already saying there isn't. And no `ts` at all, which is a
+ * registry entry that could not be read — absent, not new.
+ *
+ * These are exactly the two flags `keyFields` lets blank a key's body, which
+ * is not a coincidence: the same "nothing to say yet" that empties the text is
+ * what disqualifies the colour, and the two must not disagree on one key.
  */
 export function recentlyIdle(session, nowSeconds = Date.now() / 1000) {
-  if (!session || session.state !== "idle" || session.startedEmpty) return false;
+  if (!session || session.state !== "idle") return false;
+  if (session.startedEmpty || session.clearedEmpty) return false;
   return session.ts > 0 && nowSeconds - session.ts < RECENT_IDLE_S;
 }
 
