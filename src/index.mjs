@@ -2941,13 +2941,13 @@ export function resumeView(raw) {
 /**
  * The restart, said out loud on the keys: every key black, the fifteen letters
  * of "NEW VERSION START" in white, then each one turning green left to right
- * across five seconds.
+ * across four seconds.
  *
  * It runs in the *old* process, before the exec, which is the only place it
  * can: the new image starts in well under a second and would have to stall on
  * purpose to show you anything. So the sweep is the restart's actual progress
  * bar — while it is running, the daemon you are watching is still the old one.
- * Five seconds is deliberately longer than the work needs. A board that
+ * Four seconds is deliberately longer than the work needs. A board that
  * changes with no explanation is the thing this exists to prevent, and a
  * restart nobody saw is indistinguishable from a glitch.
  */
@@ -2963,7 +2963,7 @@ async function drawSplash(deck, keys, lit) {
 
 // Set once, just before the splash, and never cleared: everything after it
 // ends in `execve`. `pulse()` reads it because the splash owns all fifteen
-// keys for five seconds and a requires_action key blinking through the middle
+// keys for four seconds and a requires_action key blinking through the middle
 // of it would look like the update had gone wrong. That is the overlay
 // boards' rule, reached the one way they cannot use — nulling `renderParams`
 // would throw away what this process still needs if the exec never happens.

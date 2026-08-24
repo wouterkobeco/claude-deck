@@ -969,9 +969,9 @@ eq(
 // changes, this is what says so before the deck does.
 eq(SPLASH_LETTERS.length, 15, "one letter per key, exactly");
 eq(SPLASH_LETTERS.join(""), "NEWVERSIONSTART", "and they spell it in reading order");
-// Five seconds for the whole sweep, so the per-letter interval is derived.
+// Four seconds for the whole sweep, so the per-letter interval is derived.
 // A word added without touching SPLASH_MS must not stretch the restart.
-eq(SPLASH_MS, 5000, "the sweep is five seconds, whatever the letter count");
+eq(SPLASH_MS, 4000, "the sweep is four seconds, whatever the letter count");
 
 // resumeView: the board a restart lands back on, carried through execve in
 // the environment — the only thing that survives replacing the process image.

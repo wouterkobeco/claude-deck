@@ -932,7 +932,7 @@ const ACCENT_ICON = ["#4fc3f7", "#ffb74d", "#f06292", "#81c784"];
 export const SPLASH_LETTERS = [..."NEWVERSIONSTART"];
 // The whole sweep, not the gap between letters: the interval is derived so
 // that adding or changing a word cannot quietly stretch the restart.
-export const SPLASH_MS = 5000;
+export const SPLASH_MS = 4000;
 
 export async function renderSplashKey({ width, height, letter = "", lit = false }) {
   const size = Math.round(height * 0.55);
