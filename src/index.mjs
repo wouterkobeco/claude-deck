@@ -10,7 +10,7 @@ import { fetchAccountName, fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
-import { publishSessions } from "./publish-sessions.mjs";
+import { publishSessions, readPublishedIds } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
 import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
 import { collectTokens, compactTokens, earliestBucket, groupTokens, HOUR_MS, readTokens, summariseTokens } from "./tokens.mjs";
@@ -30,6 +30,13 @@ import { getMemory, pctWithAmount } from "./memory.mjs";
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 const POLL_MS = 2000;
+// How long the version on disk has to disagree with ours before we act on it.
+// A `git pull` is not atomic: package.json can land seconds before the source
+// files it belongs with, and exec'ing into that gap runs a tree that is half
+// one release and half another. Two polls of the same answer is enough — a
+// pull finishes far inside it — and the cost of being wrong the other way is
+// only that a release takes five seconds longer to appear.
+const RESTART_SETTLE_MS = 5000;
 const RECONNECT_MS = 5000;
 // ~2.5fps: fast enough to read as a pulse, slow enough not to flood the deck's
 // USB HID link across up to 14 keys at once (13 session keys plus the
@@ -70,6 +77,34 @@ function reindexProjects() {
 const sessionOrder = new Map();
 const nestedOrder = new Map();
 let arrivals = 0;
+
+// Ties keep their input order, so an unslotted session lands after every
+// slotted one rather than being compared against another Infinity — which
+// `a - b` turns into NaN, and a NaN comparator sorts arbitrarily.
+const UNSLOTTED = Number.MAX_SAFE_INTEGER;
+const inBoardOrder = (sessions) =>
+  [...sessions].sort(
+    (a, b) => (sessionOrder.get(a.session_id) ?? UNSLOTTED) - (sessionOrder.get(b.session_id) ?? UNSLOTTED)
+  );
+
+/**
+ * First-seen order, carried over from the last run.
+ *
+ * Every other piece of a project's identity already survives a restart —
+ * accent, position, name, and now the board's own port and token — and this
+ * was the one that didn't: `sessionOrder` rebuilt from whatever order the
+ * sources reported, so a restart reshuffled sessions *within* their project's
+ * block. Harmless on a machine with one session per project and the whole
+ * point of the ordering rules on one with six.
+ *
+ * Ids that have since died are seeded and then dropped by `assignSlots`'s own
+ * prune on the first poll, so there is nothing to clean up here. New sessions
+ * still land after everything remembered, because `arrivals` has already been
+ * walked past them.
+ */
+export function seedSessionOrder(ids) {
+  for (const id of ids) if (!sessionOrder.has(id)) sessionOrder.set(id, arrivals++);
+}
 
 // One entry per remote host: its last fetch, its consecutive failures, and the
 // source that fetch produced. Held here for the daemon's lifetime, like
@@ -166,11 +201,18 @@ async function liveSessions() {
       liveProjects.set(key, { name: folderNames.get(key) ?? s.folder.split("/").filter(Boolean).pop() ?? "", host: s.host ?? null });
     }
   }
+  // Published in the board's own order, not the order the sources happened to
+  // report. Nothing downstream cares — the extension filters this list to its
+  // own folders — but the *next run of this daemon* does: `seedSessionOrder`
+  // reads it back to keep every session on the key it had. A session this poll
+  // has never slotted (assignSlots runs only on sessions-board polls) sorts
+  // last in whatever order it arrived, which is what it would have got anyway.
+  //
   // Not awaited: the file is for a window that has not restarted yet, so it is
   // never worth a frame. void-and-catch for the same reason as above — an
   // unwatched rejection would take the daemon down, and this one can only be a
   // filesystem that isn't answering.
-  void publishSessions(sessions).catch(() => {});
+  void publishSessions(inBoardOrder(sessions)).catch(() => {});
   recordHistory(sessions);
   // Held for the board page, which is read by an iPad on its own 2s clock and
   // must not start a second pass over ~/.claude every time it asks. Every
@@ -646,6 +688,7 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   nestedBySlot.fill(null);
 
   const visible = ordered.slice(0, slots.length);
+  promoteActive(visible, ordered.slice(slots.length), nested);
   visible.forEach((s, i) => {
     slots[i] = s.session_id;
     // Only the first button of a project's contiguous block carries its
@@ -659,6 +702,50 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
       nestedBySlot[i] = own.sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
     }
   });
+}
+
+// How active a session reads *on its key*: the state the key would show,
+// tie-broken by how recently it entered that state. Only the parent-matched
+// subagents are folded in — `nestedFor`'s folder fallback needs a `primary`
+// the layout hasn't decided yet, and the case this exists for (a controller
+// whose work is entirely in Agent-tool subagents) carries a parent anyway.
+const activityRank = (session, nested) =>
+  STATE_URGENCY.indexOf(mostUrgent([session.state, ...nestedFor(session, nested, false).map((n) => n.state)]));
+const moreActive = (a, b, nested) =>
+  activityRank(a, nested) - activityRank(b, nested) || (a.ts ?? 0) - (b.ts ?? 0);
+
+/**
+ * Swap sessions past the slot cap with less active siblings that made it.
+ *
+ * The board's whole ordering is first-seen, deliberately, so a key stays where
+ * muscle memory left it — and this is the one thing allowed to bend that,
+ * because at the cap the alternative is not "a settled board" but "the session
+ * doing the work is invisible". The bend is kept as narrow as it can be: it
+ * fires only when something was actually cut, it trades only *within a
+ * project*, and the promoted session takes the exact slot of the one it
+ * evicted. So no block moves, no project changes size, no accent changes, and
+ * a board that isn't over the cap is byte-identical to before.
+ *
+ * Repeated "replace the least active if this one beats it" leaves a project's
+ * K slots holding its K most active sessions, whatever order the cut arrives
+ * in. Ties never swap, which is what keeps first-seen the default: equally
+ * idle sessions are exactly the case with no reason to move anything.
+ *
+ * Only the project straddling the cap can be affected — a project cut off
+ * entirely has no visible sibling to trade with, and one wholly inside the cap
+ * has nothing cut. That is a consequence of the layout rather than a rule of
+ * its own, and it is why nothing here needs to know where the boundary fell.
+ */
+function promoteActive(visible, cut, nested) {
+  for (const s of cut) {
+    const key = folderKeyFor(s);
+    let worst = -1;
+    for (let i = 0; i < visible.length; i++) {
+      if (folderKeyFor(visible[i]) !== key) continue;
+      if (worst < 0 || moreActive(visible[i], visible[worst], nested) < 0) worst = i;
+    }
+    if (worst >= 0 && moreActive(s, visible[worst], nested) > 0) visible[worst] = s;
+  }
 }
 
 /**
@@ -983,7 +1070,12 @@ export function holdTiles(held, fresh, tasks, sessions) {
 // `renderParams` is cached only while the attention side is showing, because
 // that is the only side that pulses; the free side has nothing to animate and
 // nothing must redraw it between polls (see the overlay rule in CLAUDE.md).
-async function drawStatus(deck, btn, sessions, pulse) {
+// `paging` is the attention *board*'s page, and reaches only the branch that
+// draws the attention key: every other caller is a board where this key is a
+// summary of something else, and a page number there would name a board you
+// are not on — the exact thing the key stopped doing when it started naming
+// the board under it.
+async function drawStatus(deck, btn, sessions, pulse, paging = null) {
   const now = Date.now() / 1000;
   const attention = attentionQueue(sessions, now);
   const free = freeQueue(sessions, now);
@@ -1010,14 +1102,15 @@ async function drawStatus(deck, btn, sessions, pulse) {
   }
 
   if (kind === "attention") {
-    btn.renderParams = { count, longest };
+    const line = paging ? pageLine(paging.page, paging.pages, longest) : longest;
+    btn.renderParams = { count, longest: line };
     // Restart the 5s blink window whenever the queue grows — a new session
     // waiting is news, the same ones still waiting is not.
     if (count > (btn.lastCount ?? 0)) btn.blinkUntil = Date.now() + ATTENTION_BLINK_MS;
     btn.lastCount = count;
-    const drawn = `attention ${count} ${longest} ${pulse}`;
+    const drawn = `attention ${count} ${line} ${pulse}`;
     if (btn.drawn !== drawn) {
-      await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count, longest, pulse }), { format: "rgba" });
+      await deck.fillKeyBuffer(btn.index, await renderAttention({ ...btn, count, longest: line, pulse }), { format: "rgba" });
       btn.drawn = drawn;
     }
     return { attention: attention.length, free: free.length, busy: busy.length };
@@ -1079,6 +1172,31 @@ export function statusKey(attention, total, now, pressures = []) {
   return { kind: "sessions", count: total };
 }
 
+/**
+ * One page of a queue, clamped.
+ *
+ * The three queue boards re-rank every poll — that is the point of them, a
+ * session that gets unblocked leaves the queue you are looking at — so the
+ * page you are on can stop existing under you. Clamping rather than blanking
+ * means a queue that shrinks from three pages to one lands you on the page it
+ * still has, instead of twelve dark keys that read as a dead daemon.
+ *
+ * Pure and exported for the reason `statusKey` and `detailLayout` are: the
+ * arithmetic is off-by-one bait and none of it is visible without a deck.
+ */
+export function pageOf(entries, page, size) {
+  const pages = Math.max(1, Math.ceil(entries.length / size));
+  const at = Math.min(Math.max(Math.trunc(page) || 0, 0), pages - 1);
+  return { pages, page: at, entries: entries.slice(at * size, at * size + size) };
+}
+
+// The status key's third line while a queue board is up: `2/3 · 4m`. The page
+// leads because it is the half that a press changes; the age is the same
+// board summary it always was, over the whole queue rather than this page of
+// it — which is what makes "the longest-waiting one" still true on page 3.
+// One page is the board as it was, so it says nothing.
+const pageLine = (page, pages, age) => (pages > 1 ? `${page + 1}/${pages}${age ? ` · ${age}` : ""}` : age);
+
 // One queue drawn across the session keys, the shape attention/free/busy all
 // share: recognise the project and pick one, no age readout per tile (the
 // status key's own longest-* line already says that once for the board
@@ -1132,14 +1250,15 @@ async function drawQueueTiles(deck, buttons, entries, kind) {
 // The status key names this board and counts what is on it, rather than the
 // ordinary attention/free fold `drawStatus` computes — see
 // `drawQueueOnStatus` just below.
-async function refreshFree(deck, buttons, statusButton) {
+async function refreshFree(deck, buttons, statusButton, page = 0) {
   const sessions = await liveSessions();
   const now = Date.now() / 1000;
   const queue = freeQueue(sessions, now);
   const attention = attentionQueue(sessions, now);
-  await drawQueueOnStatus(deck, statusButton, queue, now, "INACTIVE");
-  await drawQueueTiles(deck, buttons, queue.map((session) => ({ session, leavingUntil: null })), "free-tile");
-  return { attention: attention.length, free: queue.length };
+  const paging = pageOf(queue, page, buttons.length);
+  await drawQueueOnStatus(deck, statusButton, queue, now, "INACTIVE", paging);
+  await drawQueueTiles(deck, buttons, paging.entries.map((session) => ({ session, leavingUntil: null })), "free-tile");
+  return { attention: attention.length, free: queue.length, pages: paging.pages, page: paging.page };
 }
 
 // The status key while one of its own boards is up: the count of the queue
@@ -1149,15 +1268,19 @@ async function refreshFree(deck, buttons, statusButton) {
 // anything you could see. Never pulses, like the resting readout it replaces
 // for the visit: nothing on either of these boards is urgent enough to alarm
 // about, and a press leaves anyway.
-async function drawQueueOnStatus(deck, btn, queue, now, label) {
+async function drawQueueOnStatus(deck, btn, queue, now, label, paging = null) {
   const oldest = queue.length && queue[0].ts ? formatAge(now - queue[0].ts) : "";
+  const line = paging ? pageLine(paging.page, paging.pages, oldest) : oldest;
   btn.lastCount = 0;
   btn.renderParams = null;
-  const drawn = `${label} ${queue.length} ${oldest}`;
+  // The count stays the whole queue's, never the page's: the key names what
+  // the board holds, and "12 WORKING" that means "12 on this page" is the
+  // same lie as the label naming the next leg used to be.
+  const drawn = `${label} ${queue.length} ${line}`;
   if (btn.drawn !== drawn) {
     await deck.fillKeyBuffer(
       btn.index,
-      await renderFree({ ...btn, count: queue.length, longest: oldest, label, quietWord: "NONE" }),
+      await renderFree({ ...btn, count: queue.length, longest: line, label, quietWord: "NONE" }),
       { format: "rgba" }
     );
     btn.drawn = drawn;
@@ -1168,7 +1291,7 @@ async function drawQueueOnStatus(deck, btn, queue, now, label) {
 // rather than picked by the fold — the third and last leg of the status key's
 // own cycle. Its status key shows the ordinary attention/free readout here,
 // since any press (including its own) leaves to exactly that.
-async function refreshBusy(deck, buttons, statusButton) {
+async function refreshBusy(deck, buttons, statusButton, page = 0) {
   const sessions = await liveSessions();
   const now = Date.now() / 1000;
   const queue = busyQueue(sessions, now);
@@ -1180,12 +1303,16 @@ async function refreshBusy(deck, buttons, statusButton) {
   // The status key counts what is *working*, never the drainers: the number
   // is the answer to "how much is running", and a session that has stopped
   // is not part of it however long its key lingers.
-  await drawQueueOnStatus(deck, statusButton, queue, now, "WORKING");
-  await drawQueueTiles(deck, buttons, tiles, "busy-tile");
+  // Paged over the tiles rather than the queue: a session draining off the
+  // board still holds a key for five seconds, so it is one of the things that
+  // has to fit somewhere.
+  const paging = pageOf(tiles, page, buttons.length);
+  await drawQueueOnStatus(deck, statusButton, queue, now, "WORKING", paging);
+  await drawQueueTiles(deck, buttons, paging.entries, "busy-tile");
   // `busy` is likewise the real count, which is what the poll loop leaves the
   // board on. Leaving the drainers in would hold an empty board up for five
   // seconds after the last session stopped, showing nothing but bars.
-  return { attention: attention.length, free: free.length, busy: queue.length };
+  return { attention: attention.length, free: free.length, busy: queue.length, pages: paging.pages, page: paging.page };
 }
 
 // The bottom-right key is the usage readout rather than a session, so it is
@@ -1245,15 +1372,16 @@ export async function refreshStats(deck, buttons, stats) {
 // The attention board: the queue across the session keys, re-ranked every
 // poll. Unlike the detail view this deliberately re-sorts while it's up — a
 // session that gets unblocked should leave the queue you're looking at.
-async function refreshAttention(deck, buttons, statusButton) {
+async function refreshAttention(deck, buttons, statusButton, page = 0) {
   const sessions = await liveSessions();
   const queue = attentionQueue(sessions, Date.now() / 1000);
-  const counts = await drawStatus(deck, statusButton, sessions, false);
-  await drawQueueTiles(deck, buttons, queue.map((session) => ({ session, leavingUntil: null })), "queue");
+  const paging = pageOf(queue, page, buttons.length);
+  const counts = await drawStatus(deck, statusButton, sessions, false, paging);
+  await drawQueueTiles(deck, buttons, paging.entries.map((session) => ({ session, leavingUntil: null })), "queue");
   // Returned like drawStatus() so the poll loop can keep both counts live
   // from this branch too — this view's own call to drawStatus is
   // buried inside here rather than at the loop's call site.
-  return counts;
+  return { ...counts, pages: paging.pages, page: paging.page };
 }
 
 // How long today has been spent waiting on you, across every project. It sat
@@ -2165,6 +2293,11 @@ function headlessDeck() {
 }
 
 async function run() {
+  // The listening socket, for the one thing that has to close it. Null when
+  // STREAMDECK_NO_BOARD is set, or when the server failed to start — both of
+  // which `closeServer` treats as nothing to do.
+  let boardServer = null;
+  let restartSince = 0;
   const devices = await listStreamDecks();
   const deck = devices.length === 0 ? headlessDeck() : await openStreamDeck(devices[0].path);
   activeDeck = deck;
@@ -2172,6 +2305,9 @@ async function run() {
   // the real ~/.claude, or every check inherits this machine's live palette.
   const remembered = readProjects();
   loadAccents(remembered.accents, remembered.order, remembered.names);
+  // Same reasoning as loadAccents being here rather than at module scope:
+  // importing this file must not read this machine's live board.
+  seedSessionOrder(readPublishedIds());
   // Which build is driving the deck — worth stating, since a worktree and the
   // main checkout can each be started against the same device.
   console.log(`claude-streamdeck v${pkg.version} — connected to ${deck.PRODUCT_NAME}`);
@@ -2276,7 +2412,9 @@ async function run() {
       // is still a dead bookmark. STREAMDECK_PORT overrides, for a machine
       // where the default is spoken for by something you would rather keep.
       const wanted = Number(process.env.STREAMDECK_PORT) || undefined;
-      const { port, token, warning } = await startServer(serverDeps, "0.0.0.0", { port: wanted, remember: true });
+      const { server, port, token, warning } = await startServer(serverDeps, "0.0.0.0", { port: wanted, remember: true });
+      // Held only so a restart can close it before exec'ing — see restartInto.
+      boardServer = server;
       const ip = lanAddress();
       const boardUrl = `http://${ip ?? "127.0.0.1"}:${port}/board?t=${token}`;
       // Printed as text as well as scanned: lanAddress takes the first
@@ -2312,10 +2450,28 @@ async function run() {
   // the sessions board still holding the press that opened it, and the next
   // press on that project would reopen the board you were just thrown out of.
   // Presses that do want to seed a chain set `lastPress` after calling this.
+  // Which page of the queue board that is up, and how many it has. One value
+  // for all three boards rather than a page per board: only one queue board
+  // can be showing, and a page is a position *within* the current view, not a
+  // second thing that is on. setView resets it, so every arrival — a press, a
+  // drained queue, a session ending — starts at the top of the new board.
+  let queuePage = 0;
+  let queuePages = 1;
   const setView = (next) => {
     view = next;
     statusButton.drawn = null;
     lastPress = null;
+    queuePage = 0;
+  };
+
+  // The status key's cycle, in one place because five presses now enter it:
+  // attention -> working -> inactive -> out. An empty leg is skipped rather
+  // than opened for the poll loop to drain a tick later, which reads as a key
+  // that flashes a board at you.
+  const nextLeg = (from) => {
+    if (from !== "busy" && from !== "free" && busyCount > 0) return { kind: "busy" };
+    if (from !== "free" && freeCount > 0) return { kind: "free" };
+    return { kind: "sessions" };
   };
   deck.on("error", (err) => {
     console.error("Stream Deck error:", err);
@@ -2345,27 +2501,34 @@ async function run() {
       lastPress = null;
       return;
     }
-    // Attention and inactive are the terminal legs of their own cycles: any
-    // press leaves, the way this board always has.
-    if (view.kind === "attention" || view.kind === "free") {
-      setView({ kind: "sessions" });
-      // A session key still focuses its window on the way out — that's the
-      // whole point of pressing one there.
-      if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
-      lastPress = press;
-      return;
-    }
-    // Busy is the one board with a next step: the status key continues its
-    // own cycle (working -> inactive) here instead of exiting like every other
-    // key on this board — the same "press opens what it's showing" rule the
-    // key already follows on the sessions board, carried one step further. Any
-    // other key still exits and focuses, same as attention/inactive.
-    if (view.kind === "busy") {
+    // The three queue boards are one cycle, and the status key is what walks
+    // it: pages of the board you are on first, then the next board, then out.
+    // Paging comes first because a second page is part of the board you asked
+    // for — leaving one unseen to move on would make the key's own `2/3`
+    // a thing it wouldn't let you reach.
+    //
+    // Every *other* key still exits and focuses, which is what the boards are
+    // for and is unchanged. That is also the way out at any point: the cycle
+    // is the status key's, not the deck's.
+    if (view.kind === "attention" || view.kind === "busy" || view.kind === "free") {
       if (isStatus) {
-        setView({ kind: "free" });
+        // `queuePages` is what the last poll actually drew, so this can't
+        // page past a queue that has since shrunk — and `pageOf` clamps the
+        // other direction on the way in regardless.
+        if (queuePage + 1 < queuePages) {
+          queuePage++;
+          // No setView: the kind hasn't changed and the chain is somebody
+          // else's. Both the tiles and the status key carry the page in their
+          // own drawn signatures, so the next poll repaints them without
+          // being told to.
+          return;
+        }
+        setView(nextLeg(view.kind));
         return;
       }
       setView({ kind: "sessions" });
+      // A session key still focuses its window on the way out — that's the
+      // whole point of pressing one there.
       if (btn?.assigned) focusWindow(btn.assigned, requestedAt);
       lastPress = press;
       return;
@@ -2389,12 +2552,14 @@ async function run() {
       // inactive rather than doing nothing: on an all-idle machine a
       // "14 SESSIONS" key that opens nothing reads as a dead key, and the
       // inactive board is the only leg with anything to show anyway.
-      else if (busyCount > 0) setView({ kind: "busy" });
-      else if (freeCount > 0) setView({ kind: "free" });
-      // Nothing to open: it changes no view, so it clears the chain itself —
-      // a key that does nothing must still count as "something else in
-      // between". setView clears it on the other two paths.
-      else lastPress = null;
+      else {
+        const next = nextLeg("sessions");
+        // Nothing to open: it changes no view, so it clears the chain itself
+        // — a key that does nothing must still count as "something else in
+        // between". setView clears it on every other path.
+        if (next.kind === "sessions") lastPress = null;
+        else setView(next);
+      }
       return;
     }
     if (view.kind === "stats") {
@@ -2485,7 +2650,7 @@ async function run() {
         const statsSessions = await liveSessions();
         ({ attention: attentionCount, free: freeCount, busy: busyCount = 0, memory: memoryAlert = false } = await drawStatus(deck, statusButton, statsSessions, false));
       } else if (view.kind === "free") {
-        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await refreshFree(deck, buttons, statusButton));
+        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false, pages: queuePages, page: queuePage } = await refreshFree(deck, buttons, statusButton, queuePage));
         // Same exit as the attention board, for the same reason: a drained
         // queue is twelve dark keys and a dim NONE key, which at a glance is
         // the daemon having died. Guarded on the view still being this one —
@@ -2497,7 +2662,7 @@ async function run() {
           ({ attention: attentionCount, free: freeCount, busy: busyCount = 0, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
       } else if (view.kind === "busy") {
-        ({ attention: attentionCount, free: freeCount, busy: busyCount } = await refreshBusy(deck, buttons, statusButton));
+        ({ attention: attentionCount, free: freeCount, busy: busyCount, pages: queuePages, page: queuePage } = await refreshBusy(deck, buttons, statusButton, queuePage));
         // Same exit as attention/free, for the same reason: a drained queue
         // reads as the daemon having died, not as "nothing's running right
         // now". Guarded the same way — refreshBusy just awaited a live read.
@@ -2507,7 +2672,7 @@ async function run() {
           ({ attention: attentionCount, free: freeCount, busy: busyCount = 0, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
       } else if (view.kind === "attention") {
-        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false } = await refreshAttention(deck, buttons, statusButton));
+        ({ attention: attentionCount, free: freeCount, memory: memoryAlert = false, pages: queuePages, page: queuePage } = await refreshAttention(deck, buttons, statusButton, queuePage));
         // The queue re-sorts while it's up so an unblocked session leaves it;
         // when the last one clears, you should leave too — otherwise a
         // drained queue is thirteen dark keys plus a dim CLEAR key,
@@ -2600,11 +2765,123 @@ async function run() {
     } catch (err) {
       console.error("refresh failed:", err.message);
     }
+    // Outside the try, and after the draw: a poll that threw is not a reason
+    // to skip this, and a restart mid-draw would leave a half-written board on
+    // the hardware for as long as the new process takes to start.
+    {
+      const onDisk = versionOnDisk();
+      const decided = restartDecision(pkg.version, onDisk, restartSince, Date.now());
+      restartSince = decided.since;
+      // execve does not return, so nothing after this runs on the happy path.
+      // It *does* return false when there is no execve to call, and then this
+      // is an ordinary poll that logged a line.
+      if (decided.restart) await restartInto(onDisk, deck, boardServer);
+    }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
 
   activeDeck = null;
   await deck.close().catch(() => {});
+}
+
+/**
+ * Whether to replace ourselves with the version now on disk.
+ *
+ * Pure, and separated from the exec for the reason every decision in this
+ * project is: the thing it decides is unrepeatable — you cannot run the check
+ * twice on one process — so the part that has to be right is the part that
+ * takes four arguments and returns a boolean.
+ *
+ * `onDisk` null means the file could not be read *or parsed*, which is the
+ * normal state of a package.json mid-write. That is not "no version", it is
+ * "ask again in two seconds", and it resets nothing: a settle window that
+ * restarted on every unreadable read would fire in the middle of the write it
+ * is meant to wait out.
+ */
+export function restartDecision(current, onDisk, since, now, settleMs = RESTART_SETTLE_MS) {
+  if (!onDisk) return { since, restart: false };
+  // Back to what we are running — an aborted edit, or a branch switched away
+  // and back. Nothing to do, and the window starts again if it changes later.
+  if (onDisk === current) return { since: 0, restart: false };
+  const first = since || now;
+  return { since: first, restart: now - first >= settleMs };
+}
+
+// The version in the checkout we were started from, or null while it is being
+// written. Read every poll rather than watched: this is one small file on a
+// local disk, the poll is already reading a tree of them, and fs.watch on
+// macOS has its own failure modes to inherit for no gain.
+function versionOnDisk() {
+  try {
+    const raw = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    return typeof raw?.version === "string" ? raw.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Replace this process with the new build, in place.
+ *
+ * `process.execve` rather than a supervisor, a wrapper script or a launchd
+ * job: it keeps the pid, the terminal and stdout, which this daemon needs
+ * because the things it prints — the board URL, the QR code an iPad is
+ * scanned from, which windows still need reloading — are read by a person
+ * sitting in front of it. Under launchd they would go to a log file nobody
+ * opens, which is a real loss rather than a cosmetic one.
+ *
+ * **Open fds survive an exec unless they carry FD_CLOEXEC**, which is why this
+ * closes things rather than being one line at the call site — but the two it
+ * closes are not equally at risk, and the difference was measured rather than
+ * assumed. libuv sets CLOEXEC on everything it opens, so the *listening
+ * socket* is gone by itself: a scratch program that exec'd itself while still
+ * listening re-bound the same port in the new image without complaint. The
+ * HID handle is a native addon's fd and nothing here sets that flag, so a deck
+ * left open would still be held exclusively and the new image could not open
+ * it. The socket close stays anyway: it costs eight lines and a bounded wait,
+ * against a failure — an ephemeral port, and the iPad bookmark that
+ * `board-state.mjs` exists to keep alive silently dead — that nothing on the
+ * board would report. The bound is the point of the race: `server.close()`
+ * waits for live connections and the board page holds one open by polling
+ * every 2s, so `closeAllConnections` goes first and a timeout covers what it
+ * misses. A restart that hangs is worse than one that leaks a socket.
+ */
+let warnedNoExecve = false;
+async function restartInto(version, deck, server) {
+  // Checked before anything is closed: without an exec to follow it, closing
+  // the deck and the socket would leave a dead board and a dead bookmark on a
+  // daemon that then carries on running. Said once, not every 2s for as long
+  // as the versions disagree.
+  if (typeof process.execve !== "function") {
+    if (!warnedNoExecve) {
+      warnedNoExecve = true;
+      console.warn(`restart: v${version} is on disk but this Node has no process.execve — restart by hand to pick it up`);
+    }
+    return false;
+  }
+  console.log(`v${version} on disk (running v${pkg.version}) — restarting`);
+  // Cleared, not just closed: the hardware holds its last frame forever, so
+  // the gap between exec and the new process's first draw would otherwise show
+  // a board that looks live. Same reason `shutdown` clears on Ctrl+C.
+  activeDeck = null;
+  await deck.clearPanel().catch(() => {});
+  await deck.close().catch(() => {});
+  await closeServer(server);
+  // argv[0] is the node binary and argv[1] is this file, so this is the exact
+  // command that started us, minus `npm`: prestart's prompts are deliberately
+  // not repeated — an extension-install question on every release, answered
+  // while you are looking at something else, is how a prompt stops being read.
+  process.execve(process.execPath, [process.execPath, ...process.argv.slice(1)], process.env);
+  return true;
+}
+
+function closeServer(server) {
+  if (!server) return Promise.resolve();
+  server.closeAllConnections?.();
+  return Promise.race([
+    new Promise((resolve) => server.close(() => resolve())),
+    new Promise((resolve) => setTimeout(resolve, 1000)),
+  ]);
 }
 
 /**

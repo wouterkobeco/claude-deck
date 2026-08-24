@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, statusKey, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, seedSessionOrder, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 
 const s = (id, folder, nested = false) => ({ session_id: id, folder, nested });
@@ -56,6 +56,63 @@ eq(slots, ["a1", "a2", "b1", null, null], "stable under reorder");
 assignSlots([s("a1", A), s("a2", A), s("a3", A), s("b1", B)], slots);
 eq(slots, ["a1", "a2", "a3", "b1", null], "new session joins its project block");
 
+// At the cap, first-seen alone hides the session actually doing the work:
+// the board is full, and the busy one is the one that arrived last. This is
+// the only place activity is allowed to move a key, and it trades strictly
+// within the project — the block keeps its slots, one of them changes hands.
+{
+  const [P, Q, R, S2, T, U] = ["gamma", "delta", "epsilon", "zeta", "eta", "theta"].map((n) => `/projects/${n}`);
+  const act = (id, folder, state, ts = 0) => ({ session_id: id, folder, nested: false, state, ts });
+
+  // Nothing is cut, so nothing moves however busy the tail is.
+  const three = new Array(3).fill(null);
+  assignSlots([act("c1", P, "idle"), act("c2", P, "busy"), act("c3", P, "busy")], three);
+  eq(three, ["c1", "c2", "c3"], "inside the cap, first-seen is untouched");
+
+  // c4 doesn't fit. It's busy and c1 is idle, so it takes c1's slot — not the
+  // end of the block, and not anybody else's.
+  assignSlots([act("c1", P, "idle"), act("c2", P, "busy"), act("c3", P, "busy"), act("c4", P, "busy")], three);
+  eq(three, ["c4", "c2", "c3"], "a busy session past the cap takes the idle sibling's slot");
+
+  // Two cut, one visible idle: only the most urgent of them gets in, and the
+  // order the cut sessions arrive in must not decide which.
+  const two = new Array(2).fill(null);
+  const pool = [act("d1", Q, "idle"), act("d2", Q, "busy"), act("d3", Q, "requires_action"), act("d4", Q, "busy")];
+  assignSlots(pool, two);
+  eq(two, ["d3", "d2"], "the most urgent of the cut sessions wins the slot");
+  assignSlots([pool[0], pool[3], pool[2], pool[1]], two);
+  eq(two, ["d3", "d2"], "and input order doesn't change that");
+
+  // Same state on both sides is not a reason to move a key: first-seen still
+  // has an answer, so it keeps it. Only ts breaks a genuine tie.
+  const one = new Array(1).fill(null);
+  assignSlots([act("e1", R, "busy", 500), act("e2", R, "busy", 100)], one);
+  eq(one, ["e1"], "an equally-busy sibling that has been at it longer isn't evicted");
+  assignSlots([act("e1", R, "busy", 100), act("e2", R, "busy", 500)], one);
+  eq(one, ["e2"], "a fresher one is");
+
+  // A busy Agent-tool subagent is the case this was written for: its parent
+  // reads busy on its key, so it has to rank busy here too.
+  const twoNested = new Array(2).fill(null);
+  assignSlots(
+    [
+      act("f1", S2, "idle", 900),
+      act("f2", S2, "idle", 800),
+      act("f3", S2, "idle", 700),
+      { session_id: "sub", folder: S2, nested: true, parent: "f3", state: "busy", ts: 700 },
+    ],
+    twoNested
+  );
+  // f2 rather than f1: among equally idle siblings the one that went quiet
+  // first is the least active, so it is the one that gives up its slot.
+  eq(twoNested, ["f1", "f3"], "a session whose subagent is working outranks its idle siblings");
+
+  // A project cut off entirely has no sibling to trade with, and must not
+  // reach into another project's block to find one.
+  const twoProjects = new Array(2).fill(null);
+  assignSlots([act("g1", T, "idle", 100), act("g2", T, "idle", 100), act("h1", U, "requires_action", 900)], twoProjects);
+  eq(twoProjects, ["g1", "g2"], "the swap never crosses a project boundary");
+}
 // A whole project going away closes its gap.
 assignSlots([s("b1", B)], slots);
 eq(slots, ["b1", null, null, null, null], "empty project leaves no gap");
@@ -814,6 +871,64 @@ eq(
   // A queue entry with no usable timestamp draws no age rather than one
   // counted from the epoch, same rule keyFields follows.
   eq(statusKey([{ session_id: "x", ts: 0 }], 0, NOW).longest, "", "a session with no timestamp reports no age");
+}
+
+// pageOf: the queue boards page once they overflow the 12 session keys, and
+// the status key's own press walks those pages before it walks to the next
+// board. The arithmetic is the part that hides an off-by-one, and none of it
+// is visible without a deck.
+{
+  const q = (n) => Array.from({ length: n }, (_, i) => `s${i}`);
+  eq(pageOf(q(5), 0, 12), { pages: 1, page: 0, entries: q(5) }, "under the cap is one page, unchanged");
+  eq(pageOf([], 0, 12).pages, 1, "an empty queue is still one page, never zero");
+  eq(pageOf(q(12), 0, 12).pages, 1, "exactly full is one page");
+  eq(pageOf(q(13), 0, 12).entries.length, 12, "the first page fills the keys");
+  eq(pageOf(q(13), 1, 12), { pages: 2, page: 1, entries: ["s12"] }, "and the last page holds the remainder");
+
+  // The queues re-rank every poll and shrink under you — the whole point of
+  // the attention board. A page that no longer exists must land on one that
+  // does, not draw twelve blanks that read as a dead daemon.
+  eq(pageOf(q(13), 5, 12).page, 1, "a page past the end clamps to the last");
+  eq(pageOf(q(5), 3, 12), { pages: 1, page: 0, entries: q(5) }, "a queue that shrank to one page lands on it");
+  eq(pageOf(q(13), -2, 12).page, 0, "and never below the first");
+  eq(pageOf(q(13), undefined, 12).page, 0, "a missing page is the first one");
+}
+
+// restartDecision: the daemon replaces itself with the build on disk when the
+// version moves. The exec is unrepeatable — you get one process — so the part
+// worth pinning is the four-argument decision in front of it.
+{
+  const V = "1.6.0";
+  const settle = 5000;
+  eq(restartDecision(V, V, 0, 1000, settle), { since: 0, restart: false }, "the same version is not news");
+
+  // A git pull is not atomic: package.json can land before the files it
+  // belongs with, so a changed version starts a clock rather than a restart.
+  const first = restartDecision(V, "1.7.0", 0, 1000, settle);
+  eq(first, { since: 1000, restart: false }, "a new version starts the settle window");
+  eq(restartDecision(V, "1.7.0", 1000, 4000, settle).restart, false, "and does not fire inside it");
+  eq(restartDecision(V, "1.7.0", 1000, 6000, settle).restart, true, "but does once it has settled");
+  eq(restartDecision(V, "1.7.0", 1000, 6000, settle).since, 1000, "measured from when it first differed, not the last look");
+
+  // Mid-write is the normal state of a file another process is rewriting, and
+  // it must neither restart nor reset the window it is sitting inside.
+  eq(restartDecision(V, null, 1000, 6000, settle), { since: 1000, restart: false }, "an unreadable package.json waits");
+  eq(restartDecision(V, null, 0, 1000, settle), { since: 0, restart: false }, "and starts nothing on its own");
+
+  // An edit that lands back on what we are running — a branch switched away
+  // and back — closes the window rather than leaving it half-open.
+  eq(restartDecision(V, V, 1000, 4000, settle).since, 0, "returning to our own version clears the clock");
+}
+
+// seedSessionOrder: first-seen order carried across a restart, so a session
+// keeps its key. Seeded ids sort ahead of anything that arrives afterwards.
+{
+  const P = "/projects/seeded";
+  const three = new Array(3).fill(null);
+  // Deliberately the reverse of the order assignSlots would pick from input.
+  seedSessionOrder(["z", "y"]);
+  assignSlots([s("x", P), s("y", P), s("z", P)], three);
+  eq(three, ["z", "y", "x"], "remembered order wins, and a session that wasn't remembered lands after");
 }
 
 console.log("OK: project grouping, board tiles, status key");

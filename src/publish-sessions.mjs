@@ -20,6 +20,7 @@
  * addressing — every window reads it and keeps the rows that are its own.
  */
 
+import { readFileSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -82,5 +83,35 @@ export async function publishSessions(sessions) {
     lastRaw = raw;
   } catch {
     await unlink(tmp).catch(() => {});
+  }
+}
+
+/**
+ * The published ids, in the order they were published.
+ *
+ * The daemon's own message read back by the next run of the daemon, which is a
+ * second job for this file rather than a seventh file: it already holds
+ * exactly the non-nested sessions, and the board's ordering is over exactly
+ * those. `index.mjs` writes it in board order for this reason — the order was
+ * arbitrary before and nothing read it.
+ *
+ * What it buys: `sessionOrder` is first-seen for the daemon's lifetime, so a
+ * restart used to rebuild it from `readdir` order and shuffle every session
+ * within its project's block — the one piece of the board's identity that did
+ * not survive, now that accents, project order and the board's own address all
+ * do. Seeding from here means a session keeps its key across a restart.
+ *
+ * Best-effort like everything else here: no file, a half-written one, or a
+ * hand-edited one is a first run. Ids are checked to be strings because they
+ * become map keys and then reach `claude --resume` through the extension —
+ * the same reason `readAccents` refuses a non-string colour.
+ */
+export function readPublishedIds(file = SESSIONS_FILE) {
+  try {
+    const rows = JSON.parse(readFileSync(file, "utf8"));
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => r?.id).filter((id) => typeof id === "string" && id);
+  } catch {
+    return [];
   }
 }
