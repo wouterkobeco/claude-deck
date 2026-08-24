@@ -16,7 +16,7 @@ import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, reco
 import { collectTokens, compactTokens, earliestBucket, groupTokens, HOUR_MS, readTokens, summariseTokens } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS } from "./render.mjs";
 import { getUsage, formatReset, getAccountName } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
@@ -2204,6 +2204,13 @@ async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected,
   while (!isDisconnected()) {
     bright = !bright;
     tick++;
+    // The restart splash holds every key. Skipped rather than exited, because
+    // an exec that turns out to be impossible leaves this loop the only thing
+    // still animating the board.
+    if (isRestarting()) {
+      await new Promise((r) => setTimeout(r, PULSE_MS));
+      continue;
+    }
     // Bright for the first PULSE_MS of every REQUIRES_ACTION_FLASH_MS window,
     // dark gold the rest — a blip on the wall clock, not a tick-counter
     // alternation.
@@ -2363,7 +2370,11 @@ async function run() {
   //   { kind: "detail", session_id, tiles }
   // `tiles` is filled in by the first refreshDetail after the view opens and
   // then held, so the board's shape stays put while its content updates.
-  let view = { kind: "sessions" };
+  // Restored across a restart the daemon made on its own — see resumeView.
+  // Deleted as it is read so nothing downstream sees a value that was true one
+  // process ago; the next restart writes its own.
+  let view = resumeView(process.env[RESUME_ENV]) ?? { kind: "sessions" };
+  delete process.env[RESUME_ENV];
   // Memory keys in GB rather than %, flipped by pressing one. Outside `view`
   // so it survives leaving and reopening the stats board.
   let memGb = false;
@@ -2785,7 +2796,7 @@ async function run() {
       // execve does not return, so nothing after this runs on the happy path.
       // It *does* return false when there is no execve to call, and then this
       // is an ordinary poll that logged a line.
-      if (decided.restart) await restartInto(onDisk, deck, boardServer);
+      if (decided.restart) await restartInto(onDisk, deck, allKeys, boardServer, view);
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
@@ -2856,8 +2867,71 @@ function versionOnDisk() {
  * every 2s, so `closeAllConnections` goes first and a timeout covers what it
  * misses. A restart that hangs is worse than one that leaks a socket.
  */
+/**
+ * The board a restart lands back on.
+ *
+ * A restart is the daemon's doing, not yours, so it owes you the screen you
+ * were on — otherwise walking away from a detail board and coming back to the
+ * sessions grid reads as something having gone wrong. It travels in the
+ * environment because `execve` replaces the process image and the environment
+ * is the only thing that crosses it; a file would be a ninth one, for a value
+ * that is meaningless two seconds later.
+ *
+ * Only `kind` and the detail board's `session_id` are carried. `tiles` is
+ * recaptured on the new process's first poll (that is what `holdTiles` is
+ * for), and the page of a queue board deliberately is not — landing on page 3
+ * of a queue that re-ranked while the daemon was restarting would be a page
+ * you never chose.
+ */
+const RESUME_ENV = "STREAMDECK_RESUME_VIEW";
+
+export function resumeView(raw) {
+  try {
+    const v = JSON.parse(raw);
+    // Closed set, because this reaches the poll loop's own dispatch. A kind
+    // that isn't a board leaves the daemon drawing nothing at all.
+    if (!["stats", "attention", "busy", "free", "detail"].includes(v?.kind)) return null;
+    if (v.kind === "detail") return typeof v.session_id === "string" && v.session_id ? { kind: "detail", session_id: v.session_id } : null;
+    return { kind: v.kind };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The restart, said out loud on the keys: every key black, the fifteen letters
+ * of "NEW VERSION START" in white, then each one turning green left to right
+ * across five seconds.
+ *
+ * It runs in the *old* process, before the exec, which is the only place it
+ * can: the new image starts in well under a second and would have to stall on
+ * purpose to show you anything. So the sweep is the restart's actual progress
+ * bar — while it is running, the daemon you are watching is still the old one.
+ * Five seconds is deliberately longer than the work needs. A board that
+ * changes with no explanation is the thing this exists to prevent, and a
+ * restart nobody saw is indistinguishable from a glitch.
+ */
+async function drawSplash(deck, keys, lit) {
+  await Promise.all(
+    keys.map((btn, i) =>
+      renderSplashKey({ ...btn, letter: SPLASH_LETTERS[i] ?? "", lit: i < lit }).then((buf) =>
+        deck.fillKeyBuffer(btn.index, buf, { format: "rgba" })
+      )
+    )
+  );
+}
+
+// Set once, just before the splash, and never cleared: everything after it
+// ends in `execve`. `pulse()` reads it because the splash owns all fifteen
+// keys for five seconds and a requires_action key blinking through the middle
+// of it would look like the update had gone wrong. That is the overlay
+// boards' rule, reached the one way they cannot use — nulling `renderParams`
+// would throw away what this process still needs if the exec never happens.
+let restarting = false;
+export const isRestarting = () => restarting;
+
 let warnedNoExecve = false;
-async function restartInto(version, deck, server) {
+async function restartInto(version, deck, keys, server, view) {
   // Checked before anything is closed: without an exec to follow it, closing
   // the deck and the socket would leave a dead board and a dead bookmark on a
   // daemon that then carries on running. Said once, not every 2s for as long
@@ -2870,6 +2944,22 @@ async function restartInto(version, deck, server) {
     return false;
   }
   console.log(`v${version} on disk (running v${pkg.version}) — restarting`);
+  // Every key is redrawn here, so whatever board was up is gone from the
+  // hardware before the new process has to think about it. `btn.drawn` is not
+  // reset: this process is about to stop existing, and the next one starts
+  // with its own buttons.
+  restarting = true;
+  try {
+    await drawSplash(deck, keys, 0);
+    for (let lit = 1; lit <= SPLASH_LETTERS.length; lit++) {
+      await new Promise((r) => setTimeout(r, SPLASH_MS / SPLASH_LETTERS.length));
+      await drawSplash(deck, keys, lit);
+    }
+  } catch (err) {
+    // Best-effort like every other draw here: a deck that has been unplugged
+    // mid-restart must not stop the restart.
+    console.error("restart splash failed:", err?.message ?? err);
+  }
   // Cleared, not just closed: the hardware holds its last frame forever, so
   // the gap between exec and the new process's first draw would otherwise show
   // a board that looks live. Same reason `shutdown` clears on Ctrl+C.
@@ -2881,7 +2971,10 @@ async function restartInto(version, deck, server) {
   // command that started us, minus `npm`: prestart's prompts are deliberately
   // not repeated — an extension-install question on every release, answered
   // while you are looking at something else, is how a prompt stops being read.
-  process.execve(process.execPath, [process.execPath, ...process.argv.slice(1)], process.env);
+  process.execve(process.execPath, [process.execPath, ...process.argv.slice(1)], {
+    ...process.env,
+    [RESUME_ENV]: JSON.stringify(view?.kind === "detail" ? { kind: "detail", session_id: view.session_id } : { kind: view?.kind ?? "sessions" }),
+  });
   return true;
 }
 

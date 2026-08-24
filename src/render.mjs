@@ -914,6 +914,38 @@ export async function renderIcon(size = 512) {
 // is not a reason to make that edge exist.
 const ACCENT_ICON = ["#4fc3f7", "#ffb74d", "#f06292", "#81c784"];
 
+/**
+ * One key of the splash the daemon shows while it replaces itself.
+ *
+ * "NEW VERSION START" is fifteen letters and the MK.2 has fifteen keys, so it
+ * is one letter per key across all three rows with nothing left over. The
+ * words therefore **wrap** — `NEWVE / RSION / START` — because the deck is
+ * five columns wide and no seven-letter word fits on a row of five. The
+ * alternative was splitting letters across the bezel, and the keys are not
+ * contiguous pixels: there is black plastic between them, and a letter cut by
+ * that gap is a letter nobody can read.
+ *
+ * `lit` is how many letters have turned green, counted from the left in
+ * reading order — the progress bar for a restart with no percentage to
+ * report, the same job `renderCompacting`'s ring does.
+ */
+export const SPLASH_LETTERS = [..."NEWVERSIONSTART"];
+// The whole sweep, not the gap between letters: the interval is derived so
+// that adding or changing a word cannot quietly stretch the restart.
+export const SPLASH_MS = 5000;
+
+export async function renderSplashKey({ width, height, letter = "", lit = false }) {
+  const size = Math.round(height * 0.55);
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${width}" height="${height}" fill="#000000" />
+      <text x="50%" y="52%" font-family="sans-serif" font-size="${size}" font-weight="bold"
+            fill="${lit ? MARKER_COLORS.busy : "#ffffff"}" text-anchor="middle"
+            dominant-baseline="middle">${escapeXml(letter)}</text>
+    </svg>`;
+  return sharp(Buffer.from(svg)).resize(width, height).ensureAlpha().raw().toBuffer();
+}
+
 export async function renderBlank({ width, height }) {
   return sharp({
     create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } },
