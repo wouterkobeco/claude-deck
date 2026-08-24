@@ -140,14 +140,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   reload, which this project treats as routine — would strip the guard out
   from under a fetch that is still running.
 - `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`,
-  `accentFor`, `attentionQueue` and `detailLayout` for the checks; the
-  `import.meta.url === argv[1]` guard at the bottom is what keeps importing it
-  from starting a daemon. Also owns **which board is showing**: one `view`
-  value local to `run()`, never a flag per board, so "stats and detail are both
-  somehow on" isn't representable. Its five kinds — `sessions`, `stats`,
-  `attention`, `free`, `detail` — each have one branch in the poll loop and one
-  `refresh*` function, and the same 12 session keys are redrawn by whichever is
-  current. The `drawn`-signature diffing does the switching for free: signatures
+  `accentFor`, `attentionQueue`, `detailLayout`, `pageOf` and
+  `restartDecision` for the checks — the rule being that anything deciding
+  something the hardware would have to show you gets to be a pure function with
+  a case in `slots-check`; the `import.meta.url === argv[1]` guard at the
+  bottom is what keeps importing it from starting a daemon. Also owns **which
+  board is showing**: one `view` value local to `run()`, never a flag per
+  board, so "stats and detail are both somehow on" isn't representable. Its six
+  kinds — `sessions`, `stats`, `attention`, `busy`, `free`, `detail` — each
+  have one branch in the poll loop and one `refresh*` function, and the same 12
+  session keys are redrawn by whichever is current. Which *page* of a queue
+  board is showing is the one thing held beside `view` rather than in it
+  (`queuePage`, reset by `setView`): a page is a position within the current
+  view, not a second thing that is on. The `drawn`-signature diffing does the switching for free: signatures
   never match across boards, so a mode change redraws everything once and needs
   no explicit invalidation. The stats board's top-left pair ("Session reset" /
   "Week reset") isn't from stats.mjs — it's `usage.mjs`'s
@@ -477,6 +482,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   something nobody opened. Published through `liveSessions()` in `index.mjs`,
   which wraps every `getLiveSessions` call site, so the file is written on every
   poll rather than only on the polls of whichever board happens to be up.
+  **It has a second reader, and it is the next run of this daemon**
+  (`readPublishedIds`). The rows are already exactly the non-nested sessions,
+  which is exactly the set `sessionOrder` is over, so seeding first-seen order
+  across a restart needed a *use* for this file rather than another one — see
+  the ordering invariant below for why that mattered. The only change it forced
+  is that `liveSessions()` publishes in **board order** now; the order was
+  arbitrary before and nothing read it, and the extension still just filters
+  the list to its own folders. A session this poll has never slotted
+  (`assignSlots` runs only on sessions-board polls) sorts last in whatever
+  order it arrived, which is what it would have got anyway. Ids are re-checked
+  as strings on the way back in, the same rule `readAccents` applies to a
+  colour: they become map keys and then reach `claude --resume` through the
+  extension.
 - `src/session-transfer.mjs` — moving a session to **another machine**, with
   its whole history, as two commands you run (`sessions:save`,
   `sessions:restore`). Where `publish-sessions.mjs` remembers what to reopen
@@ -1297,6 +1315,19 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   ends so a returning project reclaims its slot and accent colour. Anything
   that re-sorts a settled board breaks the point of the tool: muscle memory for
   where a button is.
+  **It survives a restart, and it is the last piece that learned to.** Accent,
+  project position, project name and the board's own port and token all
+  persist; `sessionOrder` did not, so a restart rebuilt it from whatever order
+  the sources happened to report and reshuffled every session *within* its
+  project's block — invisible on a machine with one session per project, and
+  the whole point of these rules on one with six. `seedSessionOrder` reads it
+  back from `~/.claude/streamdeck-sessions.json`, which already holds exactly
+  the non-nested sessions the ordering is over, so this is a second job for a
+  file rather than a seventh file — and `liveSessions()` now publishes in board
+  order, which nothing read before and which is the only thing that made that
+  file usable here. Ids that died meanwhile are seeded and then dropped by
+  `assignSlots`'s own prune on the first poll; new sessions still land after
+  everything remembered, because `arrivals` has already walked past them.
   **A project's position is an array index, not a counter.** It was
   `folderOrder.set(key, folderOrder.size)` at first sight, which cannot express
   "third, because you dragged it there"; `folderOrder` is now a derived index
@@ -1327,6 +1358,34 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   fixed for the visit, but a session that ends mid-visit isn't held stale
   either — `refreshDetail` blanks every tile and returns `null`, and the poll
   loop leaves the board the same way.
+  **The slot cap is the third exception, and the narrowest** (`promoteActive`).
+  At 13 slots first-seen alone hides the session actually doing the work: the
+  board is full and the busy one arrived last, so the key that matters isn't
+  there. A session past the cap trades with the least active session *of its
+  own project* and takes its exact slot — so no block moves, no project changes
+  size, no accent changes, and a board under the cap takes a path identical to
+  before. It fires only when something was cut, and ties never swap, which is
+  what keeps first-seen the default: equally idle sessions are exactly the case
+  with no reason to move anything. Repeated "replace the least active if this
+  one beats it" leaves a project's K slots holding its K most active sessions
+  whatever order the cut arrives in — pinned by a check, because the input
+  order is `readdir`-dependent. Only the project straddling the cap can be
+  affected (one cut off entirely has no visible sibling to trade with), which
+  is a consequence of the layout rather than a rule, and is why nothing here
+  needs to know where the boundary fell. "Active" is the state the key would
+  *show* — `mostUrgent` over the session plus its parent-matched subagents,
+  tie-broken by `ts` — never the session's own `state`: the case this exists
+  for is a controller sitting idle while every bit of its work happens in
+  Agent-tool subagents, which by its own status is the least active thing in
+  the project. `ts` reads the right way round for both halves without a special
+  case: among equally idle siblings the one that went quiet first is the least
+  active, and among equally busy ones the freshest is the one that just
+  started. The honest cost, stated rather than discovered: a key at the cap
+  boundary can now change identity while you are looking at it, which is the
+  first time a session key's occupant changes without a session starting or
+  ending. `boardTiles` is untouched — the iPad has no cap, so it has nothing to
+  promote, and the two views can disagree about which session sits third in a
+  block when the deck is full.
   **A folder's identity is `host:folder` for a remote session, and the bare
   path for a local one** (`folderKeyFor`). Two hosts can hold the same path —
   `/home/pi/x` on two Raspberry Pis is a live case on this machine — and
@@ -1402,7 +1461,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   it and keeps what is its own — and both are best-effort in the same way: a
   window that finds neither behaves as it did before either existed. It was one
   file until the restore command needed the daemon's remote reach, which is the
-  bar for a third.
+  bar for a third. The sessions list is now **also read back by the next run of
+  the daemon** (`seedSessionOrder`), which makes it the one file here that is
+  both a message to somebody else and this daemon's own memory — deliberately,
+  because it already held exactly the right rows and the alternative was a
+  seventh file for a list that already existed.
   **The third is the daemon's own memory, read by nothing but the next run of
   the daemon**: `~/.claude/streamdeck-accents.json` (`accents.mjs`), which
   folder wore which accent. `folderOrder` rebuilds first-seen on every start, so
@@ -1499,6 +1562,43 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   into place by rename rather than letting `tar -xf` merge it — see
   `remote-fs.mjs` above — for the same reason the daemon never merges anything
   else it's handed: a merged tree keeps what the remote host deleted.
+- **The daemon replaces itself when the version moves, and that is the only
+  thing it does to itself.** `restartDecision` compares `package.json`'s
+  version against the one loaded at start, and `restartInto` calls
+  `process.execve` — not a supervisor, not a wrapper script, not a launchd
+  job. The reason is that this daemon *prints things a person reads*: the board
+  URL, the QR code an iPad is scanned from, which windows still need reloading.
+  `execve` keeps the pid, the terminal and stdout, so all of that still lands
+  where it was going; under launchd it would go to a log file nobody opens,
+  which is a real loss rather than a cosmetic one. Verified before it was
+  written: a scratch program exec'd itself three times keeping one pid.
+  **A changed version starts a clock, never a restart** (`RESTART_SETTLE_MS`,
+  5s). A `git pull` is not atomic — `package.json` can land seconds before the
+  source it belongs with — and exec'ing into that gap runs a tree that is half
+  one release and half another. An **unparseable** `package.json` is not "no
+  version" but "ask again in two seconds", so it waits rather than resetting
+  the window: mid-write is the normal state of a file another process is
+  rewriting, and a window that reset on every unreadable read would fire in the
+  middle of the write it exists to wait out.
+  **Open fds survive an exec unless they carry `FD_CLOEXEC`, and the two here
+  differ** — measured, not assumed. libuv sets it on everything it opens, so
+  the listening socket frees itself: a program that exec'd itself while still
+  listening re-bound the same port cleanly. The HID handle is a native addon's
+  fd with nobody setting that flag, so a deck left open would still be held
+  exclusively and the new image could not open it. The socket is closed anyway,
+  because the failure it prevents — an ephemeral port, and the iPad bookmark
+  `board-state.mjs` exists to keep alive silently dead — is one nothing on the
+  board would report; the close is bounded by a 1s race, since `server.close()`
+  waits for live connections and the board page holds one open by polling.
+  The `execve` check happens **before anything is closed**: without an exec to
+  follow it, closing the deck and the socket would leave a dead board on a
+  daemon that then carries on running.
+  It re-execs `node src/index.mjs` directly, so `prestart`'s prompts are
+  deliberately not repeated — an extension-install question on every release,
+  answered while you are looking at something else, is how a prompt stops being
+  read. The daemon's own per-poll "reload these windows" line covers that side.
+  And the cost of a restart is now paid more often, which is the whole reason
+  `sessionOrder` had to learn to persist first: see the ordering invariant.
 - **One install step, in the status line, and `npm start` now offers it.**
   Context usage is the exception to the above: Claude Code hands a session's
   context percentage to the status line and nowhere else, so
@@ -1704,19 +1804,45 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
   of the things "14 sessions" is counting. There is no age line under the
   resting count — "longest idle" says something under an inactive count and
   nothing under a total.
-  **The resting key is the head of a three-leg cycle: sessions → working →
-  inactive.** Working comes first because what the machine is *doing* is the
-  more common question, and it is the half of the total that moves minute to
-  minute; inactive is the one you go looking for when you want somewhere to
-  put the next piece of work. Pressing the key *while the busy board is up*
-  continues the cycle instead of exiting like every other key on that board:
-  resting → busy board → a second press opens `freeQueue`'s own board → any
-  press there exits, same as attention always has. With nothing working the
-  first press skips straight to the inactive board rather than doing nothing —
-  on an all-idle machine a `14 SESSIONS` key that opens nothing reads as a
-  dead key, and the inactive board is the only leg with anything on it anyway.
-  That is what `busyCount` is doing in the press handler, and why every
-  `drawStatus` call site destructures it.
+  **One cycle, and the status key is the only thing that walks it: attention →
+  working → inactive → out.** Working comes before inactive because what the
+  machine is *doing* is the more common question, and it is the half of the
+  total that moves minute to minute; inactive is the one you go looking for
+  when you want somewhere to put the next piece of work. Attention leads
+  whenever it has anything, which is the same order `drawStatus` draws in — an
+  alarm still opens exactly what it is alarming about. **The attention board
+  was a dead end for three releases**: its status key exited like every other
+  key there, so the one board you reach most often was the one you could not
+  continue from. It continues now, and the three press branches that used to
+  say this separately collapsed into one. `nextLeg` is the single place the
+  order lives, shared with the resting press so the two cannot drift, and it
+  **skips an empty leg** rather than opening one for the poll loop to drain a
+  tick later — which reads as a key that flashes a board at you. That is what
+  `busyCount`/`freeCount` are doing in the press handler, and why every
+  `drawStatus` call site destructures them. Every *other* key on those boards
+  still exits and focuses, unchanged: the cycle belongs to the status key, not
+  to the deck, and that is the way out at any point.
+  **A queue that overflows the 12 session keys pages, and the same press walks
+  the pages first** (`pageOf`). The key's third line becomes `2/3 · 4m` and a
+  press advances the page until there are none left, then moves to the next
+  board. Pages come first because a second page is part of the board you asked
+  for — a `2/3` the key would not let you reach is worse than not drawing one.
+  Three things it does *not* page: the **count** stays the whole queue's
+  (`12 WORKING` meaning "12 on this page" is the same lie the key told when it
+  named the next leg), the **age** stays the whole queue's (so "longest
+  waiting" is still true on page 3), and the busy board pages over its
+  **tiles** rather than its queue, because a session draining off still holds a
+  key for five seconds and has to fit somewhere. `pageOf` **clamps rather than
+  blanks**, and that is load-bearing: these queues re-rank every poll by
+  design, so the page you are on can stop existing under you, and a queue
+  shrinking from three pages to one has to land you on the page it still has
+  rather than on twelve dark keys that read as a dead daemon. The press handler
+  clamps from the other side too — it compares against the page count the last
+  poll actually *drew*. The page is **one value for all three boards**, reset
+  by `setView`, rather than a page per board: only one queue board can be
+  showing, and a page is a position within the current view, not a second thing
+  that is on. Neither renderer changed — the line is a string, measured on a
+  real raster first: the worst realistic case (`12/13 · 1h 20m`) is 53px of 72.
   **A session that stops working drains off that board rather than
   vanishing** (`busyBoardTiles`, `BUSY_LEAVE_MS` = 5s). On a board whose whole
   content is "what is running", a session finishing means a tile disappearing
