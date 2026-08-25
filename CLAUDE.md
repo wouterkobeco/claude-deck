@@ -2136,6 +2136,11 @@ button press → index.mjs → vscode-state.mjs (already-open file) → `open -a
 - `docs/superpowers/specs/2026-08-11-*.md` — original design, partly superseded
   (its hook-based status reporting is gone); kept as the record of how the
   design was reached.
+- `docs/roadmap.md` — informal backlog, not a design record like the others.
+- `docs/roadmap-jetbrains-companion.md` — investigated, not built: a PhpStorm
+  companion plugin matching `extension/`'s reach is feasible on public
+  IntelliJ Platform API, but its per-window liveness handle needs a different
+  design than `process.pid` (JetBrains shares one process across windows).
 - `docs/roadmap-reveal-terminal.md` — partly superseded: the extension it
   investigated is now built (`extension/`, `src/terminal-focus.mjs`), so its
   own "investigated, not built" header no longer holds for that part. Still
