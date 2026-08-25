@@ -14,6 +14,17 @@
 // tiles actually changed since the last poll.
 import { STATE_COLORS, MARKER_COLORS, usageColor, CONTEXT_CRITICAL } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
+import { fmt } from "./stats.mjs";
+
+// A transcriptTokenTotal() result as one compact number for a fact row or a
+// subagent tile, with the in/out/cache split in the title — the same place
+// the activity page's own column tooltips put a number too wide for the
+// space. Null (remote session, or nothing readable) reads as "—", same as
+// every other unknown fact here.
+const tokenLabel = (t) =>
+  t ? `<span title="${t.in} in · ${t.out} out · ${t.cacheWrite} cache write · ${t.cacheRead} cache read">${esc(
+      fmt(t.in + t.out + t.cacheWrite + t.cacheRead)
+    )} tok</span>` : "—";
 
 // The three views this thing has, as one header on every one of them. It used
 // to be icons on the board and text links on the config pages, which made
@@ -414,6 +425,7 @@ const STYLE = `
            background: #1b1b1b; margin: 0 0 4px; font-size: 13px }
   .agent .dot { flex: none; width: 8px; height: 8px; border-radius: 2px }
   .agent .nm { flex: 1; color: #e0e0e0; word-break: break-word }
+  .agent .tok { flex: none; font-size: 11px; color: #9e9e9e }
   .agent .st { flex: none; font-size: 11px; color: #757575; letter-spacing: .1em;
                text-transform: uppercase }
   .none { color: #616161; font-size: 13px }
@@ -587,6 +599,7 @@ export function detailPanel(d) {
               : "—"
           }</dd>
           <dt>Model</dt><dd>${esc(d.model)}</dd>
+          <dt>Tokens</dt><dd>${tokenLabel(d.tokens)}</dd>
           <dt>Where</dt><dd>${esc(d.host ? `${d.host}:${d.cwd}` : d.cwd)}</dd>
           <dt>Account</dt><dd>${esc(d.account ?? "—")}</dd>
           <dt>Terminal</dt><dd>${esc(d.terminal ?? "—")}</dd>
@@ -616,9 +629,9 @@ export function detailPanel(d) {
                   (n) =>
                     `<div class="agent"><span class="dot" style="background:${
                       MARKER_COLORS[n.state] ?? MARKER_COLORS.idle
-                    }"></span><span class="nm">${esc(n.label || "—")}</span><span class="st">${esc(
-                      n.state
-                    )}</span></div>`
+                    }"></span><span class="nm">${esc(n.label || "—")}</span><span class="tok">${tokenLabel(
+                      n.tokens
+                    )}</span><span class="st">${esc(n.state)}</span></div>`
                 )
                 .join("")
             : '<p class="none">none running</p>'

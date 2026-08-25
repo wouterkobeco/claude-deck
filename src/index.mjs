@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import qrcode from "qrcode-terminal";
-import { getLiveSessions, localSource, matchFolder, readTaskList, taskWindow } from "./sessions.mjs";
+import {
+  getLiveSessions,
+  localSource,
+  matchFolder,
+  readTaskList,
+  subagentTranscriptPath,
+  taskWindow,
+  transcriptPathFor,
+} from "./sessions.mjs";
 import { fetchAccountName, fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
@@ -13,7 +21,16 @@ import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions, readPublishedIds } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
 import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
-import { collectTokens, compactTokens, earliestBucket, groupTokens, HOUR_MS, readTokens, summariseTokens } from "./tokens.mjs";
+import {
+  collectTokens,
+  compactTokens,
+  earliestBucket,
+  groupTokens,
+  HOUR_MS,
+  readTokens,
+  summariseTokens,
+  transcriptTokenTotal,
+} from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS } from "./render.mjs";
@@ -1764,8 +1781,26 @@ export const configDeps = {
       // The whole list, not taskWindow's slice: the window exists because
       // twelve keys cannot hold twenty tasks, and a scrolling page can.
       tasks: tasks.map((t, i) => ({ n: i + 1, subject: t.subject ?? "", status: t.status ?? "pending" })),
+      // A remote session's transcript never lands on this machine (only its
+      // tail does, for the ctx gauge) — null rather than a wrong number.
+      tokens: session.host
+        ? null
+        : await transcriptTokenTotal(transcriptPathFor({ cwd: session.cwd, sessionId: session.session_id }, session.root)),
       // Likewise all of them, rather than however many the tail had room for.
-      nested: nested.map((n) => ({ id: n.session_id, state: n.state, label: keyFields(n).label })),
+      nested: await Promise.all(
+        nested.map(async (n) => ({
+          id: n.session_id,
+          state: n.state,
+          label: keyFields(n).label,
+          tokens: n.host
+            ? null
+            : await transcriptTokenTotal(
+                n.parent
+                  ? subagentTranscriptPath({ cwd: n.cwd, parent: n.parent, agentId: n.session_id }, n.root)
+                  : transcriptPathFor({ cwd: n.cwd, sessionId: n.session_id }, n.root)
+              ),
+        }))
+      ),
     };
   },
   // Formatted here rather than in the page: config-server.mjs owns markup and
@@ -1809,27 +1844,37 @@ export const configDeps = {
     // pie existed: a slice and its row have to be findable from each other, and
     // that only works if the table is in slice order. The blocked column keeps
     // its colour, which is what drew the eye to it in the first place.
+    // Free: the token log is already bucketed by cwd for the model chart
+    // below, so a per-project total costs one more grouping pass rather than
+    // another read. Keyed on the bare cwd, which is what a local project's
+    // history key already is — a remote project's key carries its host and
+    // never matches, since tokens.mjs never reads a remote transcript at all.
+    const byProjectTokens = new Map(groupTokens(buckets, "cwd", from, now).map((r) => [r.cwd, r]));
     const rows = Object.entries(totals)
       // A minute is the floor `dur` can render, so anything under it is a row
       // of four em dashes and a slice too thin to see. Same threshold in both
       // places rather than two that nearly agree.
       .filter(([key, st]) => key && spent(st) >= 60000)
-      .map(([key, st]) => ({
-        key,
-        name: liveProjects.get(key)?.name ?? key.split("/").filter(Boolean).pop() ?? key,
-        // The colour it wears on the deck, so the pie needs no legend of its
-        // own — folderAccent survives restarts, so a project that has closed
-        // since still shows in the colour you remember it by. A project this
-        // daemon has never seen gets the neutral, which is the same grey an
-        // idle key is drawn in.
-        accent: folderAccent.get(key) ?? "#555555",
-        busy: dur((st.busy ?? 0) + (st.shell ?? 0)),
-        waiting: dur(st.waiting),
-        blocked: dur(st.requires_action),
-        total: dur(spent(st)),
-        pct: tracked ? (spent(st) / tracked) * 100 : 0,
-        spentMs: spent(st),
-      }))
+      .map(([key, st]) => {
+        const t = byProjectTokens.get(key);
+        return {
+          key,
+          name: liveProjects.get(key)?.name ?? key.split("/").filter(Boolean).pop() ?? key,
+          // The colour it wears on the deck, so the pie needs no legend of its
+          // own — folderAccent survives restarts, so a project that has closed
+          // since still shows in the colour you remember it by. A project this
+          // daemon has never seen gets the neutral, which is the same grey an
+          // idle key is drawn in.
+          accent: folderAccent.get(key) ?? "#555555",
+          busy: dur((st.busy ?? 0) + (st.shell ?? 0)),
+          waiting: dur(st.waiting),
+          blocked: dur(st.requires_action),
+          total: dur(spent(st)),
+          tokens: t ? compactCount(t.in + t.out + t.cacheWrite5m + t.cacheWrite1h + t.cacheWrite + t.cacheRead) : "—",
+          pct: tracked ? (spent(st) / tracked) * 100 : 0,
+          spentMs: spent(st),
+        };
+      })
       .sort((a, b) => b.spentMs - a.spentMs);
 
     // Cumulative stops rather than shares: a conic-gradient wants "this colour

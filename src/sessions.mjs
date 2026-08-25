@@ -89,6 +89,15 @@ export function transcriptPathFor({ cwd, sessionId }, root = CLAUDE_DIR) {
 }
 
 /**
+ * Where an Agent-tool subagent's own transcript sits — `readRunningSubagents`
+ * reads this directory already, this just names one file in it for a caller
+ * that wants that agent's own usage rather than its stop_reason.
+ */
+export function subagentTranscriptPath({ cwd, parent, agentId }, root = CLAUDE_DIR) {
+  return join(projectDirFor(cwd, root), parent, "subagents", `agent-${agentId}.jsonl`);
+}
+
+/**
  * The directory name Claude Code files a cwd's transcripts under: every
  * non-alphanumeric character replaced by a dash.
  *

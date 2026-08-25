@@ -369,7 +369,7 @@ const facts = (blocked, stats) =>
 function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, memory: memCharts = [] }, status) {
   const table = () => `
     <table>
-      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th></tr>
+      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th><th>Tokens</th></tr>
       ${rows
         .map(
           (r) => `<tr>
@@ -378,6 +378,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
         <td>${esc(r.waiting)}</td>
         <td${r.blocked === "—" ? "" : ' class="blocked"'}>${esc(r.blocked)}</td>
         <td>${esc(r.total)}</td>
+        <td>${esc(r.tokens)}</td>
       </tr>`
         )
         .join("")}

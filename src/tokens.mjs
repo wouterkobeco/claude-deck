@@ -22,7 +22,7 @@
 // appended to — and without it every pass would re-read 2GB and double every
 // total.
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -90,6 +90,43 @@ function usageOf(u) {
 // ledger, for the metered rung alone. Every other row is zero by construction,
 // not by accident — a subscription turn is prepaid, not free.
 const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", "cacheWrite", "cacheRead", "costUsd"];
+
+/**
+ * Every token one transcript file has ever logged, summed straight from the
+ * file rather than the hourly log below — `keyOf` throws per-agent identity
+ * away by design (a bucket is per hour/cwd/model, not per session), so
+ * answering "how much did this one agent cost" means reading its own
+ * transcript instead. On demand only, the same trade `fetchAccountName`
+ * makes: a subagent's transcript is a few tens of KB, and this is read once
+ * per detail-panel open, never on a poll. Null for a path nothing can read —
+ * a remote session's, or one that ended and was swept.
+ */
+export async function transcriptTokenTotal(path) {
+  let text;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
+  const totals = { in: 0, out: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const line of text.split("\n")) {
+    if (!line.includes('"usage"')) continue;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const u = rec?.message?.usage;
+    if (!u || typeof u !== "object") continue;
+    const usage = usageOf(u);
+    totals.in += usage.in;
+    totals.out += usage.out;
+    totals.cacheWrite += usage.cacheWrite5m + usage.cacheWrite1h + usage.cacheWrite;
+    totals.cacheRead += usage.cacheRead;
+  }
+  return totals;
+}
 
 // Which vendor's meter ran. Records written before this field existed are
 // Claude's, so it defaults rather than being required — and it is the seam any
