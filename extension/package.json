@@ -2,7 +2,7 @@
   "name": "claude-streamdeck-terminal-focus",
   "displayName": "Claude Deck terminal focus",
   "description": "Reveals the terminal of the Claude Code session whose Stream Deck key was pressed.",
-  "version": "1.6.8",
+  "version": "1.6.9",
   "publisher": "wouterkobeco",
   "private": true,
   "license": "ISC",
@@ -33,7 +33,7 @@
       },
       {
         "command": "claudeStreamdeck.restoreSessionsFromBundle",
-        "title": "Restore Claude sessions from a backup\u2026",
+        "title": "Restore Claude sessions from a backup…",
         "category": "Claude Stream Deck"
       }
     ]

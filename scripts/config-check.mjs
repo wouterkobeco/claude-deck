@@ -322,7 +322,10 @@ eq(hHtml.includes("3h12m"), true, "the numbers reach the table");
 eq(hHtml.includes('class="account">Wouter<'), false, "with cswap accounts the plain pair is not drawn — the active account is already first");
 eq(hHtml.includes("<h2>Accounts</h2>"), false, "and they sit under Rate limits rather than a heading of their own");
 eq(hHtml.includes('class="account active">wouter@kobeco.be · active<'), true, "the active one says so");
-eq(hHtml.split('class="limit">').length - 1, 8, "two per cswap account, two per machine for memory — the live pair is the active account's");
+// `[ >]` keeps the container's class="limits" out of the count, and tolerates
+// a row carrying a title tooltip (the swap meter's "occupancy, not activity").
+eq((hHtml.match(/class="limit"[ >]/g) ?? []).length, 8, "two per cswap account, two per machine for memory — the live pair is the active account's");
+eq(hHtml.includes('title="Occupancy, not activity'), true, "the swap meter says which reading it is");
 eq(hHtml.includes("Week resets in 6 days"), true, "a known reset is stated directly in the title, not a separate line");
 eq(hHtml.includes('class="lcap lonly">Session reset time is unknown<'), true, "an unknown reset is one centered line and nothing else — no bar, no percentage");
 eq(hHtml.includes("<h2>Input tokens<span") && hHtml.includes("cache-read 36M"), true, "input gets its own stacked chart");

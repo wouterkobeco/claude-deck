@@ -285,7 +285,7 @@ const limits = (rows) =>
     .map((row) =>
       row.unknownOnly
         ? `<div class="limit"><span class="lcap lonly">${esc(row.caps)}</span></div>`
-        : `<div class="limit">
+        : `<div class="limit"${row.tip ? ` title="${esc(row.tip)}"` : ""}>
         <div class="lrow"><span class="lcap">${esc(row.caps)}</span>
           <span class="lpct">${typeof row.pct === "number" ? Math.round(row.pct) + "%" : "—"}</span></div>
         <div class="ltrack"><i style="width:${
@@ -352,7 +352,15 @@ const memory = (list) =>
           (m) =>
             `${list.length > 1 ? `<div class="account">${esc(m.name)}</div>` : ""}${limits([
               { caps: "RAM pressure", pct: m.pressure, sub: amount(m.pressure, m.totalMb) },
-              { caps: "Swap in use", pct: m.swap, sub: amount(m.swap, m.swapTotalMb) },
+              // Occupancy is ambiguous on its own — a long uptime parks cold
+              // pages in swap and the number sits high while nothing is wrong.
+              // The tip says which reading this is; pressure is what alarms.
+              {
+                caps: "Swap in use",
+                pct: m.swap,
+                sub: amount(m.swap, m.swapTotalMb),
+                tip: "Occupancy, not activity: pages parked in swap, cold ones included. A high number with low RAM pressure is benign — pressure is the meter that says the machine is hurting.",
+              },
             ])}`
         )
         .join("")}`;

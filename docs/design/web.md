@@ -69,7 +69,12 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   carries the daemon's live numbers, so drawing the plain pair above it said
   the same thing twice. Then memory. All of it reuses the `limits` meter pair — the memory one with its own captions and no reset
   line, which is what the optional second argument and an `undefined` reset
-  are for — so a meter looks the same whatever it measures.
+  are for — so a meter looks the same whatever it measures. The swap meter
+  carries a `title` tooltip saying it is occupancy, not activity: a long
+  uptime parks cold pages in swap and the number sits high while nothing is
+  wrong (87% on a 36-day-uptime Pi, measured), so a red-looking figure needs
+  the caveat right where it is read — pressure, the meter beside it, is the
+  one that alarms (`MEMORY_ALERT_PCT` tests `pressure` only, never swap).
   **The account name sits under "Rate limits", not beside the version.** It's
   the same `getAccountName()` the deck's own stats board reads, off
   `~/.claude.json` rather than the OAuth token — the two are on this page
