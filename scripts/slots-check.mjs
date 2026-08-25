@@ -108,11 +108,41 @@ eq(slots, ["a1", "a2", "a3", "b1", null], "new session joins its project block")
   // first is the least active, so it is the one that gives up its slot.
   eq(twoNested, ["f1", "f3"], "a session whose subagent is working outranks its idle siblings");
 
-  // A project cut off entirely has no sibling to trade with, and must not
-  // reach into another project's block to find one.
+  // A project cut off entirely has no sibling of its own to trade with, so
+  // promoteActive alone can't reach it — that's what guaranteeRepresentation
+  // is for (see below). T holds both slots and gives up its oldest (g1) to
+  // seat U; promoteActive then can't bring g1 back either, since g1 and g2
+  // tie on state and ts and a tie never swaps.
   const twoProjects = new Array(2).fill(null);
   assignSlots([act("g1", T, "idle", 100), act("g2", T, "idle", 100), act("h1", U, "requires_action", 900)], twoProjects);
-  eq(twoProjects, ["g1", "g2"], "the swap never crosses a project boundary");
+  eq(twoProjects, ["g2", "h1"], "every project keeps at least one slot");
+}
+
+// guaranteeRepresentation: a project with nothing visible steals a slot from
+// whichever project currently holds the most, taking that project's oldest
+// (first-seen) session — never its newest, and never a project down to one.
+{
+  const [V, W, X] = ["iota", "kappa", "lambda"].map((n) => `/projects/${n}`);
+
+  // V has three sessions, W has one, and only two slots exist — first-seen
+  // alone would fill both with V and leave W with nothing.
+  const two2 = new Array(2).fill(null);
+  assignSlots([s("v1", V), s("v2", V), s("v3", V), s("w1", W)], two2);
+  eq(two2, ["v2", "w1"], "the starved project bumps the donor's oldest, not its newest");
+
+  // Two starved projects (W, X) sharing one donor (V) that started with all
+  // three slots: V can give one up twice before it's down to one itself, so
+  // both W and X get seated.
+  const three3 = new Array(3).fill(null);
+  assignSlots([s("v1", V), s("v2", V), s("v3", V), s("w1", W), s("x1", X)], three3);
+  eq(three3, ["v3", "w1", "x1"], "a big enough donor can seat more than one starved project");
+
+  // No donor exists once every visible project already holds exactly one
+  // slot — there's nothing to spare, so a fourth project is left with
+  // nothing rather than starving a sibling down to zero to make room for it.
+  const two3 = new Array(2).fill(null);
+  assignSlots([s("v1", V), s("w1", W), s("x1", X)], two3);
+  eq(two3, ["v1", "w1"], "no spare slot means a project can still be left out");
 }
 // A whole project going away closes its gap.
 assignSlots([s("b1", B)], slots);
@@ -123,10 +153,19 @@ eq(slots, ["b1", null, null, null, null], "empty project leaves no gap");
 assignSlots([s("b1", B), s("a9", A)], slots);
 eq(slots, ["a9", "b1", null, null, null], "returning project keeps its place");
 
-// Board full: extras simply get no button.
+// Board full: an extra session within an already-represented project simply
+// gets no button (b1 has no siblings, so it's the whole story here); a
+// session from a project not yet represented would instead be the
+// guarantee's business — see the guaranteeRepresentation block below.
 const small = new Array(2).fill(null);
+assignSlots([s("a1", A), s("a2", A)], small);
+eq(small, ["a1", "a2"], "full board drops extras within a represented project");
+
+// Same board, but B's only session was cut instead of never arriving — A
+// still holds both slots, so its oldest gives one up rather than leaving B
+// with nothing.
 assignSlots([s("a1", A), s("a2", A), s("b1", B)], small);
-eq(small, ["a1", "a2"], "full board drops extras");
+eq(small, ["a2", "b1"], "a starved project still gets a slot on a full board");
 
 // A nested (worktree) session never claims its own slot, and attaches to
 // the first (earliest-arrived) real session's button in its folder's block.

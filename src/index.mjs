@@ -718,8 +718,10 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
   nestedBySlot.length = slots.length;
   nestedBySlot.fill(null);
 
-  const visible = ordered.slice(0, slots.length);
-  promoteActive(visible, ordered.slice(slots.length), nested);
+  const visibleIds = guaranteeRepresentation(ordered, slots.length);
+  const visible = ordered.filter((s) => visibleIds.has(s.session_id));
+  const cut = ordered.filter((s) => !visibleIds.has(s.session_id));
+  promoteActive(visible, cut, nested);
   visible.forEach((s, i) => {
     slots[i] = s.session_id;
     // Only the first button of a project's contiguous block carries its
@@ -733,6 +735,73 @@ export function assignSlots(sessions, slots, nestedBySlot = []) {
       nestedBySlot[i] = own.sort((a, b) => nestedOrder.get(a.session_id) - nestedOrder.get(b.session_id));
     }
   });
+}
+
+/**
+ * Which of `ordered`'s session ids are visible, guaranteeing every project
+ * with a live session at least one of them.
+ *
+ * First-seen alone can cut a whole project off the board rather than just a
+ * session within one: past the cap, `ordered.slice(0, capacity)` is a prefix
+ * of the globally first-seen list, and a project that arrived late enough
+ * sits entirely past that prefix — every one of its sessions in `cut`, none
+ * of them visible, and `promoteActive` has no sibling of that project's to
+ * trade with (it only ever swaps *within* a project already holding a slot).
+ * A key press has muscle memory for where a project's block sits; a project
+ * with zero keys has none to remember, which is a worse failure than a key
+ * moving.
+ *
+ * The fix is set membership, not a positional swap: evict one session id,
+ * admit another, and let the existing `ordered.filter(...)` in `assignSlots`
+ * re-derive the visible array's positions from the one global sort — that is
+ * what keeps every project's block contiguous for free, the same way the
+ * unbent board already does.
+ *
+ * The donor is whichever project currently holds the *most* visible
+ * sessions — the one best able to spare one — and never one holding only
+ * one, so this can't itself starve a project to feed another. Ties go to
+ * whichever of them was first-seen, `byProject`'s own iteration order. What's
+ * evicted is that donor's oldest (first-seen) visible session, and what's
+ * admitted is the starved project's own oldest session — first-seen stays
+ * the rule on both ends; this bends *which* project gets a slot, never which
+ * of a project's own sessions is picked for one.
+ *
+ * If every project already holds exactly one slot, there is no donor left
+ * and a project past the cap simply has nowhere to go — a live project count
+ * over the slot count has no fix here, and this leaves that project unseen
+ * rather than starving a sibling to chase it.
+ */
+function guaranteeRepresentation(ordered, capacity) {
+  const visibleIds = new Set(ordered.slice(0, capacity).map((s) => s.session_id));
+  if (ordered.length <= capacity) return visibleIds;
+
+  const byProject = new Map();
+  for (const s of ordered) {
+    const key = folderKeyFor(s);
+    if (!byProject.has(key)) byProject.set(key, []);
+    byProject.get(key).push(s);
+  }
+
+  for (const sessions of byProject.values()) {
+    if (sessions.some((s) => visibleIds.has(s.session_id))) continue; // already represented
+
+    let donor = null,
+      donorCount = 1;
+    for (const candidate of byProject.values()) {
+      const count = candidate.reduce((n, s) => n + (visibleIds.has(s.session_id) ? 1 : 0), 0);
+      if (count > donorCount) {
+        donor = candidate;
+        donorCount = count;
+      }
+    }
+    if (!donor) continue; // nobody has a slot to spare
+
+    // `donor` is a subsequence of `ordered`, so its first visible entry is
+    // its oldest (lowest first-seen order) one.
+    visibleIds.delete(donor.find((s) => visibleIds.has(s.session_id)).session_id);
+    visibleIds.add(sessions[0].session_id);
+  }
+  return visibleIds;
 }
 
 // How active a session reads *on its key*: the state the key would show,
@@ -762,10 +831,14 @@ const moreActive = (a, b, nested) =>
  * in. Ties never swap, which is what keeps first-seen the default: equally
  * idle sessions are exactly the case with no reason to move anything.
  *
- * Only the project straddling the cap can be affected — a project cut off
- * entirely has no visible sibling to trade with, and one wholly inside the cap
+ * Only a project straddling the cap can be affected — one with nothing
+ * visible has no sibling here to trade with, and one wholly inside the cap
  * has nothing cut. That is a consequence of the layout rather than a rule of
  * its own, and it is why nothing here needs to know where the boundary fell.
+ * `visible`/`cut` already come in post-`guaranteeRepresentation`, so a
+ * project with real sessions past the cap is never actually in the first
+ * case by the time this runs — but this function doesn't know that and
+ * doesn't need to; it would do the right (nothing) thing either way.
  */
 function promoteActive(visible, cut, nested) {
   for (const s of cut) {
