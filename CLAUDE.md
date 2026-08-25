@@ -12,7 +12,7 @@ npm run tasks-check    # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
 npm run cswap-check    # claude-swap accounts: parsing, graceful absence
-npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / model / effort
+npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / pendingTool / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard

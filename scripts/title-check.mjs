@@ -1,10 +1,11 @@
 // Verifies the transcript tail scan: aiTitle stops at the most recent /clear
 // rather than surfacing a summary from a conversation that's already gone,
 // blockedOnDenial flags a turn that ended right after an auto-mode
-// permission denial with nothing from the human since, and model/effort come
-// from the newest assistant line. One file for the whole function — two
-// files testing one function is what let a field addition ship checked by
-// only one of them.
+// permission denial with nothing from the human since, pendingTool flags one
+// that ended on an unanswered ExitPlanMode/AskUserQuestion call, and
+// model/effort come from the newest assistant line. One file for the whole
+// function — two files testing one function is what let a field addition
+// ship checked by only one of them.
 // Run: node scripts/title-check.mjs
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -39,6 +40,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
+  pendingTool: null,
   model: null,
   effort: null,
   compactRequestedAt: null,
@@ -50,6 +52,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
+  pendingTool: null,
   model: null,
   effort: null,
   compactRequestedAt: null,
@@ -62,6 +65,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   clearedEmpty: true,
   startedEmpty: false,
   blockedOnDenial: false,
+  pendingTool: null,
   model: null,
   effort: null,
   compactRequestedAt: null,
@@ -73,6 +77,7 @@ assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
+  pendingTool: null,
   model: null,
   effort: null,
   compactRequestedAt: null,
@@ -202,6 +207,43 @@ assert.equal((await signals([denialLine, assistantLine])).blockedOnDenial, true)
 assert.equal((await signals([denialLine, assistantLine, humanReplyLine])).blockedOnDenial, false);
 console.log("OK: blockedOnDenial");
 
+// pendingTool: an unanswered ExitPlanMode or AskUserQuestion call — the same
+// shape as blockedOnDenial, for the two tools that pause a turn on a human
+// decision rather than a permission rule.
+const planLine = JSON.stringify({
+  type: "assistant",
+  message: { role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", name: "ExitPlanMode", input: {} }] },
+});
+const questionLine = JSON.stringify({
+  type: "assistant",
+  message: {
+    role: "assistant",
+    stop_reason: "tool_use",
+    content: [{ type: "tool_use", name: "AskUserQuestion", input: {} }],
+  },
+});
+assert.equal((await signals([planLine])).pendingTool, "plan");
+assert.equal((await signals([questionLine])).pendingTool, "question");
+// Approved or rejected, a human line after it clears the flag — even without
+// a reply from Claude in between.
+assert.equal((await signals([planLine, humanReplyLine])).pendingTool, null, "answered plan is not pending");
+// A tool call mid-turn that isn't one of these two doesn't count.
+assert.equal(
+  (
+    await signals([
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", name: "Bash", input: {} }] },
+      }),
+    ])
+  ).pendingTool,
+  null,
+  "an ordinary tool call is not pending"
+);
+// A turn that ended on text, not a tool call, is not pending either.
+assert.equal((await signals([assistantLine])).pendingTool, null, "a finished turn is not pending");
+console.log("OK: pendingTool");
+
 // Model and effort ride on assistant lines; the newest one is what the
 // session is running right now. Same scan, no extra read.
 const modelLine = (model, effort) => JSON.stringify({ type: "assistant", effort, message: { model } });
@@ -213,6 +255,7 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
+  pendingTool: null,
   model: "claude-opus-5",
   effort: "high",
   compactRequestedAt: null,
@@ -225,6 +268,7 @@ assert.deepEqual(await signals([userTurnLine]), {
   clearedEmpty: false,
   startedEmpty: false,
   blockedOnDenial: false,
+  pendingTool: null,
   model: null,
   effort: null,
   compactRequestedAt: null,

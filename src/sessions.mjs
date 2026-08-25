@@ -217,6 +217,20 @@ function promptText(content) {
  * line in between would also match, until it either says something (ending
  * the turn, but by then it's usually done exactly what this flags) or you
  * reply. Good enough for a key that just needs your attention, not a promise.
+ *
+ * `pendingTool` — the same idea as `blockedOnDenial`, for the two tools that
+ * pause a turn on a human decision rather than a permission rule:
+ * `ExitPlanMode` (plan approval) and `AskUserQuestion`. It's `"plan"` /
+ * `"question"` / `null`, decided by whichever comes first scanning backward,
+ * a `type:"user"` line or a `type:"assistant"` one — the newest conversational
+ * line either way. A user line means it was already answered (approved,
+ * rejected, or the turn moved on); an assistant line whose `stop_reason` is
+ * `tool_use` and whose newest call is one of these two tools means nothing
+ * has replied to it yet. Deliberately promoted the same way `blockedOnDenial`
+ * is rather than getting its own board state: whether it's a denied
+ * permission or an unanswered plan, the key needs your attention either way,
+ * and the registry's own `status` may already say so for these — this only
+ * ever fires on a session that's otherwise reading `idle`.
  */
 export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
   try {
@@ -227,6 +241,8 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       titleResolved = false;
     let blockedOnDenial = false,
       denialResolved = false;
+    let pendingTool = null,
+      pendingResolved = false;
     let lastPrompt = null,
       promptResolved = false;
     let model = null,
@@ -246,7 +262,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
 
     for (
       let i = lines.length - 1;
-      i >= 0 && (!titleResolved || !denialResolved || !modelResolved || !promptResolved);
+      i >= 0 && (!titleResolved || !denialResolved || !pendingResolved || !modelResolved || !promptResolved);
       i--
     ) {
       const line = lines[i];
@@ -333,6 +349,25 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
         }
       }
 
+      // pendingTool: whichever of a user line or an assistant line is newest
+      // decides it. A user line means the turn was already answered, however
+      // long ago — so this must resolve on the very first line of either kind
+      // encountered going backward, not just the first assistant one.
+      if (!pendingResolved && (line.includes(USER_LINE_MARKER) || line.includes('"type":"assistant"'))) {
+        if (typeIs("user")) {
+          pendingResolved = true;
+        } else if (typeIs("assistant")) {
+          const o = parse();
+          if (o.message?.stop_reason === "tool_use") {
+            const call = (o.message.content ?? []).find(
+              (b) => b?.type === "tool_use" && (b.name === "ExitPlanMode" || b.name === "AskUserQuestion")
+            );
+            if (call) pendingTool = call.name === "ExitPlanMode" ? "plan" : "question";
+          }
+          pendingResolved = true;
+        }
+      }
+
       // Model and effort ride on assistant lines; the newest one is what the
       // session is running right now. Same scan, no extra read.
       if (!modelResolved && line.includes('"type":"assistant"') && typeIs("assistant")) {
@@ -356,7 +391,17 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
     // nothing else to draw.
     const startedEmpty = whole && !denialResolved && !aiTitle && !clearedEmpty;
 
-    return { aiTitle, lastPrompt, clearedEmpty, startedEmpty, blockedOnDenial, model, effort, compactRequestedAt };
+    return {
+      aiTitle,
+      lastPrompt,
+      clearedEmpty,
+      startedEmpty,
+      blockedOnDenial,
+      pendingTool,
+      model,
+      effort,
+      compactRequestedAt,
+    };
   } catch {
     return {
       aiTitle: null,
@@ -364,6 +409,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       clearedEmpty: false,
       startedEmpty: false,
       blockedOnDenial: false,
+      pendingTool: null,
       model: null,
       effort: null,
       compactRequestedAt: null,
@@ -594,12 +640,14 @@ export async function getLiveSessions(sources = [localSource()]) {
  * State comes from the registry's own `status` field rather than being
  * inferred from hooks — it distinguishes "waiting" and "requires_action"
  * (blocked on you) from plain "busy", which guessing from hook events can't.
- * One narrow exception: an "idle" session whose last turn ended right after
- * an auto-mode permission denial is promoted to "requires_action" too — see
- * `readTranscriptSignals`'s `blockedOnDenial`. The registry reports that
- * exact case as a plain completed turn, same as any other idle session, so
- * without this a session that just asked you for a permission rule reads on
- * the deck as no different from one that's simply caught up.
+ * Two narrow exceptions promote an "idle" session to "requires_action": a
+ * last turn that ended right after an auto-mode permission denial
+ * (`blockedOnDenial`), and one that ended on an unanswered `ExitPlanMode` or
+ * `AskUserQuestion` call (`pendingTool`) — see `readTranscriptSignals`. The
+ * registry can report either exact case as a plain completed turn, same as
+ * any other idle session, so without this a session that just asked you to
+ * approve a plan, answer a question, or grant a permission rule reads on the
+ * deck as no different from one that's simply caught up.
  *
  * Two kinds of thing come back flagged `nested: true`, which index.mjs keeps
  * off the board's own slots: an SDK session (a separate process with its own
@@ -705,7 +753,7 @@ async function sessionsFrom(source) {
 
   const enriched = await Promise.all(
     matched.map(async (s) => {
-      const { blockedOnDenial, compactRequestedAt, ...signals } = await readTranscriptSignals(
+      const { blockedOnDenial, pendingTool, compactRequestedAt, ...signals } = await readTranscriptSignals(
         transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root),
         source.tail
       );
@@ -723,7 +771,11 @@ async function sessionsFrom(source) {
       return {
         ...s,
         ...signals,
-        state: compacting ? "compacting" : s.state === "idle" && blockedOnDenial ? "requires_action" : s.state,
+        state: compacting
+          ? "compacting"
+          : s.state === "idle" && (blockedOnDenial || pendingTool)
+            ? "requires_action"
+            : s.state,
         // `source.host && null`: a remote session's cwd is a path on the other
         // machine, and only ~/.claude is fetched from it.
         progress: await readTaskProgress(s.session_id, source.root, source.host ? null : s.cwd),
