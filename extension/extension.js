@@ -61,6 +61,13 @@ let busy = false;
 // Kept as the Terminal *object*: comparing it against window.activeTerminal is
 // how we answer "is that session still in front" without any pid involved.
 let revealed = null;
+// Every session this window has ever revealed, kept for as long as its
+// terminal stays open — `revealed` above only remembers the *last* one, and a
+// project with several terminals open needs all of them. Terminal.name is a
+// synchronous, live property (VS Code's own OSC-title tracking), so reading
+// it fresh on every publish tick picks up a manual rename for free with no
+// extra matching pass.
+const terminalsBySession = new Map();
 // Last JSON written, so an unchanged state costs no write. Six open windows on
 // a 400ms tick would otherwise be fifteen writes a second saying nothing
 // changed.
@@ -110,6 +117,7 @@ async function tick() {
         // Remembered so publishState can answer "is this session's terminal
         // still the one in front" by object identity.
         revealed = { terminal, sessionId: request.sessionId ?? null };
+        if (request.sessionId) terminalsBySession.set(request.sessionId, terminal);
         // Not show(true): the point of the press is to put you in this
         // terminal, so taking keyboard focus is the feature, not a side effect.
         // This also activates the terminal's tab group, which is what brings a
@@ -148,12 +156,19 @@ function publishState() {
   try {
     const activeSessionId =
       revealed && vscode.window.activeTerminal === revealed.terminal ? revealed.sessionId : null;
+    // Drop terminals that closed since the last tick, so a session's key
+    // doesn't keep reporting a name for a terminal that no longer exists.
+    for (const [id, terminal] of terminalsBySession) {
+      if (terminal.exitStatus !== undefined) terminalsBySession.delete(id);
+    }
+    const terminalNames = Object.fromEntries([...terminalsBySession].map(([id, terminal]) => [id, terminal.name]));
     const folders = vscode.workspace.workspaceFolders ?? [];
     const state = JSON.stringify({
       folders: folders.map((f) => f.uri.fsPath),
       focused: vscode.window.state.focused,
       activeSessionId,
       host: sshHost(folders, vscode.env.remoteName),
+      terminalNames,
     });
     if (state === lastState) return;
     mkdirSync(WINDOWS_DIR, { recursive: true });

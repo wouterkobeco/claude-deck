@@ -145,6 +145,7 @@ await winFile(`${process.pid}.json`, {
   folders: ["/repo"],
   focused: true,
   activeSessionId: "sess-a",
+  terminalNames: { "sess-a": "branches", "sess-b": 5 },
 });
 // A window that crashed without unlinking. 999999 is above macOS's default
 // pid_max, so it cannot be a running process and cannot be recycled onto one.
@@ -163,6 +164,12 @@ assert.deepEqual(
 assert.equal(live[0].pid, process.pid);
 assert.equal(live[0].focused, true);
 assert.equal(live[0].activeSessionId, "sess-a");
+assert.deepEqual(live[0].terminalNames, { "sess-a": "branches" }, "a non-string name is dropped, not trusted");
+
+// No terminalNames at all — an extension older than this feature. Must not
+// throw, and must read as "nobody's revealed anything" rather than crash.
+await winFile(`${process.pid}.json`, { folders: ["/repo"], focused: true });
+assert.deepEqual(readWindowStates(wdir)[0].terminalNames, {});
 
 // A state file that parses but lacks `folders` can't be matched to a window,
 // so it is not a window. Guarded rather than assumed: this file is written by

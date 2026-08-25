@@ -589,6 +589,7 @@ export function detailPanel(d) {
           <dt>Model</dt><dd>${esc(d.model)}</dd>
           <dt>Where</dt><dd>${esc(d.host ? `${d.host}:${d.cwd}` : d.cwd)}</dd>
           <dt>Account</dt><dd>${esc(d.account ?? "—")}</dd>
+          <dt>Terminal</dt><dd>${esc(d.terminal ?? "—")}</dd>
         </dl>
       </div>
       <div>

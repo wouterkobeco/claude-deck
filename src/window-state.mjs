@@ -75,12 +75,23 @@ export function readWindowStates(dir = WINDOWS_DIR) {
       // against a `TypeError` there beats a dark deck while a producer gets
       // found.
       if (!Array.isArray(state.folders) || !state.folders.every((f) => typeof f === "string")) continue;
+      // sessionId -> the live OSC title of the terminal this window last
+      // revealed for it, straight from Terminal.name. Only sessions this
+      // window has actually revealed are in here — see extension.js — so a
+      // session nobody has pressed yet has no entry, not a stale one.
+      const terminalNames = {};
+      if (state.terminalNames && typeof state.terminalNames === "object") {
+        for (const [id, name] of Object.entries(state.terminalNames)) {
+          if (typeof name === "string") terminalNames[id] = name;
+        }
+      }
       states.push({
         pid,
         folders: state.folders,
         focused: state.focused === true,
         activeSessionId: state.activeSessionId ?? null,
         host: validHost(state.host),
+        terminalNames,
       });
     } catch {
       // mid-write or corrupt — skip this window, not the whole read

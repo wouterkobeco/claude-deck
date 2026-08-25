@@ -1681,6 +1681,12 @@ export const configDeps = {
       account: session.host
         ? await fetchAccountName(session.host, join(SCRATCH_ROOT, "cm-%h"))
         : await getAccountName(),
+      // The VS Code terminal's own live name, if this session's terminal has
+      // ever been revealed — a rename you typed by hand, the way "Account"
+      // is a fact the deck's own detail board has no room for. `null` when
+      // nobody has pressed this session's key yet, which is honest: nothing
+      // here has looked at its terminal.
+      terminal: readWindowStates().reduce((found, w) => found ?? w.terminalNames[id] ?? null, null),
       cwd: session.cwd,
       // The whole list, not taskWindow's slice: the window exists because
       // twelve keys cannot hold twenty tasks, and a scrolling page can.
