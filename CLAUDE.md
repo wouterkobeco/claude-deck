@@ -22,9 +22,11 @@ npm run remote-install-check # what remote:install decides before it writes
 npm run config-check   # config + board pages: token gate, validation, escaping, focus
 npm run statusline-check     # what `npm start` decides your status line needs
 npm run statusline:install   # add the context-gauge block here, no question
+npm run compact-hook-check   # PreCompact/PostCompact hook decision, settings merge, the script itself
+npm run compact-hook:install # add the PreCompact/PostCompact hooks here, no question
 npm run history-check  # state log: change-only records, durations, retention, concurrency
 npm run tokens-check   # token extraction: incremental reads, grouping, compaction
-npm run remote:install -- <host>  # status line on a remote host, for its gauge
+npm run remote:install -- <host>  # status line + compaction hooks on a remote host
 npm run sessions:save  # bundle live sessions' full history for another machine
 npm run sessions:restore      # list bundles; -- <file> shows the plan, --write lands it
 npm run session-transfer-check # slug/remap/rewrite/plan arithmetic for the above
@@ -71,7 +73,7 @@ needs indexing.
 | `docs/design/vscode.md` | `vscode-state.mjs`, `terminal-focus.mjs`, `window-state.mjs`, `extension/` — focus routing, window state, install/reload |
 | `docs/design/web.md` | `config-server.mjs`, `board-page.mjs`, `board-state.mjs`, `html.mjs` — the config/activity/board pages and their trust boundary |
 | `docs/design/persistence.md` | `publish-sessions.mjs`, `accents.mjs`, `session-transfer.mjs` — every file the daemon writes, and the read-only invariant in full |
-| `docs/design/statusline.md` | `statusline.mjs` — the context gauge's one install step, local and remote |
+| `docs/design/statusline.md` | `statusline.mjs`, `compact-hook.mjs` — the two manual install steps (context gauge, auto-compaction hooks), local and remote |
 
 ### Invariants — the one-line versions
 
@@ -95,10 +97,13 @@ on each line. These summaries are reminders, not the rule itself.
   sign the same object. (board.md)
 - **Overlay boards null `btn.renderParams`**, so `pulse()` finds nothing stale
   to redraw when it resumes. (board.md)
-- **Read-only**: the daemon writes only its own files into `~/.claude/` and
-  never edits Claude Code's data — no hooks, no `settings.json` writes.
-  `sessions:restore` is the sole exception and stays a two-step command you
-  run, never a poll. (persistence.md)
+- **Read-only**: the daemon itself writes only its own files into `~/.claude/`
+  and never edits Claude Code's data on a poll. Two things outside the daemon
+  do touch `settings.json`, both manual, both additive, both offered at
+  `npm start` rather than run automatically: the status line install and the
+  PreCompact/PostCompact compaction hooks. `sessions:restore` is the only
+  thing that writes a transcript, and stays a two-step command you run, never
+  a poll. (persistence.md, statusline.md)
 - **The daemon replaces itself on a version change** (`process.execve` —
   settle window, splash sweep, board resume) and that is the only thing it
   does to itself. (board.md)
@@ -120,9 +125,11 @@ on each line. These summaries are reminders, not the rule itself.
 - **A key's colour covers its block** (`mostUrgent` over own + nested
   states); every other field is the session's own, and the caps bar is always
   the project name, never the cwd. (board.md)
-- **"compacting" is the `/compact` marker in the transcript, parsed** — the
-  silence heuristic shipped, false-fired on long reasoning, and must not come
-  back. (sessions.md)
+- **"compacting" is the `/compact` marker in the transcript, parsed, or the
+  PreCompact/PostCompact hook's marker file** — the silence heuristic shipped,
+  false-fired on long reasoning, and must not come back; the hook is the only
+  non-heuristic way to catch an *auto*-triggered compaction, since it writes
+  nothing anywhere until it's already over. (sessions.md, statusline.md)
 - **Dishonesty is the bug class refused outright**: a failing host reads
   `offline` rather than vanishing, an empty session reads CLEAR rather than a
   plausible name, a stopped daemon greys the web board. (remote.md,

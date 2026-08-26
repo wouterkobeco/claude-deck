@@ -323,6 +323,11 @@ key still opens the same pages on loopback.
   the transcript and promoted to `requires_action`.
 - **Compacting reads as a sweeping ring**, not a percentage — nothing on disk
   reports how far along a compaction is.
+- **Auto-triggered compactions show too, with one optional install step.** A
+  manual `/compact` is detected from its own command line in the transcript;
+  an auto-triggered one (context filled up) writes nothing anywhere until it's
+  already over, so catching it live needs the PreCompact/PostCompact hooks
+  `npm start` offers to add — see Setup.
 
 ## Setup
 
@@ -362,6 +367,17 @@ fi
 ```
 
 Skip it and everything else still works; the gauge just never draws.
+
+An auto-triggered compaction needs a second, separate install step:
+PreCompact/PostCompact hooks in `settings.json`, since that's the only place
+Claude Code says "compaction is starting" before it's already over — a manual
+`/compact` needs none of this, its own command line in the transcript is
+signal enough. `npm start` checks for these too and offers to add them,
+defaulting to yes; unlike the status line there's nothing here to refuse, since
+a hooks array just gets one more entry rather than a slot one command owns.
+`npm run compact-hook:install` does the same without the question. Skip it and
+a `/compact` you typed still shows; only the auto-triggered case is missed,
+same as before this existed.
 
 `npm start` also prints a QR code for the board on your phone or iPad — see
 above, or `STREAMDECK_NO_BOARD=1` to turn it off.
@@ -417,6 +433,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/tasks/<id>/*.json` | one file per task → `done/total` on the board, the full list on the detail board |
 | `<repo>/.superpowers/sdd/<plan>/` | fallback for a session whose tasks Claude Code isn't tracking: superpowers' SDD ledger, read only when the above is empty and only for a local session |
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
+| `~/.claude/streamdeck-compact/<id>.json` | *written*, not read from Claude Code's own state: a session's compaction start time, from the PreCompact/PostCompact hooks above — the only way to catch an auto-triggered compaction while it's running |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
 | `sysctl kern.memorystatus_level vm.swapusage` | this machine's RAM pressure and swap use, for the memory key, the status key's alert, and the activity page's pressure-over-time chart (sampled every 5 minutes into the history log); a Remote-SSH host's `/proc/meminfo` rides the existing fetch and gets the same key, alert and chart |
@@ -443,7 +460,10 @@ npm run remote:install -- <host>
 which copies your own status line there (or a minimal one, if you have none)
 and points the remote's `settings.json` at it. It refuses rather than
 overwrites: a host that already has a status line, or already sets `statusLine`,
-is left alone and told what to add by hand. This is the only thing here that
+is left alone and told what to add by hand. The same command also installs the
+PreCompact/PostCompact hooks (above) on that host, so an auto-triggered
+compaction shows there too — that part never refuses, since it only ever adds
+one more hook entry. This is the only thing here that
 writes to a machine other than yours, which is why it is a command you run
 rather than anything the daemon does — and why it is deliberately not part of
 `npm install`. Pressing a remote key works like pressing a local one: the first
@@ -485,7 +505,8 @@ npm run board-shot      # re-render the deck screenshots above
   runs anywhere with a browser, but the daemon it reads from is still macOS.
 - Started without a deck, the daemon stays without one: plugging it in later
   needs a restart.
-- Auto-triggered compactions aren't detected; only `/compact` is.
+- Auto-triggered compactions are only detected once the PreCompact/PostCompact
+  hooks are installed (see Setup) — without them, only a manual `/compact` is.
 - **Terminal focus needs the extension installed** — see "Reveal the right
   terminal" under Setup, above. Without it, a press still raises the right
   window but leaves the terminal inside alone, exactly as before this

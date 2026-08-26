@@ -26,6 +26,9 @@ import { sshArgs } from "../src/remote-fs.mjs";
 // with the local installer: two copies of a shell block is two things to keep
 // in step, and only one of them would ever be the one you tested.
 import { MINIMAL, SCRIPT_NAME } from "../src/statusline.mjs";
+// Same reuse for the compaction-detection hooks: `decide`/`withHooksInstalled`
+// are the one copy of that rule, shared with compact-hook-prestart.mjs.
+import { HOOK_SCRIPT, SCRIPT_NAME as COMPACT_SCRIPT_NAME, decide as decideCompactHook, withHooksInstalled } from "../src/compact-hook.mjs";
 
 // Nothing here should take anywhere near this long — the probe is one round
 // trip and the writes are a few hundred bytes. It exists so a command that
@@ -124,7 +127,61 @@ function ssh(command, input) {
   });
 }
 
+// Separator between the two blobs fetched in one round trip below. NUL is
+// safe: a shell script and a JSON file are both text, and neither can
+// contain a NUL byte the way a live transcript can't (same reasoning
+// remote-fs.mjs's TAILS_CMD makes for its own NUL framing).
+const NUL = "\0";
+
+/**
+ * Install compact-hook.mjs's PreCompact/PostCompact hooks on `host`, entirely
+ * independent of the status line below: a hooks array is additive, so unlike
+ * the status line there is nothing to refuse over and nothing this can break
+ * by running regardless of what the status line install decides.
+ *
+ * Fetches the remote script and settings.json as plain text and runs them
+ * through the exact same pure `decide`/`withHooksInstalled` the local
+ * prestart uses, rather than reaching for jq on the remote — one copy of the
+ * merge logic, and the write-back is what already needs an ssh round trip
+ * either way.
+ */
+async function installCompactHook() {
+  const { stdout } = await ssh(
+    `cat ~/.claude/${COMPACT_SCRIPT_NAME} 2>/dev/null; printf '${NUL}'; cat ~/.claude/settings.json 2>/dev/null`
+  );
+  const at = stdout.indexOf(NUL);
+  const script = stdout.slice(0, at) || null;
+  const settingsRaw = stdout.slice(at + 1);
+
+  let settings;
+  try {
+    settings = JSON.parse(settingsRaw || "{}");
+  } catch {
+    console.error(`${host}: settings.json isn't valid JSON — skipping the PreCompact/PostCompact hooks (auto-compaction won't show for sessions there). Add them from README.md by hand once it's fixed.`);
+    return;
+  }
+
+  if (decideCompactHook({ script, hooks: settings.hooks }) === "ok") return;
+
+  await ssh(
+    `mkdir -p ~/.claude && cat > ~/.claude/${COMPACT_SCRIPT_NAME}.tmp && ` +
+      `if [ -s ~/.claude/${COMPACT_SCRIPT_NAME}.tmp ]; then ` +
+      `chmod +x ~/.claude/${COMPACT_SCRIPT_NAME}.tmp && mv ~/.claude/${COMPACT_SCRIPT_NAME}.tmp ~/.claude/${COMPACT_SCRIPT_NAME}; ` +
+      `else rm -f ~/.claude/${COMPACT_SCRIPT_NAME}.tmp; exit 1; fi`,
+    HOOK_SCRIPT
+  );
+  await ssh(
+    "mkdir -p ~/.claude && cat > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json",
+    `${JSON.stringify(withHooksInstalled(settings), null, 2)}\n`
+  );
+  console.log(`${host}: PreCompact/PostCompact hooks installed — auto-triggered compactions will show there too.`);
+}
+
 async function main() {
+  // Independent of everything below: see installCompactHook's own doc for why
+  // it can never conflict with the status line install that follows.
+  await installCompactHook();
+
   // Everything this needs to know about the host, in one round trip, before
   // anything is written.
   const { stdout } = await ssh(STATE_PROBE);

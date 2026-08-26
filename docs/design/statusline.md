@@ -1,4 +1,4 @@
-# The status line install (context gauge)
+# The manual install steps (context gauge, compaction hooks)
 
 Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads when this working set is being changed, not on every turn. Same rules as CLAUDE.md: new design notes for these files go here. A cross-reference like "see the read-only invariant below" may point at a sibling doc — CLAUDE.md's index maps which doc holds what.
 
@@ -82,3 +82,69 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   through `[^a-zA-Z0-9] -> -`, and tar refuses absolute and `..` members. This
   was the first place remote data reached a path that gets *written*, which is
   the thing to watch for when adding the next one.
+
+## The compaction hooks (auto-triggered compaction)
+
+- `src/compact-hook.mjs` — the second manual install step, same split as the
+  status line: a pure `decide`, the hook script (`HOOK_SCRIPT`), and
+  `withHooksInstalled`, the settings.json merge. Two commands write it —
+  `scripts/compact-hook-prestart.mjs` (this machine, offered at `npm start`)
+  and `scripts/remote-install.mjs` (a host) — nothing here does.
+- **Why this exists at all: a manual `/compact` writes its own command line
+  into the transcript the instant it starts (see the compacting invariant in
+  sessions.md), an auto-triggered one writes *nothing* until it's already
+  over.** Checked directly against a real one on this project's own Pi: every
+  `type:"system"` subtype in a transcript spanning an auto-compaction —
+  `away_summary`, `local_command`, `stop_hook_summary`, `turn_duration`,
+  `compact_boundary` — and none of them announces the start. `compact_boundary`
+  itself now carries `compactMetadata.trigger` ("auto"/"manual") and
+  `durationMs`, which is how the 160s figure below was measured, but it lands
+  *after* compaction ends — too late for a live key. Claude Code's
+  `PreCompact`/`PostCompact` hooks are the only place that moment is
+  observable, verified against Claude Code's own hooks reference: both fire
+  for either trigger, with a `matcher` that can tell them apart (this hook
+  doesn't bother — it does the same thing either way).
+- **Unlike the status line, there is nothing here to refuse.** `statusLine` is
+  one slot in `settings.json` one command owns, so installing over someone
+  else's is a real conflict `decide`'s `manual`/`append` branches exist to
+  avoid. `hooks.PreCompact`/`hooks.PostCompact` are arrays every hook gets its
+  own entry in, so this only ever *adds* one — `withHooksInstalled` is
+  additive and idempotent, `decide` only ever answers `ok` or `install`, and
+  `remote:install`'s half runs unconditionally, independent of whatever the
+  status line install below it decides.
+- **Grep+sed, not jq.** The status line block needs jq because its payload is
+  nested (`context_window.used_percentage`); this hook only ever reads two
+  flat top-level strings (`session_id`, `hook_event_name`), which a `grep -o
+  '"key"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'` pair
+  gets cleanly with no new dependency for `decide` to gate on. `printf '%s'`
+  rather than `echo`, so a session id that happened to start with `-` can't be
+  read as a flag.
+- **The marker's lifecycle is the hook's own write/delete, not a TTL the
+  daemon enforces as the primary signal.** `PreCompact` writes
+  `~/.claude/streamdeck-compact/<id>.json` (`{at: <ms>}`); `PostCompact`
+  removes it. `compactingNow` in sessions.mjs (see sessions.md) still caps a
+  marker's age at `MARKER_MAX_S` (600s) as a safety net for a `PostCompact`
+  that never fires — an interrupted compaction, a crash — sized off the hook's
+  own default 10-minute timeout rather than the manual path's `COMPACT_MAX_S`
+  (180s): a real auto-compaction on this machine measured 160s, already past
+  the "70-120s" the manual path was timed at, so reusing the tighter cap would
+  have clipped a real one.
+- **A `PreCompact` hook can delay the compaction it's reporting on** — Claude
+  Code runs it *before* compacting, with a 10-minute default timeout, so a
+  slow hook stalls the thing it exists to make visible. The script here is a
+  file write and nothing else, on purpose.
+- **A remote host needs the marker fetched the same way `ctx/` is** —
+  `compactTargets`/`writeCompactFiles` in remote-fs.mjs mirror
+  `ctxTargets`/`writeCtxFiles` exactly, including the shared `isPathSafeId`
+  guard, with one deliberate difference: a context file's "stale is fine"
+  contract doesn't hold for a marker, so a remote file that's gone missing
+  (PostCompact) has to *delete* the local cached copy, not just leave it —
+  otherwise a finished compaction would keep reading as running until the
+  next full restart of that cache.
+- **`remote-install.mjs`'s half never touches jq.** It fetches the remote
+  script and `settings.json` as plain text in one round trip (NUL-delimited,
+  the same framing reason `TAILS_CMD` uses it), runs them through the exact
+  same `decide`/`withHooksInstalled` the local prestart calls, and writes the
+  result back — one copy of the merge logic instead of a second one
+  hand-rolled in jq, and the write-back already needs the round trip either
+  way.

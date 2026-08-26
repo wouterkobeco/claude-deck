@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
+import { compactingNow, readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-title-check-"));
 const path = join(dir, "transcript.jsonl");
@@ -328,5 +328,17 @@ assert.equal(afterInterrupt.model, "claude-opus-5", "<synthetic> is not a model"
 assert.equal(afterInterrupt.effort, "high");
 assert.equal((await signals([synthetic])).model, null, "nothing but synthetic reports no model");
 console.log("OK: synthetic model lines skipped");
+
+// compactingNow: the marker (compact-hook.mjs's PreCompact/PostCompact side
+// channel) is exact and doesn't need `busy` — it brackets a compaction
+// precisely, both manual and auto. Without one, this is exactly the old
+// manual-only rule, unchanged.
+const now = Date.parse("2026-08-26T14:37:00.000Z");
+assert.equal(compactingNow({ state: "idle", compactRequestedAt: null, marker: { at: now - 60_000 } }, now), true, "a fresh marker is enough on its own, busy or not");
+assert.equal(compactingNow({ state: "busy", compactRequestedAt: null, marker: { at: now - 700_000 } }, now), false, "a marker past its safety net (PostCompact never fired) is ignored");
+assert.equal(compactingNow({ state: "busy", compactRequestedAt: now - 60_000, marker: null }, now), true, "no marker at all falls back to the manual /compact line, same as before this existed");
+assert.equal(compactingNow({ state: "idle", compactRequestedAt: now - 60_000, marker: null }, now), false, "the manual fallback still requires busy");
+assert.equal(compactingNow({ state: "busy", compactRequestedAt: null, marker: null }, now), false, "neither signal present is not compacting");
+console.log("OK: compactingNow prefers the marker, falls back to the manual line");
 
 await rm(dir, { recursive: true, force: true });

@@ -342,7 +342,7 @@ assert.deepEqual(
 // against a whole tree of 20KB. Fetching only the live sessions' files through
 // the tail stream costs a few hundred bytes instead, and call 2 already takes a
 // path list.
-import { ctxTargets } from "../src/remote-fs.mjs";
+import { compactTargets, ctxTargets } from "../src/remote-fs.mjs";
 
 const live = [
   { sessionId: "aaa", cwd: "/home/pi/x", pid: 1 },
@@ -395,6 +395,22 @@ for (const t of ctxTargets(hostile.concat({ sessionId: "ok-1", cwd: "/x", pid: 8
   assert.ok(t.local.startsWith("/scratch/host/ctx/"), `local path stays in the tree: ${t.local}`);
   assert.ok(!t.remote.includes(".."), `remote path has no traversal: ${t.remote}`);
 }
+
+// --- the compaction marker rides in call 2 too, the same way ------------
+// compact-hook.mjs's PreCompact/PostCompact side channel is another small
+// per-session file that changes faster than the 6s poll should be blind to —
+// the mirror of ctx/, and it goes through the exact same isPathSafeId guard
+// (there is only one, shared by both), so this only needs to confirm the
+// shape rather than re-run every hostile-id case above.
+assert.deepEqual(
+  compactTargets(live, "/scratch/host").map((t) => [t.remote, t.local]),
+  [
+    ["streamdeck-compact/aaa.json", "/scratch/host/streamdeck-compact/aaa.json"],
+    ["streamdeck-compact/bbb.json", "/scratch/host/streamdeck-compact/bbb.json"],
+  ],
+  "relative remote path (TAILS_CMD cd's first), local path inside the fetched tree"
+);
+assert.deepEqual(compactTargets(hostile, "/scratch/host"), [], "a hostile session id is refused here too");
 
 assert.equal(
   parseAccountJson(JSON.stringify({ oauthAccount: { displayName: "Jeroen", emailAddress: "claude2@denayer.com" } })),

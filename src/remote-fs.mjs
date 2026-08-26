@@ -181,6 +181,20 @@ export function ctxTargets(liveSessions, root) {
 }
 
 /**
+ * Where each live session's compaction marker is — the mirror of `ctxTargets`
+ * for compact-hook.mjs's PreCompact/PostCompact side channel. Same reasoning
+ * for fetching it here rather than in the tar: it is a handful of bytes per
+ * live session, changes faster than the 6s poll should be blind to, and call
+ * 2 already takes a path list.
+ */
+export function compactTargets(liveSessions, root) {
+  return liveSessions.filter((s) => isPathSafeId(s.sessionId)).map((s) => ({
+    remote: join("", "streamdeck-compact", `${s.sessionId}.json`),
+    local: join(root, "streamdeck-compact", `${s.sessionId}.json`),
+  }));
+}
+
+/**
  * Land the fetched context files in the tree, where `readContext` already
  * looks. Best-effort per file: a context gauge is the least important thing on
  * a key, and a write that fails must not cost the session the rest of its
@@ -194,6 +208,28 @@ async function writeCtxFiles(targets, byRemote) {
     // A missing file comes back unknown — that host has no status line for this
     // session yet, which is an ordinary state and simply leaves the gauge off.
     if (!body?.lines.length) continue;
+    await writeFile(t.local, body.lines.join("\n")).catch(() => {});
+  }
+}
+
+/**
+ * Land fetched compaction markers where `readCompactMarker` looks. Unlike
+ * `writeCtxFiles`, a missing remote file has to *delete* the cached local
+ * copy rather than leave it: a context file's "stale is fine, context can't
+ * change while idle" contract does not hold here — the marker's own absence
+ * (PostCompact) is the meaningful transition, and caching a deleted one would
+ * keep a finished compaction reading as still running until the process that
+ * fetched it exits.
+ */
+async function writeCompactFiles(targets, byRemote) {
+  if (!targets.length) return;
+  await mkdir(join(targets[0].local, ".."), { recursive: true }).catch(() => {});
+  for (const t of targets) {
+    const body = byRemote.get(t.remote);
+    if (!body?.lines.length) {
+      await rm(t.local, { force: true }).catch(() => {});
+      continue;
+    }
     await writeFile(t.local, body.lines.join("\n")).catch(() => {});
   }
 }
@@ -411,6 +447,7 @@ export async function fetchSource(host, scratchRoot) {
       remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
     }));
     const ctx = ctxTargets(liveSessions, finalDir);
+    const compact = compactTargets(liveSessions, finalDir);
 
     // ponytail: every due tail is refetched in full each cycle, whether or not
     // it changed since the last fetch — fine at REMOTE_POLL_MS against a
@@ -423,7 +460,7 @@ export async function fetchSource(host, scratchRoot) {
     // at the far end — a transcript is served to the injected `tail`, a context
     // file is written into the tree — but the wire is the same.
     let tails = new Map();
-    const all = [...wanted, ...ctx];
+    const all = [...wanted, ...ctx, ...compact];
     if (all.length) {
       const body = await run(["ssh", ...sshArgs(host, controlPath), TAILS_CMD], {
         input: all.map((w) => w.remote).join("\n") + "\n",
@@ -436,6 +473,7 @@ export async function fetchSource(host, scratchRoot) {
         // session id and knows nothing about sources. A context file is a
         // single short JSON line, so a "tail" of it is the whole thing.
         await writeCtxFiles(ctx, byRemote);
+        await writeCompactFiles(compact, byRemote);
       }
     }
 

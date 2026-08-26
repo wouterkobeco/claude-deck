@@ -203,9 +203,15 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   resolves that folder's return by `readdir` order, silently taking a
   deliberate choice back days later. Because of that delete, a manual pick can
   never create the duplicate `assignSlots` exists to resolve.
-- **Read-only, two install steps.** No hooks, no `settings.json` writes, no
-  config file. The daemon reads from `~/.claude/`, VS Code's storage and the
-  usage endpoint, and writes four files into it.
+- **Read-only, three install steps.** No config file of its own, and the
+  daemon itself — the running process, on its 2s poll — never edits Claude
+  Code's data or `settings.json`. Two of the three install steps do, though,
+  and both are opt-in commands offered at `npm start` rather than anything the
+  daemon runs on its own: the status line block, and now the
+  PreCompact/PostCompact compaction hooks (`compact-hook.mjs`) — see
+  statusline.md for why each exists and why neither is a poll-time write. The
+  daemon reads from `~/.claude/`, VS Code's storage and the usage endpoint,
+  and writes four files into it.
   **`sessions:restore` is the one thing in this project that writes Claude
   Code's own data** — a transcript, into `~/.claude/projects/` — and it is
   deliberately not the daemon that does it. It is a command you run, it prints

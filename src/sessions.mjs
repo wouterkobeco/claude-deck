@@ -616,6 +616,41 @@ async function readContext(sessionId, root = CLAUDE_DIR) {
 }
 
 /**
+ * When this session's PreCompact hook last fired, if it has and PostCompact
+ * hasn't cleared it yet — see compact-hook.mjs for why this file exists at
+ * all: it is the only way to see an *auto*-triggered compaction, which writes
+ * nothing else anywhere until it is already over. Missing is the ordinary
+ * case (no compaction running, or the hook isn't installed), not an error.
+ */
+async function readCompactMarker(sessionId, root = CLAUDE_DIR) {
+  try {
+    const { at } = JSON.parse(await readFile(join(root, "streamdeck-compact", `${sessionId}.json`), "utf8"));
+    return typeof at === "number" ? { at } : null;
+  } catch {
+    return null;
+  }
+}
+
+// A real auto-compaction measured on this machine ran 160s — already past the
+// "70-120s" a manual one was timed at — so the marker's own safety net (for a
+// PostCompact that never fires: an interrupted compaction, a crash) is capped
+// at the hook's own default timeout instead, comfortably clear of anything a
+// real one should take.
+const MARKER_MAX_S = 600;
+
+/**
+ * Whether a session reads as compacting right now — the marker when it's
+ * fresh (exact, and the only signal an auto-triggered compaction has at all),
+ * else the manual `/compact` transcript line the way this always worked.
+ * Exported and pure for the reason `statusKey`/`isRepeatPress` are: this is
+ * the whole rule, and nothing outside a real compaction can exercise it.
+ */
+export function compactingNow({ state, compactRequestedAt, marker }, now = Date.now()) {
+  if (marker && (now - marker.at) / 1000 < MARKER_MAX_S) return true;
+  return state === "busy" && compactRequestedAt !== null && (now - compactRequestedAt) / 1000 < COMPACT_MAX_S;
+}
+
+/**
  * The local machine as a source: today's behaviour, named.
  *
  * A source is the whole host-dependent surface of this module — where the tree
@@ -772,11 +807,14 @@ async function sessionsFrom(source) {
       // what clears the spinner the instant a /compact is canceled (the
       // registry flips back to idle before any new transcript line lands),
       // and the age cap catches the stale-line leftovers busy can't.
-      // Auto-triggered compactions write no start marker at all and are
-      // deliberately not detected — an earlier silence heuristic tried, and
-      // false-fired on every turn that thought for 25s without a tool call.
-      const compacting =
-        s.state === "busy" && compactRequestedAt !== null && (Date.now() - compactRequestedAt) / 1000 < COMPACT_MAX_S;
+      // Auto-triggered compactions write no start marker anywhere in the
+      // transcript — an earlier silence heuristic tried inferring one and
+      // false-fired on every turn that thought for 25s without a tool call —
+      // so `marker` (compact-hook.mjs's PreCompact/PostCompact side channel)
+      // is the only thing that can catch that case, on a machine that has it
+      // installed; without it this falls back to manual-only, same as before.
+      const marker = await readCompactMarker(s.session_id, source.root);
+      const compacting = compactingNow({ state: s.state, compactRequestedAt, marker });
       return {
         ...s,
         ...signals,

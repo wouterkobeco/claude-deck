@@ -183,20 +183,36 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   whose only sessions are nested now shows nothing, which is right — a key for
   one is exactly the phantom that once appeared for a security review nobody
   opened.
-- **"compacting" means the newest user line is a `/compact` command.** A
-  manual `/compact` writes its command line into the transcript the moment it
-  starts (bare `"/compact"` content or the `<command-name>` form — match the
-  parsed content exactly, never the raw line, which tool results can contain),
-  then writes nothing until the finished `compact_boundary` — so that line
-  *is* the start marker, observed directly. The session must also say `busy`
-  (clears the spinner the instant a `/compact` is canceled) and the marker
-  must be younger than `COMPACT_MAX_S` (clears leftovers `busy` can't). The
-  registry has no compaction field, the status-line payload has none, and
-  auto-triggered compactions write no start marker at all — those are
-  deliberately not detected. **Don't reintroduce the silence heuristic**
-  ("busy + no pending tool + transcript quiet for 25s"): a turn thinking
-  without a tool call is exactly as silent, so it false-fired on every long
-  reasoning stretch. That shipped, and was replaced by the marker.
+- **"compacting" means the newest user line is a `/compact` command, or a
+  fresh PreCompact/PostCompact marker exists.** A manual `/compact` writes its
+  command line into the transcript the moment it starts (bare `"/compact"`
+  content or the `<command-name>` form — match the parsed content exactly,
+  never the raw line, which tool results can contain), then writes nothing
+  until the finished `compact_boundary` — so that line *is* the start marker,
+  observed directly. The session must also say `busy` (clears the spinner the
+  instant a `/compact` is canceled) and the marker must be younger than
+  `COMPACT_MAX_S` (clears leftovers `busy` can't). `compactingNow` is this
+  whole rule, exported and pure for the same reason `statusKey` is.
+  **The registry has no compaction field, the status-line payload has none, and
+  an auto-triggered compaction writes no start marker anywhere in the
+  transcript** — checked directly against a real one (every `type:"system"`
+  subtype present: `away_summary`, `local_command`, `stop_hook_summary`,
+  `turn_duration`, `compact_boundary`; nothing announces the start).
+  **Don't reintroduce the silence heuristic** ("busy + no pending tool +
+  transcript quiet for 25s"): a turn thinking without a tool call is exactly
+  as silent, so it false-fired on every long reasoning stretch. That shipped,
+  and was replaced by the marker — which is why an auto-triggered compaction
+  was, for a while, genuinely undetectable rather than merely unheuristic.
+  **`readCompactMarker` is the second signal, fed by compact-hook.mjs's
+  `PreCompact`/`PostCompact` hooks** (see statusline.md) — the one place an
+  auto-triggered compaction is observable while it's still running, on a
+  machine that has the (optional) hooks installed. It reads
+  `~/.claude/streamdeck-compact/<id>.json`, written the instant `PreCompact`
+  fires and removed by `PostCompact`, and `compactingNow` trusts it on its
+  own — no `busy` requirement, because the hook already brackets the
+  compaction precisely — capped at `MARKER_MAX_S` (600s) only as a safety net
+  for a `PostCompact` that never fires. Without the hooks installed, `marker`
+  is always null and this is exactly the manual-only rule above, unchanged.
   `renderCompacting` draws a sweeping ring rather than a percentage, because
   no progress figure exists to draw — `pulse()` advances its phase a twelfth
   per tick and, as everywhere, never writes `btn.drawn`.
