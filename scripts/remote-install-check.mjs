@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { STATE_PROBE, parseState } from "./remote-install.mjs";
+import { COMPACT_HOOK_PROBE, STATE_PROBE, parseState } from "./remote-install.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = await mkdtemp(join(tmpdir(), "streamdeck-install-check-"));
@@ -65,5 +65,30 @@ assert.deepEqual(parseState("jq=/usr/bin/jq\nscript=NO\nkey=a=b\n"), {
   script: "NO",
   key: "a=b",
 }, "values split on the first = only");
+
+// The regression this exists for: `spawn` refuses any local argv string
+// containing a literal NUL byte, which is exactly what interpolating the
+// separator constant into this same template produced the first time —
+// every real call crashed before it ever reached ssh, and only a live host
+// caught it because nothing here asserted the string itself.
+assert.equal(COMPACT_HOOK_PROBE.includes("\0"), false, "the command sent to ssh never embeds a literal NUL");
+
+// Run it for real, the same reason STATE_PROBE is: this is shell semantics
+// (does `printf '\0'` actually land a NUL byte between the two files, on a
+// real shell), not a string to trust by inspection. This one reads `~/.claude`
+// unconditionally (it has no CLAUDE_DIR override — the real command really
+// does need the remote's actual home), so the fixture has to override HOME
+// itself rather than cd into a directory `~` would ignore.
+{
+  const home = join(root, "compact-hook");
+  await mkdir(join(home, ".claude"), { recursive: true });
+  await writeFile(join(home, ".claude/streamdeck-compact-hook.sh"), "#!/bin/sh\necho hi\n");
+  await writeFile(join(home, ".claude/settings.json"), '{"theme":"dark"}');
+  const { stdout } = await execFileAsync("sh", ["-c", COMPACT_HOOK_PROBE], { env: { ...process.env, HOME: home } });
+  const at = stdout.indexOf("\0");
+  assert.ok(at > 0, "the NUL separator is actually in the output");
+  assert.equal(stdout.slice(0, at), "#!/bin/sh\necho hi\n", "the script comes first");
+  assert.equal(stdout.slice(at + 1), '{"theme":"dark"}', "settings.json comes after the separator");
+}
 
 console.log("OK: remote install probe");

@@ -131,7 +131,22 @@ function ssh(command, input) {
 // safe: a shell script and a JSON file are both text, and neither can
 // contain a NUL byte the way a live transcript can't (same reasoning
 // remote-fs.mjs's TAILS_CMD makes for its own NUL framing).
+//
+// The command sent to `ssh` has to spell it `\0` for the *remote* `printf` to
+// turn into a byte — `spawn` refuses any local argv string that already
+// contains a literal NUL, which is what interpolating this constant into the
+// command itself did the first time. `NUL` here is only ever compared against
+// bytes `ssh` already returned, never embedded back into another command.
 const NUL = "\0";
+
+// The probe for installCompactHook, named and exported for the same reason
+// STATE_PROBE is: a check can assert its shape without running `main()`.
+// **Must spell the separator `\0` (backslash, zero) as literal text, never
+// interpolate an actual NUL character in** — `spawn` refuses any local argv
+// string that already contains one, which is exactly the shape of bug this
+// was shipped with once: `${NUL}` in this same template crashed every call
+// with "must be a string without null bytes" before it ever reached ssh.
+export const COMPACT_HOOK_PROBE = `cat ~/.claude/${COMPACT_SCRIPT_NAME} 2>/dev/null; printf '\\0'; cat ~/.claude/settings.json 2>/dev/null`;
 
 /**
  * Install compact-hook.mjs's PreCompact/PostCompact hooks on `host`, entirely
@@ -146,9 +161,7 @@ const NUL = "\0";
  * either way.
  */
 async function installCompactHook() {
-  const { stdout } = await ssh(
-    `cat ~/.claude/${COMPACT_SCRIPT_NAME} 2>/dev/null; printf '${NUL}'; cat ~/.claude/settings.json 2>/dev/null`
-  );
+  const { stdout } = await ssh(COMPACT_HOOK_PROBE);
   const at = stdout.indexOf(NUL);
   const script = stdout.slice(0, at) || null;
   const settingsRaw = stdout.slice(at + 1);
