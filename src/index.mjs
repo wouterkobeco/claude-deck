@@ -1641,7 +1641,11 @@ async function boardKeys() {
   const keys = boardTiles(sessions, unreachableTiles(readWindowStates()), now);
   const { session, week } = await getUsage();
   const attention = attentionQueue(sessions, now);
-  const free = freeQueue(sessions, now);
+  // The resting count is every non-nested session, the same definition
+  // drawStatus uses for the deck's own key — not the free queue, which is a
+  // list of sessions rather than a number and read as one turned every
+  // session key into "[object Object]".
+  const total = sessions.filter((s) => !s.nested).length;
   // One status tile, from the same statusKey the deck's own key is drawn from
   // — the fold is a rule, not a thing each board decides for itself. One id
   // either way, so the page's poll sees that tile *change* rather than one
@@ -1649,7 +1653,7 @@ async function boardKeys() {
   return [
     ...keys,
     { id: "__usage", kind: "usage", session, week },
-    { id: "__status", ...statusKey(attention, free, now, allPressures()) },
+    { id: "__status", ...statusKey(attention, total, now, allPressures()) },
   ];
 }
 
