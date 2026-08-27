@@ -20,6 +20,12 @@ import { applyCompactHook, applyStatusLine, probeCompactHook, probeStatusLine } 
 // once and is willing to wait on.
 const PROBE_TIMEOUT_MS = 5000;
 
+// Already `validHost`-checked inside readWindowStates() itself (a window's
+// published `host` is `validHost(state.host)`, the same guard the CLI runs on
+// its own argv), and every ssh call this makes goes through remote-fs.mjs's
+// shared `sshArgs`, which places `--` before the host in argv — so there is
+// no second validation to do here, and no separate argv construction that
+// could have missed it.
 const hosts = [...new Set(readWindowStates().map((w) => w.host).filter(Boolean))];
 if (!hosts.length) process.exit(0);
 
