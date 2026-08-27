@@ -27,6 +27,7 @@ npm run compact-hook:install # add the PreCompact/PostCompact hooks here, no que
 npm run history-check  # state log: change-only records, durations, retention, concurrency
 npm run tokens-check   # token extraction: incremental reads, grouping, compaction
 npm run remote:install -- <host>  # status line + compaction hooks on a remote host
+npm run remote-prestart      # what `npm start` checks on every open remote host, on demand
 npm run sessions:save  # bundle live sessions' full history for another machine
 npm run sessions:restore      # list bundles; -- <file> shows the plan, --write lands it
 npm run session-transfer-check # slug/remap/rewrite/plan arithmetic for the above
@@ -99,11 +100,13 @@ on each line. These summaries are reminders, not the rule itself.
   to redraw when it resumes. (board.md)
 - **Read-only**: the daemon itself writes only its own files into `~/.claude/`
   and never edits Claude Code's data on a poll. Two things outside the daemon
-  do touch `settings.json`, both manual, both additive, both offered at
-  `npm start` rather than run automatically: the status line install and the
-  PreCompact/PostCompact compaction hooks. `sessions:restore` is the only
-  thing that writes a transcript, and stays a two-step command you run, never
-  a poll. (persistence.md, statusline.md)
+  do touch `settings.json`, both additive, both offered — never run — at
+  `npm start`: the status line install and the PreCompact/PostCompact
+  compaction hooks. `npm start` offers both for every currently open remote
+  host too (in parallel, short-timeout, silent on an unreachable one), never
+  writing to another machine without that per-host yes. `sessions:restore` is
+  the only thing that writes a transcript, and stays a two-step command you
+  run, never a poll. (persistence.md, statusline.md)
 - **The daemon replaces itself on a version change** (`process.execve` —
   settle window, splash sweep, board resume) and that is the only thing it
   does to itself. (board.md)

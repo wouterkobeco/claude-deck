@@ -466,7 +466,19 @@ compaction shows there too — that part never refuses, since it only ever adds
 one more hook entry. This is the only thing here that
 writes to a machine other than yours, which is why it is a command you run
 rather than anything the daemon does — and why it is deliberately not part of
-`npm install`. Pressing a remote key works like pressing a local one: the first
+`npm install`.
+
+**`npm start` also checks every currently open remote host for you**, so you
+don't have to remember to run the command above for a new one. It probes each
+host you have a Remote-SSH window open on (in parallel, with a short timeout —
+a host that's asleep, like a home-automation Pi often is, is skipped rather
+than making every launch wait on it) and offers to install whatever's missing,
+same yes/no prompt as the other install steps. A host already fully set up, or
+one with its own status line it already refused to touch, says nothing —
+this runs on every launch, and repeating what a one-time `remote:install`
+already told you would be exactly the noise a prestart must not become.
+
+Pressing a remote key works like pressing a local one: the first
 press raises that VS Code window and reveals the session's own terminal in it,
 the second opens the detail board. The raise goes through the `code` CLI rather
 than `open`, because a remote window's documents are `vscode-remote://` URIs.

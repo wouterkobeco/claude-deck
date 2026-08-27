@@ -148,3 +148,57 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   result back — one copy of the merge logic instead of a second one
   hand-rolled in jq, and the write-back already needs the round trip either
   way.
+
+## `npm start` checks remote hosts too (`remote-prestart.mjs`)
+
+- **`remote-install.mjs` is split into probe and apply, one pair per feature**
+  (`probeCompactHook`/`applyCompactHook`, `probeStatusLine`/`applyStatusLine`),
+  so both the manual `npm run remote:install -- <host>` command and
+  `scripts/remote-prestart.mjs` call the *same* functions instead of the
+  prestart re-deriving what the CLI already knew how to decide. The split
+  exists because the two callers need the decision and the write at different
+  times: the CLI does both back to back with no question asked (running the
+  command *is* the consent), while the prestart has to probe several hosts up
+  front, then ask — one at a time, since a terminal can't take two answers at
+  once — only for the ones that need something.
+- **Probing has to be fast and forgiving, in a way the CLI's own probe never
+  had to be.** `npm start` runs on every launch, and this project's own
+  remote host is home-automation gear that's routinely off — a 30s ssh
+  timeout on the critical path of *every* startup would make the daemon learn
+  to dread its own remote host. `PROBE_TIMEOUT_MS` (5s) overrides the CLI's
+  default per call, and every host is probed with `Promise.all` rather than
+  in sequence: an unreachable host must not delay a reachable one, and this
+  whole phase is read-only, so there is nothing that needs serialising.
+  Anything that fails the probe — timeout, refused connection, an ssh error —
+  is caught into the same `"unreachable"` shape actions never match, so it
+  falls through every branch silently, the same as an unreachable host reads
+  everywhere else in this project (grey, not red).
+- **The two features' `"leave alone"` outcomes are not the same shape, on
+  purpose.** The compaction hooks have exactly one: `"ok"` (already wired).
+  The status line has three — `"has-script"`, `"has-key"`, `"ok"` — because
+  the CLI needs to say *which* thing it found to refuse accurately
+  (`~/.claude/statusline-command.sh already has content` vs `settings.json
+  already sets statusLine`), where the prestart doesn't care which and
+  folds all three into "nothing to offer." Collapsing them at the source
+  would have cost the CLI its accurate refusal message; keeping them apart
+  costs the prestart nothing, since it never branches on which one it got.
+- **The controlPath now carries the host, not just the pid.** The original,
+  single-host script hardcoded `streamdeck-install-<pid>` because there was
+  only ever one host per process. Probing several hosts from one process at
+  once meant two different hosts' control masters could bind the same
+  socket — `ssh(host, …)` now builds `streamdeck-install-<pid>-<host>`, one
+  socket per host per process, the same reason the daemon's own fetch uses
+  ssh's `%h` for a shared argv reused across hosts (this doesn't: the host is
+  already known in JS at call time, so it's substituted directly rather than
+  left for ssh to fill in).
+- **No new persisted file.** Every `npm start` re-probes every open remote
+  host from scratch — a deliberate choice over caching a verdict, since the
+  common case (already installed) answers in one fast round trip over a warm
+  connection, and a cache would mean a host that later lost its hooks (a
+  `settings.json` reset, say) silently stops being offered them again.
+- Verified end to end against this project's own Pi: hooks removed, probed
+  (correctly detected and, non-interactively, printed the manual command
+  rather than guessing), reinstalled with `--yes`, diffed byte-for-byte
+  against a backup taken before the test to confirm nothing else in
+  `settings.json` moved, then re-probed once more to confirm silence once
+  everything is already in place.

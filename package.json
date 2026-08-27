@@ -7,7 +7,7 @@
     "doc": "docs"
   },
   "scripts": {
-    "prestart": "node scripts/ext-prompt.mjs && node scripts/statusline-prompt.mjs && node scripts/compact-hook-prestart.mjs",
+    "prestart": "node scripts/ext-prompt.mjs && node scripts/statusline-prompt.mjs && node scripts/compact-hook-prestart.mjs && node scripts/remote-prestart.mjs",
     "start": "node src/index.mjs",
     "render-check": "node scripts/render-check.mjs",
     "slots-check": "node scripts/slots-check.mjs",
@@ -29,6 +29,7 @@
     "compact-hook:install": "node scripts/compact-hook-prestart.mjs --yes",
     "compact-hook-check": "node scripts/compact-hook-check.mjs",
     "remote:install": "node scripts/remote-install.mjs",
+    "remote-prestart": "node scripts/remote-prestart.mjs",
     "remote-install-check": "node scripts/remote-install-check.mjs",
     "config-check": "node scripts/config-check.mjs",
     "history-check": "node scripts/history-check.mjs",
