@@ -47,6 +47,22 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   fetches nothing and touches no credential. Both files are another tool's
   format: any failure reads as "cswap isn't installed" and yields `[]`, which
   the stats board draws as empty keys and the activity page as no block at all.
+  **A cached window whose `resets_at` has passed reads unknown, not its old
+  percentage** — cswap refreshes only when it runs, so an inactive account's
+  numbers can sit for weeks past their own reset (a real 84%-vs-10% week came
+  from exactly that), and the daemon holds no credential to fetch the truth;
+  a window with no `resets_at` can't be judged and is kept.
+  **The daemon also keeps that cache from rotting**: when the newest
+  `fetchedAt` is over an hour old or a cached window has already reset
+  (`needsRefresh`), it fires `cswap list` — fire-and-forget with an in-flight
+  guard and a 10-minute cooldown after *any* attempt, because that command
+  asks the 429-happy usage endpoint once per account. This is deliberate
+  dependence, not independence: the alternative — the daemon holding the
+  inactive accounts' tokens itself — was rejected because refresh-token
+  rotation behind cswap's back can invalidate the credential cswap restores
+  on the next switch. Credentials stay in exactly one tool; a missing `cswap`
+  binary just fails into the cooldown, and a machine without cswap never gets
+  here (`needsRefresh` is false with no parsed cache).
 - `src/history.mjs` — where the time goes: an append-only log of every session
   state change, and the per-project totals read back out of it. The daemon has
   watched every session's state every 2s since it was written and persisted

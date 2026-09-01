@@ -99,7 +99,10 @@ on each line. These summaries are reminders, not the rule itself.
 - **Overlay boards null `btn.renderParams`**, so `pulse()` finds nothing stale
   to redraw when it resumes. (board.md)
 - **Read-only**: the daemon itself writes only its own files into `~/.claude/`
-  and never edits Claude Code's data on a poll. Two things outside the daemon
+  and never edits Claude Code's data on a poll. One sanctioned exception by
+  proxy: it runs `cswap list` (hourly at most, cooled down) so cswap refreshes
+  its *own* usage cache with its *own* credentials — the daemon still holds
+  one credential and writes nothing of another tool's. (usage-stats.md) Two things outside the daemon
   do touch `settings.json`, both additive, both offered — never run — at
   `npm start`: the status line install and the PreCompact/PostCompact
   compaction hooks. `npm start` offers both for every currently open remote
