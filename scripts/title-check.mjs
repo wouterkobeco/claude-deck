@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { compactingNow, readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
+import { compactingNow, contextPercent, readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-title-check-"));
 const path = join(dir, "transcript.jsonl");
@@ -43,6 +43,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   pendingTool: null,
   model: null,
   effort: null,
+  contextEstimate: null,
   compactRequestedAt: null,
 });
 
@@ -55,6 +56,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
   pendingTool: null,
   model: null,
   effort: null,
+  contextEstimate: null,
   compactRequestedAt: null,
 });
 
@@ -68,6 +70,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   pendingTool: null,
   model: null,
   effort: null,
+  contextEstimate: null,
   compactRequestedAt: null,
 });
 
@@ -80,6 +83,7 @@ assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   pendingTool: null,
   model: null,
   effort: null,
+  contextEstimate: null,
   compactRequestedAt: null,
 });
 // A session that's open but has never been typed into. Claude Code writes
@@ -258,6 +262,7 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
   pendingTool: null,
   model: "claude-opus-5",
   effort: "high",
+  contextEstimate: null,
   compactRequestedAt: null,
 });
 
@@ -271,6 +276,7 @@ assert.deepEqual(await signals([userTurnLine]), {
   pendingTool: null,
   model: null,
   effort: null,
+  contextEstimate: null,
   compactRequestedAt: null,
 });
 // Compaction start marker: a manual /compact writes its command line the
@@ -328,6 +334,24 @@ assert.equal(afterInterrupt.model, "claude-opus-5", "<synthetic> is not a model"
 assert.equal(afterInterrupt.effort, "high");
 assert.equal((await signals([synthetic])).model, null, "nothing but synthetic reports no model");
 console.log("OK: synthetic model lines skipped");
+
+// contextEstimate: the gauge's fallback for a session no status line writes a
+// ctx file for. It rides the same newest-assistant line as the model, because
+// the window it is measured against depends on which model that is.
+const usageLine = (model, usage) => JSON.stringify({ type: "assistant", message: { model, usage } });
+const OPUS_USAGE = { input_tokens: 100, cache_read_input_tokens: 76_000, cache_creation_input_tokens: 618 };
+assert.equal((await signals([usageLine("claude-opus-5", OPUS_USAGE)])).contextEstimate, 8, "cache_read is context, not a discount on it");
+assert.equal((await signals([usageLine("claude-opus-5", OPUS_USAGE), synthetic])).contextEstimate, 8, "read past an interrupt, same as the model");
+assert.equal((await signals([usageLine("claude-opus-5", OPUS_USAGE), usageLine("claude-opus-5", { input_tokens: 400_000 })])).contextEstimate, 40, "the newest turn is the current context");
+
+// A model whose window isn't in the table gets no gauge: a wrong bar is worse
+// than none, and the ctx file (when there is one) is the authority anyway.
+assert.equal(contextPercent(OPUS_USAGE, "claude-3-5-sonnet"), null, "unknown window, no guess");
+assert.equal(contextPercent(OPUS_USAGE, "claude-opus-5-20260101"), 8, "a dated model id is the same model");
+assert.equal(contextPercent(null, "claude-opus-5"), null, "a line with no usage says nothing");
+assert.equal(contextPercent({ input_tokens: 0 }, "claude-opus-5"), null, "an empty turn is not 0% context");
+assert.equal(contextPercent({ input_tokens: 2_000_000 }, "claude-opus-5"), 100, "never past full");
+console.log("OK: contextEstimate falls back to the transcript's own usage");
 
 // compactingNow: the marker (compact-hook.mjs's PreCompact/PostCompact side
 // channel) is exact and doesn't need `busy` — it brackets a compaction

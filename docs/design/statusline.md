@@ -15,13 +15,34 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   `~/.claude/statusline-command.sh` writes it to
   `~/.claude/ctx/<session id>.json` for the daemon to read. That block is
   quoted in `README.md`. If a machine has no status line, or the block is
-  dropped, the gauge simply doesn't draw — never make a missing file an error.
-  Don't be tempted by the transcript's `usage` totals instead: the percentage
-  needs the model's window size (1M on some, 200k on others), which the
-  transcript doesn't record.
+  dropped, the gauge falls back to the transcript and is never an error.
+- **The transcript is the fallback, the ctx file is the authority.** An
+  assistant line's `message.usage` describes the whole prompt behind it, so
+  `cache_read + cache_creation + input` is the context in the window at that
+  moment — `contextPercent` in `sessions.mjs` divides it by the window for the
+  model on that same line, and reproduces Claude Code's own percentage exactly,
+  rounding included, against the ctx files on this machine. That is a change of
+  fact, not of taste: this doc used to say the transcript can't answer this
+  because it doesn't record the window size. It doesn't — but it records the
+  *model*, and a window can be measured (prompt size ÷ the status line's own
+  percentage, over dozens of live sessions) rather than guessed. So
+  `CONTEXT_WINDOWS` holds only measured models and a model outside it draws no
+  gauge at all; a bar reading 40% on a session at 8% is worse than no bar.
+  (claude-deck, which is where the idea came from, ships a guessed table —
+  its `claude-fable-5: 200_000` measures 1M here across 21 sessions.) Measured
+  means measured: opus-5 (n=273), sonnet-5 (n=72) and fable-5 (n=21) are in the
+  table because every ctx file on this machine was divided into its transcript's
+  prompt size; `claude-opus-4-7` and `claude-sonnet-4-6` appear in transcripts
+  here and are still absent, because no ctx file survives for either. Adding one
+  is a measurement, never a name you reasoned about — Claude Code's own
+  changelog carries a fixed bug where it offered a 1M upgrade to a model that
+  already had a 1M window. The status line still wins
+  wherever it is installed: it is measured against the window Claude Code
+  actually has, so it survives a model we have never seen and a 1M beta flag
+  flipping under a model we have.
   **It was the one part of setup that could only be done by hand**, and its
   failure mode is silence: no ctx file looks exactly like a healthy machine
-  mid-first-turn. `scripts/statusline-prompt.mjs` is the second `prestart`,
+  mid-first-turn — which is what the fallback above softens, not removes. `scripts/statusline-prompt.mjs` is the second `prestart`,
   beside `ext-prompt.mjs` and with the same contract — silent when there is
   nothing to do, one line when there is nobody to ask, every path exits 0.
   **The decision is pure and lives in `src/statusline.mjs`** (`decide`,

@@ -1,12 +1,13 @@
 # Claude Deck
 
-Your running Claude Code sessions, on a Stream Deck MK.2. One key per session,
-coloured by what that session is doing right now; press a key to jump to its
-VS Code window.
+Your running Claude Code sessions, on a Stream Deck MK.2 **and in any
+browser** — desktop, phone or iPad. One key per session, coloured by what that
+session is doing right now; press a key to jump to its VS Code window.
 
-The same board is also a web page on your LAN — scan the QR `npm start` prints
-and it's on your phone or iPad, with a layout you can set and no fifteen-key
-limit. See [the same board, on a phone or an iPad](#the-same-board-on-a-phone-or-an-ipad).
+**No Stream Deck needed.** The same board is a web page the daemon serves on
+your LAN: scan the QR `npm start` prints and it's on your phone or iPad, with a
+layout you can set, no fifteen-key limit, and the same press-to-focus. See
+[the same board, on a phone or an iPad](#the-same-board-on-a-phone-or-an-ipad).
 
 ![The sessions board](docs/img/board-sessions.png)
 
@@ -345,9 +346,12 @@ and nothing else. Everything this project prints still comes through, errors
 included — the one thing it hides is npm's own reporting, so if an install
 looks wrong, run `npm install --loglevel=warn` to see why.
 
-That's everything. The context gauge needs one block in your status line —
-Claude Code reports a session's context percentage there and nowhere else — and
-`npm start` checks for it and offers to add it, defaulting to yes. It writes a
+That's everything. The context gauge reads best from one block in your status
+line — Claude Code reports a session's context percentage there, measured
+against the window it really has — and `npm start` checks for it and offers to
+add it, defaulting to yes. Without it the gauge still draws, estimated from the
+transcript's own token usage, for the models whose context window this project
+has measured; a model it hasn't gets no gauge rather than a wrong one. It writes a
 whole status line if you have none, inserts the block after `input=$(cat)` if
 you do (keeping a `.bak`), and describes the block instead of touching anything
 if your status line is something it can't reason about. `npm run
@@ -429,17 +433,17 @@ All read-only, all maintained by Claude Code itself:
 |---|---|
 | `~/.claude/sessions/<pid>.json` | session id, cwd, name, **status**, liveness (pid) |
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
-| `~/.claude/projects/<cwd>/<id>.jsonl` | the session title VS Code's terminal list shows, plus its model and reasoning effort |
+| `~/.claude/projects/<cwd>/<id>.jsonl` | the session title VS Code's terminal list shows, plus its model, reasoning effort, and the context gauge when no status line writes the file below |
 | `~/.claude/tasks/<id>/*.json` | one file per task → `done/total` on the board, the full list on the detail board |
 | `<repo>/.superpowers/sdd/<plan>/` | fallback for a session whose tasks Claude Code isn't tracking: superpowers' SDD ledger, read only when the above is empty and only for a local session |
-| `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above |
+| `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above — exact, and the authority wherever it exists |
 | `~/.claude/streamdeck-compact/<id>.json` | *written*, not read from Claude Code's own state: a session's compaction start time, from the PreCompact/PostCompact hooks above — the only way to catch an auto-triggered compaction while it's running |
 | `api.anthropic.com/api/oauth/usage` | session / weekly rate-limit % — the only outbound call, authenticated with the CLI's own keychain token |
 | `~/.claude/stats-cache.json` | all-time totals, for the stats board |
 | `sysctl kern.memorystatus_level vm.swapusage` | this machine's RAM pressure and swap use, for the memory key, the status key's alert, and the activity page's pressure-over-time chart (sampled every 5 minutes into the history log); a Remote-SSH host's `/proc/meminfo` rides the existing fetch and gets the same key, alert and chart |
 | `~/.claude-swap-backup/{sequence.json,cache/usage.json}` | every claude-swap account's 5h / 7d usage and resets, if cswap is installed — nothing is fetched |
 | `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
-| `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks and subagents, everything above except the context gauge |
+| `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks, subagents and the estimated context gauge; `ssh <host> ~/.claude/ctx/<id>.json` is fetched too, and wins when that host has the status line block |
 | `ssh <host> ~/.claude.json` | that host's signed-in account, for a remote session's detail panel — fetched only when you open that panel, not on the regular poll |
 | `~/.claude-deck-sessions/*.tgz` | *written and read* by the two session-transfer commands only — never by the daemon, never on a poll. Owner-only: a bundle is a verbatim copy of everything a session saw |
 
@@ -449,9 +453,9 @@ nothing to focus.
 A VS Code window opened through Remote-SSH runs `claude` on the remote host, so
 its registry, IDE lock and transcripts live in *that* machine's `~/.claude/`,
 fetched over `ssh` rather than read from disk. Its key shows everything a local
-key does, context gauge included — but the gauge needs the status line block
-above on **that** machine, because the percentage exists nowhere else. Install
-it with:
+key does, context gauge included — estimated from the transcript that's fetched
+anyway, and exact if the status line block above is installed on **that**
+machine. Install it with:
 
 ```
 npm run remote:install -- <host>

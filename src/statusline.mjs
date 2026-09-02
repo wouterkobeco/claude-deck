@@ -1,10 +1,13 @@
 // The one thing this project asks you to install by hand: the status line block
 // that feeds the context gauge.
 //
-// Claude Code hands a session's context percentage to the status line and
-// nowhere else, so `~/.claude/ctx/<id>.json` is a side channel the status line
-// writes for the daemon to read. Everything else here degrades to nothing on
-// its own; this needs a file the daemon is not allowed to own.
+// Claude Code hands a session's context percentage to the status line, so
+// `~/.claude/ctx/<id>.json` is a side channel the status line writes for the
+// daemon to read. Without it the gauge falls back to the transcript's own last
+// `usage` (`contextPercent` in sessions.mjs) — but only for models whose window
+// has been measured, where this number is measured against the window Claude
+// Code actually has. Installing it is what makes the gauge exact, and what
+// makes it appear at all on a model we have never seen.
 //
 // What lives here is the block, and the *decision* about what a machine needs —
 // pure, so `statusline-check` can drive it against fixtures. The two things

@@ -256,6 +256,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       promptResolved = false;
     let model = null,
       effort = null,
+      contextEstimate = null,
       modelResolved = false;
 
     // `compactRequestedAt` — the timestamp of the newest `type:"user"` line
@@ -388,6 +389,9 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
         if (o.message?.model && o.message.model !== "<synthetic>") {
           model = o.message.model;
           effort = o.effort ?? null;
+          // That same line carries the usage the context gauge falls back to
+          // when no status line wrote a ctx file. Same scan, no extra read.
+          contextEstimate = contextPercent(o.message.usage, model);
           modelResolved = true;
         }
       }
@@ -409,6 +413,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       pendingTool,
       model,
       effort,
+      contextEstimate,
       compactRequestedAt,
     };
   } catch {
@@ -421,6 +426,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       pendingTool: null,
       model: null,
       effort: null,
+      contextEstimate: null,
       compactRequestedAt: null,
     };
   }
@@ -595,13 +601,59 @@ export function taskWindow(tasks, size) {
 }
 
 /**
+ * Context windows, by model id with any trailing `-YYYYMMDD` stripped.
+ *
+ * Only models whose window has been *measured* are in here, and the measurement
+ * is one division: a transcript's prompt size ÷ the percentage Claude Code's own
+ * status line reported for the same session, over every ctx file on this machine
+ * (n is that count). A model that isn't listed gets no gauge rather than a
+ * guessed one — this feeds a fallback, and a bar reading 40% on a session at 8%
+ * is worse than no bar. Claude Code's own changelog has a fixed bug about
+ * offering a 1M upgrade to a model that already had one, so "which Opus is 1M"
+ * is not a thing to reason about from a name.
+ *
+ * A model here can only be added by measuring it: run a session on it with the
+ * status line block installed, then divide. `claude-opus-4-7` and
+ * `claude-sonnet-4-6` are in this machine's transcripts and deliberately absent
+ * here — no ctx file survives for either, so neither has been measured.
+ * (claude-deck, where this fallback came from, ships a guessed table instead;
+ * its `claude-fable-5: 200_000` measures 1M here across 21 sessions.)
+ */
+const CONTEXT_WINDOWS = new Map([
+  ["claude-opus-5", 1_000_000], // n=273, 1002k median
+  ["claude-sonnet-5", 1_000_000], // n=72, 999k median
+  ["claude-fable-5", 1_000_000], // n=21, 1023k median
+]);
+
+/**
+ * Context percentage from one assistant turn's `message.usage`, or null.
+ *
+ * Every assistant line's usage describes the whole prompt that produced it, so
+ * `cache_read + cache_creation + input` *is* the context in the window at that
+ * moment — the cached parts are the conversation, not a discount on it. Against
+ * the ctx files on this machine this reproduces Claude Code's own percentage
+ * exactly, rounding included, on every session checked.
+ *
+ * Null for a model whose window isn't known, and for a line with no usage.
+ */
+export function contextPercent(usage, model) {
+  if (!usage || !model) return null;
+  const window = CONTEXT_WINDOWS.get(model.replace(/-\d{8}$/, ""));
+  if (!window) return null;
+  const used =
+    (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+  return used > 0 ? Math.min(100, Math.round((used / window) * 100)) : null;
+}
+
+/**
  * Context usage for a session, as a percentage of that model's window.
  *
- * Claude Code keeps this number to itself — it isn't in the registry or the
- * transcript — but it hands it to the status line on every render, so
- * ~/.claude/statusline-command.sh drops it here for us. Returns null when the
- * status line hasn't written for this session (or isn't installed), which
- * simply leaves the gauge off that key.
+ * Claude Code hands this number to the status line on every render, so
+ * ~/.claude/statusline-command.sh drops it here for us — and that file is the
+ * authority, because it is measured against the window Claude Code actually
+ * has rather than the table above. Returns null when the status line hasn't
+ * written for this session (or isn't installed); `contextPercent` is what the
+ * caller falls back to then.
  *
  * A stale file is fine: context can't change while a session sits idle, and an
  * active session rewrites this on every render.
@@ -797,10 +849,11 @@ async function sessionsFrom(source) {
 
   const enriched = await Promise.all(
     matched.map(async (s) => {
-      const { blockedOnDenial, pendingTool, compactRequestedAt, ...signals } = await readTranscriptSignals(
-        transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root),
-        source.tail
-      );
+      const { blockedOnDenial, pendingTool, compactRequestedAt, contextEstimate, ...signals } =
+        await readTranscriptSignals(
+          transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root),
+          source.tail
+        );
       // A manual /compact writes its command line the moment it starts, then
       // nothing until the finished boundary — so "newest user line is
       // /compact" IS the compaction, observed directly. Requiring busy is
@@ -826,7 +879,10 @@ async function sessionsFrom(source) {
         // `source.host && null`: a remote session's cwd is a path on the other
         // machine, and only ~/.claude is fetched from it.
         progress: await readTaskProgress(s.session_id, source.root, source.host ? null : s.cwd),
-        context: await readContext(s.session_id, source.root),
+        // The ctx file first — it knows the real window size. Without one (no
+        // status line installed, here or on a remote host) the transcript's own
+        // last usage carries the gauge, for the models whose window is known.
+        context: (await readContext(s.session_id, source.root)) ?? contextEstimate,
       };
     })
   );

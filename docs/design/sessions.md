@@ -23,7 +23,11 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   code (an ssh-backed source can throw where a local read only fails), so
   `getLiveSessions` itself wraps each source's `sessionsFrom` call so one bad
   host drops only its own keys rather than the whole board. `readTranscriptSignals` reads `aiTitle` and two
-  more things from that same tail scan — see the two invariants below.
+  more things from that same tail scan — see the two invariants below. Context
+  usage prefers the ctx file the status line writes and falls back to
+  `contextPercent` over the newest assistant line's own `usage`, which the same
+  scan already has in hand because the window depends on the model on that line;
+  the table of windows and why it holds only measured ones is in statusline.md.
 - **Nothing in a transcript line may be matched as a raw substring.** A
   transcript stores tool results verbatim, so a session that greps this repo or
   prints another transcript writes `<command-name>/clear</command-name>`,

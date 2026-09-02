@@ -151,7 +151,9 @@ on each line. These summaries are reminders, not the rule itself.
   (web.md, statusline.md)
 - **One install step, in the status line**, feeds the context gauge — a
   missing ctx file is never an error, and neither is a window without the
-  extension. (statusline.md, vscode.md)
+  extension. Without it the gauge falls back to the transcript's own last
+  `usage` over a table of *measured* context windows; a model outside that
+  table draws no gauge rather than a guessed one. (statusline.md, vscode.md)
 - **The extension rides `npm install`; the window reload is manual and
   named** — its version bumps with the daemon's, enforced by
   `terminal-focus-check`. (vscode.md)
