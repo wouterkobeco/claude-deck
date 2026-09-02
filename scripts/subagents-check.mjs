@@ -3,7 +3,7 @@
 // and how they're retired when one is interrupted and never writes an ending.
 // Run: node scripts/subagents-check.mjs
 import assert from "node:assert/strict";
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentCwds, readRunningSubagents } from "../src/sessions.mjs";
@@ -89,6 +89,55 @@ assert.deepEqual(agentCwds({ session_id: "s-3", cwd: "/repo" }, agents), [], "a 
 assert.deepEqual(agentCwds(parent, []), ["/repo/.claude/worktrees/wt"], "remembered across a gap with nothing running");
 assert.deepEqual(agentCwds({ session_id: "s-9", cwd: "/repo" }, []), [], "and never invented for a session that has never run one");
 console.log("OK: only an agent this session spawned answers for it");
+
+// The signal that replaced end_turn. A background subagent doesn't end its
+// turn, it stops and stays resumable — so Claude Code writes the ending in the
+// *parent's* transcript instead, and the agent's own may never carry one.
+{
+  const dir2 = await mkdtemp(join(tmpdir(), "streamdeck-subagents-stops-"));
+  const parentPath = join(dir2, "parent.jsonl");
+  const subs = join(dir2, "subagents");
+  await mkdir(subs, { recursive: true });
+  await writeFile(join(subs, "agent-stopped.jsonl"), line("tool_use") + "\n");
+  const notification = (id, at, status = "completed") =>
+    JSON.stringify({
+      type: "user",
+      timestamp: at,
+      message: {
+        role: "user",
+        content: `<task-notification>\n<task-id>${id}</task-id>\n<status>${status}</status>\n<summary>Agent finished</summary>\n`,
+      },
+    });
+  const stops = (lines) => writeFile(parentPath, lines.join("\n") + "\n");
+  const runningNow = async () => (await readRunningSubagents(subs, undefined, parentPath)).map((a) => a.id);
+
+  // The ordinary case since background agents became the default: an agent
+  // that finished having never written end_turn.
+  await stops([notification("stopped", new Date(Date.now() + 3000).toISOString())]);
+  assert.deepEqual(await runningNow(), [], "a notified stop retires an agent its own transcript never ended");
+
+  // Resumed — it has written since it was last notified, which the
+  // notification itself warns about: "the same task-id may notify more than
+  // once".
+  await stops([notification("stopped", new Date(Date.now() - 60_000).toISOString())]);
+  assert.deepEqual(await runningNow(), ["stopped"], "an agent that has written since its notification is running again");
+
+  // An agent quoting a notification back is not a notification: it arrives as
+  // a content array, which is the trap a raw substring falls into.
+  await stops([
+    JSON.stringify({
+      type: "user",
+      timestamp: new Date(Date.now() + 3000).toISOString(),
+      message: { role: "user", content: [{ type: "tool_result", content: "<task-notification>\n<task-id>stopped</task-id>\n" }] },
+    }),
+  ]);
+  assert.deepEqual(await runningNow(), ["stopped"], "a quoted notification does not retire an agent");
+
+  // No parent transcript reachable: the old rules still stand on their own.
+  assert.deepEqual((await readRunningSubagents(subs)).map((a) => a.id), ["stopped"], "without one, nothing changes");
+  await rm(dir2, { recursive: true, force: true });
+  console.log("OK: a stopped agent is retired by its parent's notification");
+}
 
 await rm(dir, { recursive: true, force: true });
 console.log("OK: running subagents");

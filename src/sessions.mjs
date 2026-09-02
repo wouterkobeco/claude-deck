@@ -440,6 +440,59 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
 }
 
 /**
+ * When each of a session's agents last *stopped*, by agent id, from the
+ * `<task-notification>` its parent records.
+ *
+ * The reason this exists: `stop_reason: "end_turn"` has largely stopped being
+ * written. Measured over the 1528 subagent transcripts on this machine, the
+ * share of agents that never write one goes 2% at Claude Code 2.1.228, 13% at
+ * 2.1.238, then 73% at 2.1.243 and 68–93% after — which is where background
+ * subagents became the default, and a background agent doesn't end a turn, it
+ * *stops* and stays resumable. So the old rule left a finished agent showing
+ * as running until `SUBAGENT_IDLE_MAX_S` retired it ten minutes later, with
+ * the parent's key painted busy by `mostUrgent` for all of it. Caught in the
+ * act: an agent that wrote its last line at 16:49 was still on the board at
+ * 16:58.
+ *
+ * The notification is exact and it is complete: of the 60 most recent agents
+ * here, 60 have one (58 `completed`, 2 `failed`), including all 44 that never
+ * wrote `end_turn`. Status is not read — the notification fires *because* the
+ * agent stopped, and both statuses mean the same thing to a marker.
+ *
+ * A stop time is compared against the agent transcript's mtime rather than
+ * trusted outright, because the notification says so itself: "the same task-id
+ * may notify more than once" — a resumed agent writes again, and a file newer
+ * than its last notification is an agent that is running again.
+ *
+ * `<task-notification>` is a *pre-filter* on the raw line and nothing more:
+ * the content is then taken from this line's own parsed JSON, and only when it
+ * is a string that starts with the tag. An agent quoting a notification back
+ * (they do — that is how one reports what it was told) arrives as a content
+ * array, not a string.
+ */
+async function readAgentStops(parentPath, tail) {
+  const stops = new Map();
+  if (!parentPath) return stops;
+  const { lines } = await tail(parentPath).catch(() => ({ lines: [] }));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes("<task-notification>")) continue;
+    let o;
+    try {
+      o = JSON.parse(lines[i]);
+    } catch {
+      continue; // truncated line at the start of the tail slice
+    }
+    const content = o?.message?.content;
+    if (o.type !== "user" || typeof content !== "string" || !content.startsWith("<task-notification>")) continue;
+    const id = /<task-id>([^<]+)<\/task-id>/.exec(content)?.[1];
+    const at = Date.parse(o.timestamp);
+    // Scanning backwards, so the first sighting of an id is its newest.
+    if (id && Number.isFinite(at) && !stops.has(id)) stops.set(id, at);
+  }
+  return stops;
+}
+
+/**
  * The subagents a session has running right now.
  *
  * An Agent-tool subagent — the thing behind "Waiting for 1 background agent to
@@ -459,13 +512,18 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
  * Takes the directory rather than a session so the check can point it at a
  * fixture. Every read is try/catch-skipped, same as everything else here.
  */
-export async function readRunningSubagents(dir, tail = tailLines) {
+export async function readRunningSubagents(dir, tail = tailLines, parentPath = null) {
   let names;
   try {
     names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl"));
   } catch {
     return []; // no subagents dir — this session has never spawned one
   }
+  if (!names.length) return [];
+
+  // One extra tail read, and only for a session that has agents on disk at
+  // all — the poll pays for it exactly where it buys something.
+  const stopped = await readAgentStops(parentPath, tail);
 
   const running = [];
   for (const name of names) {
@@ -501,6 +559,10 @@ export async function readRunningSubagents(dir, tail = tailLines) {
         // truncated line at the start of the tail slice — keep scanning
       }
     }
+    // Stopped, said so in the parent, and has written nothing since. This is
+    // the exact signal; `end_turn` below is what is left when the tail didn't
+    // reach the notification.
+    if (stopped.get(name.replace(/^agent-|\.jsonl$/g, "")) >= mtimeMs) continue;
     if (stopReason === "end_turn") continue;
 
     let description = null;
@@ -954,7 +1016,11 @@ async function sessionsFrom(source) {
     await Promise.all(
       matched.map(async (s) =>
         (
-          await readRunningSubagents(join(projectDirFor(s.cwd, source.root), s.session_id, "subagents"), source.tail)
+          await readRunningSubagents(
+            join(projectDirFor(s.cwd, source.root), s.session_id, "subagents"),
+            source.tail,
+            transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root)
+          )
         ).map((a) => ({
           ...s,
           session_id: a.id,

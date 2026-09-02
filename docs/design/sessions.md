@@ -204,15 +204,37 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   with a sibling `.meta.json` (the Agent call's own `description`), and
   `readRunningSubagents` synthesises one nested pseudo-session per *running*
   one — no registry entry, so no `state` either: a running agent is busy by
-  definition, and its parent's folder is its folder. Running is the newest
-  `stop_reason` in that transcript, which is exact rather than a guess:
-  "tool_use" is an agent waiting on a tool, "end_turn" is one that has handed
-  its result back and will write nothing more. Two cases never write an
-  ending — an agent spawned seconds ago and an agent interrupted mid-tool —
-  and both are settled by mtime: no ending plus a fresh file is running,
-  `SUBAGENT_IDLE_MAX_S` (10 min) quiet retires it. Don't reach for the parent
-  transcript's `tool_result` instead: a backgrounded agent's result lands the
-  moment it's *spawned*, so it says nothing about whether it's done.
+  definition, and its parent's folder is its folder. Running is decided by
+  `readAgentStops` first and `stop_reason` second, and the order matters:
+  **`end_turn` has largely stopped being written.** Measured over the 1528
+  subagent transcripts here, the share of agents that never write one runs 2%
+  at Claude Code 2.1.228 and 13% at 2.1.238, then jumps to 73% at 2.1.243 and
+  68–93% after — which is where background subagents became the default, and a
+  background agent doesn't end a turn, it *stops* and stays resumable. The old
+  rule therefore left a finished agent on its parent's key until
+  `SUBAGENT_IDLE_MAX_S` retired it ten minutes later, `mostUrgent` painting
+  that key busy for all of it. Caught in the act: an agent whose last line was
+  written at 16:49 was still on the board at 16:58, and the same transcript
+  replayed against both rules is retired by the new one and not the old.
+
+  **What replaced it is the `<task-notification>` the parent records** when an
+  agent stops — exact, and complete where `end_turn` isn't: of the 60 most
+  recent agents here, 60 have one (58 `completed`, 2 `failed`), including all
+  44 that never wrote `end_turn`. The status isn't read: the notification
+  fires *because* the agent stopped, and both statuses mean the same thing to
+  a marker. The stop time is compared against the agent transcript's mtime
+  rather than trusted outright, because the notification says so itself — "the
+  same task-id may notify more than once" — so a file newer than its last
+  notification is an agent that has been resumed. `end_turn` and the mtime cap
+  stay underneath, for a long result that pushes the notification out of the
+  64KB tail, an agent spawned seconds ago, and one interrupted mid-tool.
+
+  Still don't reach for the parent's `tool_result`: that is a different line,
+  and a backgrounded agent's lands the moment it is *spawned* — measured here
+  16 minutes before the agent stopped writing. The notification is a `user`
+  line whose content is a *string* starting with the tag; an agent quoting one
+  back arrives as a content array, which is why the tag is a pre-filter and
+  the parsed line is what decides.
 
   `assignSlots`
   keeps nested ones off the board's slots; they attach to a key as a small
