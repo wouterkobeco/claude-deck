@@ -522,7 +522,13 @@ const detail = {
     { n: 2, subject: "write it", status: "in_progress" },
     { n: 3, subject: "check it", status: "pending" },
   ],
-  nested: [{ id: "n-1", state: "busy", label: "code-reviewer" }],
+  nested: [
+    { id: "n-1", state: "busy", label: "code-reviewer" },
+    // An SDK session walking a plan of its own. This row is the only place on
+    // the board it appears, so the count has to be here — and its subject is
+    // another tool's file, escaped like everything else.
+    { id: "n-2", state: "busy", label: "client-rounds-a", progress: { done: 6, total: 9, active: "<b>Task 6" } },
+  ],
 };
 const boardSrv = await createConfigServer({
   projects,
@@ -593,7 +599,10 @@ eq(panel.includes("javascript:alert"), false, "an accent that is not a hex never
 eq(panel.split('class="task ').length - 1, 3, "every task is listed, not a window of them");
 eq(panel.includes("in_progress"), true, "and carries its status, so the running one reads as running");
 eq(panel.includes("1 of 3"), true, "with the count the deck's progress bar shows");
-eq(panel.split('class="agent"').length - 1, 1, "every subagent too");
+eq(panel.split('class="agent"').length - 1, 2, "every subagent too");
+eq(panel.includes("6/9 · busy"), true, "an SDK session's own task count rides its row — it has no key of its own to carry it");
+eq(panel.includes("<em>&lt;b&gt;Task 6</em>"), true, "and the task it is on, escaped like every other borrowed string");
+eq(panel.includes("<span class=\"st\">busy</span>"), true, "a subagent with no plan of its own still reads as it did");
 eq(panel.includes("pi:/home/pi/x"), true, "a remote session says which host it is on");
 eq(panel.includes("blocked on you"), true, "requires_action is spelled out where there is room for it");
 eq(panel.includes("<dt>Account</dt><dd>—</dd>"), true, "a remote session's account is honestly unknown, not guessed at");

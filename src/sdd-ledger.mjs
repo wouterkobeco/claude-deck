@@ -131,14 +131,30 @@ async function findWorkspace(cwd, now) {
 /**
  * The tasks a session's SDD ledger says it is working through, or `[]`.
  *
- * `cwd` is a **local** path. A remote session's cwd names a directory on the
- * other machine, and `remote-fs.mjs` fetches `~/.claude` and nothing else — so
- * callers pass null for those rather than reading a path that, here, is either
- * missing or somebody else's project. That is the one place this doesn't hold
- * to "the same code either way".
+ * `cwd` is a **local** path, or a list of them tried in order. A remote
+ * session's cwd names a directory on the other machine, and `remote-fs.mjs`
+ * fetches `~/.claude` and nothing else — so callers pass null for those rather
+ * than reading a path that, here, is either missing or somebody else's
+ * project. That is the one place this doesn't hold to "the same code either
+ * way".
+ *
+ * The list exists because `findWorkspace` only ever walks *up*: a controller
+ * running superpowers' SDD from a repo root has the plan a level down, inside
+ * the worktree, and its own cwd finds nothing. Its running subagent's cwd is
+ * where that plan is, and `sessions.mjs` passes it second — see the
+ * attribution note there for why a subagent's cwd may speak for its parent
+ * and a sibling session's may not.
  */
 export async function readLedgerTasks(cwd, now = Date.now()) {
-  if (!cwd) return [];
+  const candidates = (Array.isArray(cwd) ? cwd : [cwd]).filter(Boolean);
+  for (const candidate of candidates) {
+    const tasks = await ledgerTasksAt(candidate, now);
+    if (tasks.length) return tasks;
+  }
+  return [];
+}
+
+async function ledgerTasksAt(cwd, now) {
   try {
     const workspace = await findWorkspace(cwd, now);
     if (!workspace) return [];

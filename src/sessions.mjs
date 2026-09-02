@@ -2,7 +2,7 @@ import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readLedgerTasks } from "./sdd-ledger.mjs";
-import { ancestorChain } from "./terminal-focus.mjs";
+import { ancestorChain, psTable } from "./terminal-focus.mjs";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 const TAIL_BYTES = 65536;
@@ -251,6 +251,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
     let blockedOnDenial = false,
       denialResolved = false;
     let pendingTool = null,
+      stopReason = null,
       pendingResolved = false;
     let lastPrompt = null,
       promptResolved = false;
@@ -368,6 +369,10 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
           pendingResolved = true;
         } else if (typeIs("assistant")) {
           const o = parse();
+          // The newest turn's own ending, kept for a session whose registry
+          // entry carries no `status` — see `liveState`. Null when the newest
+          // line of either kind is a user line, which is its own answer there.
+          stopReason = o.message?.stop_reason ?? null;
           if (o.message?.stop_reason === "tool_use") {
             const call = (o.message.content ?? []).find(
               (b) => b?.type === "tool_use" && (b.name === "ExitPlanMode" || b.name === "AskUserQuestion")
@@ -411,6 +416,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       startedEmpty,
       blockedOnDenial,
       pendingTool,
+      stopReason,
       model,
       effort,
       contextEstimate,
@@ -424,6 +430,7 @@ export async function readTranscriptSignals(transcriptPath, tail = tailLines) {
       startedEmpty: false,
       blockedOnDenial: false,
       pendingTool: null,
+      stopReason: null,
       model: null,
       effort: null,
       contextEstimate: null,
@@ -476,13 +483,20 @@ export async function readRunningSubagents(dir, tail = tailLines) {
     // read takes the whole board down through sessionsFrom's Promise.all.
     const { lines } = await tail(path).catch(() => ({ lines: [] }));
     let stopReason = null;
-    for (let i = lines.length - 1; i >= 0 && stopReason === null; i--) {
+    // The agent's own working directory, which is not always its parent's: an
+    // SDD controller dispatches into the worktree its plan lives in, and that
+    // path is the only way the parent's key can find the ledger. Every line
+    // carries it, so the newest one that parses answers it.
+    let cwd = null;
+    for (let i = lines.length - 1; i >= 0 && (stopReason === null || cwd === null); i--) {
       // Parse before trusting: "stop_reason" appears inside tool results and
       // prose all the time, which is exactly the trap the /compact marker fell
       // into. Only this line's own message counts.
-      if (!lines[i].includes("stop_reason")) continue;
+      if (cwd !== null && !lines[i].includes("stop_reason")) continue;
       try {
-        stopReason = JSON.parse(lines[i]).message?.stop_reason ?? null;
+        const o = JSON.parse(lines[i]);
+        if (cwd === null && typeof o.cwd === "string") cwd = o.cwd;
+        if (stopReason === null) stopReason = o.message?.stop_reason ?? null;
       } catch {
         // truncated line at the start of the tail slice — keep scanning
       }
@@ -495,7 +509,7 @@ export async function readRunningSubagents(dir, tail = tailLines) {
     } catch {
       // no meta yet, or mid-write — the tile falls back to the agent id
     }
-    running.push({ id: name.replace(/^agent-|\.jsonl$/g, ""), description, ts: Math.floor(mtimeMs / 1000) });
+    running.push({ id: name.replace(/^agent-|\.jsonl$/g, ""), description, cwd, ts: Math.floor(mtimeMs / 1000) });
   }
   return running;
 }
@@ -573,6 +587,73 @@ export async function readTaskList(sessionId, root = CLAUDE_DIR, localCwd = null
     }
   }
   return tasks.length ? tasks : readLedgerTasks(localCwd);
+}
+
+/**
+ * Give every nested session with no recorded parent the live session that
+ * spawned it, found in its pid ancestry.
+ *
+ * Only when there is one to place, so a poll pays for the process table only
+ * when it buys something — on most machines this never runs at all. A remote
+ * source already carries the host's own table (`source.ppids`), which is the
+ * only one whose pids mean anything over there; a remote host that gave none
+ * simply keeps the old behaviour.
+ */
+async function attachSdkParents(matched, source) {
+  const orphans = matched.filter((s) => s.nested && !s.parent);
+  if (!orphans.length) return;
+  const ppids = source.ppids?.size ? source.ppids : source.host ? null : await psTable().catch(() => null);
+  if (!ppids?.size) return;
+  const owner = new Map(matched.map((s) => [s.pid, s.session_id]));
+  for (const s of orphans) {
+    for (const pid of ancestorChain(s.pid, ppids)) {
+      const id = owner.get(pid);
+      // Nearest live session wins, and never itself: `ancestorChain` starts at
+      // the process above this one, but a table read mid-poll can hold
+      // anything.
+      if (id && id !== s.session_id) {
+        s.parent = id;
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * The distinct working directories of the subagents this session is running,
+ * minus its own — the only cwds allowed to answer for it (see the call site).
+ */
+/**
+ * The last directory a session's own agent was working in, by session id.
+ *
+ * Superpowers' SDD alternates: an Agent-tool subagent implements a task, then
+ * an SDK session reviews it, and between the two the controller sits alone for
+ * anything from seconds to a minute while it writes the next brief. Without
+ * this the plan appears, vanishes and reappears on its key through every one
+ * of those gaps — a count that blinks reads as a bug in the board, which is
+ * how it read here before this existed.
+ *
+ * Held for the life of the session and no longer (`getLiveSessions` prunes),
+ * and it is a *hint*, never an answer: the ledger at that path is re-read on
+ * every poll, and the 24h staleness cap in `sdd-ledger.mjs` still decides
+ * whether what it finds is progress or an abandoned plan.
+ */
+const workspaceMemory = new Map();
+
+export function agentCwds(session, subagents) {
+  const own = new Set();
+  for (const a of subagents) {
+    // `agentCwd` for a synthesised subagent (whose own `cwd` is its parent's,
+    // inherited at synthesis); the plain `cwd` for an SDK session, which has a
+    // registry entry and a real one of its own.
+    const where = a.agentCwd ?? a.cwd;
+    if (a.parent === session.session_id && where && where !== session.cwd) own.add(where);
+  }
+  if (own.size) workspaceMemory.set(session.session_id, [...own]);
+  // Nothing running right now: the last place one was is the best guess left,
+  // and a wrong one costs nothing — the ledger there has to still parse, still
+  // be an SDD ledger and still be fresh.
+  return own.size ? [...own] : (workspaceMemory.get(session.session_id) ?? []);
 }
 
 /**
@@ -697,6 +778,27 @@ const MARKER_MAX_S = 600;
  * Exported and pure for the reason `statusKey`/`isRepeatPress` are: this is
  * the whole rule, and nothing outside a real compaction can exercise it.
  */
+/**
+ * The state of a session whose registry entry has no `status` field at all.
+ *
+ * Every SDK session observed writes none — `status`, `updatedAt` and
+ * `statusUpdatedAt` are all absent, where a `cli` session has all three — and
+ * `status ?? "idle"` therefore called a superpowers controller idle for the
+ * two hours it spent working through nine tasks. That is the dishonesty this
+ * project refuses: a working session must never read idle.
+ *
+ * The rule is `readRunningSubagents`', because it is the same question asked
+ * of the same evidence: a turn that ended `end_turn` is finished and writes
+ * nothing further, and anything else — a tool call outstanding, or a newest
+ * line that is the user's, meaning the model is answering right now — is work
+ * in flight. What that function needs and this doesn't is the idle-age cap: a
+ * subagent has no pid, so an interrupted one would hang busy forever, while
+ * every session here has already passed `isAlive`.
+ */
+export function liveState(stopReason) {
+  return stopReason === "end_turn" ? "idle" : "busy";
+}
+
 export function compactingNow({ state, compactRequestedAt, marker }, now = Date.now()) {
   if (marker && (now - marker.at) / 1000 < MARKER_MAX_S) return true;
   return state === "busy" && compactRequestedAt !== null && (now - compactRequestedAt) / 1000 < COMPACT_MAX_S;
@@ -725,7 +827,13 @@ export function localSource(root = CLAUDE_DIR) {
  * down with it.
  */
 export async function getLiveSessions(sources = [localSource()]) {
-  return (await Promise.all(sources.map((s) => sessionsFrom(s).catch(() => [])))).flat();
+  const sessions = (await Promise.all(sources.map((s) => sessionsFrom(s).catch(() => [])))).flat();
+  // The one thing this module remembers between polls, and it is pruned here
+  // because only here is the whole live set in hand — a single source cannot
+  // tell "gone" from "belongs to the other host".
+  const live = new Set(sessions.map((s) => s.session_id));
+  for (const id of workspaceMemory.keys()) if (!live.has(id)) workspaceMemory.delete(id);
+  return sessions;
 }
 
 /**
@@ -798,7 +906,11 @@ async function sessionsFrom(source) {
       ide: ideByFolder.get(match.folder) ?? null,
       nested: isNested,
       name: s.name ?? null,
-      state: s.status ?? "idle",
+      // Null, not "idle": an entry with no `status` field is a session that
+      // doesn't report one, which `liveState` answers from the transcript
+      // below. Only enrichment can tell the two apart, so the distinction has
+      // to survive until then.
+      state: s.status ?? null,
       ts: Math.floor((s.statusUpdatedAt ?? s.updatedAt ?? 0) / 1000),
       host: source.host,
       root: source.root,
@@ -815,6 +927,15 @@ async function sessionsFrom(source) {
       ...(source.ppids?.size ? { ancestors: ancestorChain(s.pid, source.ppids) } : {}),
     });
   }
+
+  // An SDK session records no parent, but it has one: the Agent SDK spawns
+  // `claude` as a subprocess, so whatever started it is in its pid ancestry.
+  // Caught live on this machine — an `sdk-py` worker's chain read
+  // `worker -> python3 -> the controller's own claude pid` — and without it
+  // superpowers' SDD blinks: the controller runs an Agent-tool subagent for
+  // the implementation (which does carry a parent) and an SDK session for the
+  // review, so its key found the plan for one phase and lost it for the next.
+  await attachSdkParents(matched, source);
 
   // Subagents have no registry entry of their own, so they're synthesised
   // here: nested, in their parent's folder, and busy — a running agent is by
@@ -837,7 +958,17 @@ async function sessionsFrom(source) {
         ).map((a) => ({
           ...s,
           session_id: a.id,
+          // Where the agent is working, kept *beside* the parent's `cwd`
+          // rather than replacing it: this session's transcript lives under
+          // the parent's project slug (`subagentTranscriptPath`), so a cwd
+          // pointing at the worktree would send every later reader to a
+          // directory that doesn't hold it.
+          agentCwd: a.cwd ?? null,
           parent: s.session_id,
+          // What makes this an *Agent-tool* subagent, now that an SDK session
+          // can carry a `parent` too: only these live at
+          // `subagentTranscriptPath`, under their parent's project slug.
+          subagent: true,
           nested: true,
           name: a.description,
           state: "busy",
@@ -847,9 +978,13 @@ async function sessionsFrom(source) {
     )
   ).flat();
 
+  // Both kinds of child, in one list: an Agent-tool subagent synthesised above
+  // and an SDK session that has just been given its parent.
+  const nestedAll = [...matched.filter((m) => m.nested), ...subagents];
+
   const enriched = await Promise.all(
     matched.map(async (s) => {
-      const { blockedOnDenial, pendingTool, compactRequestedAt, contextEstimate, ...signals } =
+      const { blockedOnDenial, pendingTool, stopReason, compactRequestedAt, contextEstimate, ...signals } =
         await readTranscriptSignals(
           transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root),
           source.tail
@@ -867,18 +1002,36 @@ async function sessionsFrom(source) {
       // is the only thing that can catch that case, on a machine that has it
       // installed; without it this falls back to manual-only, same as before.
       const marker = await readCompactMarker(s.session_id, source.root);
-      const compacting = compactingNow({ state: s.state, compactRequestedAt, marker });
+      const state = s.state ?? liveState(stopReason);
+      const compacting = compactingNow({ state, compactRequestedAt, marker });
       return {
         ...s,
         ...signals,
         state: compacting
           ? "compacting"
-          : s.state === "idle" && (blockedOnDenial || pendingTool)
+          : state === "idle" && (blockedOnDenial || pendingTool)
             ? "requires_action"
-            : s.state,
+            : state,
         // `source.host && null`: a remote session's cwd is a path on the other
         // machine, and only ~/.claude is fetched from it.
-        progress: await readTaskProgress(s.session_id, source.root, source.host ? null : s.cwd),
+        // Two places a plan can be, in order. Claude Code's own tasks first,
+        // then this session's cwd, then the cwd of a subagent it is *running*
+        // — an SDD controller sits at the repo root and dispatches into the
+        // worktree the plan lives in, and `findWorkspace` only ever walks up,
+        // so its own cwd finds nothing while its agent stands inside the
+        // workspace. Measured here: a controller nine tasks into a plan, key
+        // blank the whole way.
+        //
+        // Only a subagent's, and only one it spawned itself (`parent`): eight
+        // sessions were open at that repo root, and a plan found by scanning
+        // the tree downward would have landed on all eight. This is the same
+        // rule `nestedFor` follows for colour — a child may speak for its
+        // parent, a sibling may not.
+        progress: await readTaskProgress(
+          s.session_id,
+          source.root,
+          source.host ? null : [s.cwd, ...agentCwds(s, nestedAll)]
+        ),
         // The ctx file first — it knows the real window size. Without one (no
         // status line installed, here or on a remote host) the transcript's own
         // last usage carries the gauge, for the models whose window is known.

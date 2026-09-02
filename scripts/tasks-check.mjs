@@ -167,6 +167,13 @@ assert.deepEqual(ledgerTasks("# SDD ledger — plan: x.md\n\nnothing yet\n"), []
   assert.deepEqual(await readLedgerTasks(join(root, "..")), [], "not from above it");
   assert.deepEqual(await readLedgerTasks(null), [], "and never for a remote session, whose cwd is another machine's");
 
+  // Candidates, in order: an SDD controller's own cwd finds nothing (the plan
+  // is in the worktree, and this only ever walks up), so its running
+  // subagent's cwd answers instead. First hit wins; nulls are skipped.
+  const outside = await mkdtemp(join(tmpdir(), "streamdeck-ledger-outside-"));
+  same(await readLedgerTasks([outside, root]), [...briefs.values()], "the second candidate answers when the first has no plan");
+  assert.deepEqual(await readLedgerTasks([outside, null]), [], "and no candidate at all is still no progress");
+
   // A finished plan deletes its workspace, so a ledger nobody has touched for
   // a day is abandoned — and would otherwise show its last count on a key
   // forever.

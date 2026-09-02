@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readRunningSubagents } from "../src/sessions.mjs";
+import { agentCwds, readRunningSubagents } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-subagents-check-"));
 
@@ -58,6 +58,37 @@ assert.deepEqual(await ids(), ["newborn", "running"]);
 // /compact marker fell into. The parsed message is what counts.
 await agent("quoting", [line("tool_use"), toolResultLine]);
 assert.ok((await ids()).includes("quoting"), "a line merely mentioning end_turn does not end an agent");
+
+// Where the agent is working, off the same tail scan. An SDD controller
+// dispatches into the worktree its plan lives in, and that path is the only
+// way the *parent's* key can find the ledger — findWorkspace walks up only.
+const inWorktree = JSON.stringify({ type: "assistant", cwd: "/repo/.claude/worktrees/wt", message: { stop_reason: "tool_use" } });
+await agent("placed", [inWorktree]);
+assert.equal((await readRunningSubagents(dir)).find((a) => a.id === "placed").cwd, "/repo/.claude/worktrees/wt");
+// A transcript whose lines carry no cwd says so, rather than borrowing one.
+assert.equal((await readRunningSubagents(dir)).find((a) => a.id === "newborn").cwd, null);
+console.log("OK: an agent's own cwd");
+
+// Attribution: only an agent this session spawned may answer for it. Eight
+// sessions were open at the repo root where this was measured, and a plan
+// found by scanning the tree downward would have landed on all eight.
+const parent = { session_id: "s-1", cwd: "/repo" };
+const agents = [
+  { parent: "s-1", agentCwd: "/repo/.claude/worktrees/wt" },
+  { parent: "s-1", agentCwd: "/repo/.claude/worktrees/wt" }, // same worktree, one entry
+  { parent: "s-1", agentCwd: "/repo" }, // its own cwd, already tried first
+  { parent: "s-1", agentCwd: null }, // nothing known about this one
+  { parent: "s-2", agentCwd: "/repo/.claude/worktrees/other" }, // a sibling's agent
+];
+assert.deepEqual(agentCwds(parent, agents), ["/repo/.claude/worktrees/wt"]);
+assert.deepEqual(agentCwds({ session_id: "s-3", cwd: "/repo" }, agents), [], "a session running none gets none");
+
+// SDD alternates an Agent-tool implementer with an SDK reviewer, and the
+// controller sits alone between them. The last place its own agent worked
+// carries that gap, or the count blinks off and back on every dispatch.
+assert.deepEqual(agentCwds(parent, []), ["/repo/.claude/worktrees/wt"], "remembered across a gap with nothing running");
+assert.deepEqual(agentCwds({ session_id: "s-9", cwd: "/repo" }, []), [], "and never invented for a session that has never run one");
+console.log("OK: only an agent this session spawned answers for it");
 
 await rm(dir, { recursive: true, force: true });
 console.log("OK: running subagents");

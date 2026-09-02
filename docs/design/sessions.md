@@ -101,6 +101,21 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   to `requires_action`. It's a narrow signal, not certainty (an assistant that
   quietly recovers and keeps working would also match, briefly); good enough
   for a key that needs to catch your eye, not a guarantee.
+- **A session that reports no `status` is not idle.** An SDK session's
+  registry entry has no `status`, `updatedAt` or `statusUpdatedAt` at all,
+  where a `cli` one has all three — so `s.status ?? "idle"` called one idle
+  while it was mid-turn, and its marker on the project key sat grey. Measured:
+  an `sdk-py` security reviewer, alive 2m30s, sampled 17 seconds after its
+  last transcript write, reporting no status of any kind. `matched`
+  therefore carries `null` for a missing status (absent and idle have to stay
+  distinguishable until enrichment can tell them apart) and `liveState`
+  answers it from the transcript: `end_turn` is finished, anything else — a
+  tool call outstanding, or a newest line that is the user's, meaning the model
+  is answering right now — is work in flight. That is `readRunningSubagents`'
+  rule on the same evidence, minus its idle-age cap: a subagent has no pid to
+  check, so an interrupted one would hang busy forever, while everything in
+  the registry has already passed `isAlive`. Note what this is *not*: a
+  silence heuristic. Nothing here is inferred from a gap in time.
 - `src/sdd-ledger.mjs` — tasks Claude Code doesn't know about. The progress
   bar and the detail board both come from `~/.claude/tasks/<session id>/`,
   which is filled only when a session uses Claude Code's *own* task tool — a
@@ -130,7 +145,50 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   abandoned one would otherwise show "3 of 6" on a key forever.
   **The fallback lives in `readTaskList`**, the one function the bar and the
   detail board already both route through, so neither can have it without the
-  other; Claude Code's own tasks win whenever there are any. It is the one
+  other; Claude Code's own tasks win whenever there are any.
+
+  **A controller's plan is not at or above its cwd, and that is why
+  `readLedgerTasks` takes candidates.** `findWorkspace` only ever walks up, and
+  superpowers' SDD runs from the repo root with the workspace a level *down*,
+  inside `.claude/worktrees/<name>/` — so the session that owns the plan is
+  exactly the one that cannot find it. Measured: a controller eight tasks into
+  nine, key blank the whole way, while its dispatched agents (standing inside
+  the workspace) each carried the count they had borrowed from it. The second
+  candidate is the cwd of a subagent this session is *running*, which
+  `readRunningSubagents` now reads off the same tail scan as `stop_reason`.
+
+  **Only its own agent's, and this is the whole of the attribution
+  argument.** Eight live sessions sat at that repo root; a plan found by
+  scanning the tree downward would have painted the same "8 of 9" on all
+  eight, which is the misattribution `nestedFor` was written to stop for
+  colour. A child may speak for its parent because `parent` is recorded at
+  synthesis; a sibling may not, and `agentCwds` is where that is enforced. An
+  agent's cwd equal to its parent's is dropped — it was already tried first.
+
+  **Both kinds of child count, and that needed a pid.** SDD alternates: an
+  Agent-tool subagent implements a task, an *SDK session* reviews it. The
+  first carries a `parent`; the second records none, so the controller's key
+  found the plan for one phase and lost it for the next. `attachSdkParents`
+  closes that by walking the pid ancestry — the Agent SDK spawns `claude` as a
+  subprocess, so the session that started it is up the chain. Caught live
+  here: `worker -> python3 -> the controller's own claude pid`. It runs only
+  when there is a parentless nested session to place, so a machine without one
+  never pays for `ps`, and a remote source uses the host's own table
+  (`source.ppids`) because local pids mean nothing over there. Note the
+  knock-on: `parent` alone no longer means "Agent-tool subagent", so the
+  synthesised ones carry `subagent: true` and the web panel's token lookup
+  keys off *that* — an SDK session has a transcript of its own, not one under
+  its parent's slug.
+
+  **And a session alone between dispatches keeps its plan.** `workspaceMemory`
+  is the one thing this module remembers between polls: the last cwd a
+  session's own agent worked in, held for the life of that session
+  (`getLiveSessions` prunes, because only there is the whole live set in
+  hand). Without it the count blinks off every time the controller sits alone
+  writing the next brief, which reads as a broken board. It is a hint, never
+  an answer — the ledger at that path is re-read every poll, still has to
+  parse, still has to be an SDD ledger, and the 24h staleness cap still
+  decides whether it is progress or an abandoned plan. It is the one
   reader that is **local-only** — `readLedgerTasks(cwd)` needs a path on *this*
   machine and `remote-fs.mjs` fetches `~/.claude` and nothing else, so both
   call sites pass null for a remote session rather than reading a stranger's
@@ -158,9 +216,30 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
 
   `assignSlots`
   keeps nested ones off the board's slots; they attach to a key as a small
-  square coloured by their own state, and become readable tiles in two places —
-  the attention queue if they block, and the detail board they attach to,
-  pinned to its tail.
+  square coloured by their own state, and become readable tiles in three places
+  — the attention queue if they block, the detail board they attach to, pinned
+  to its tail, and the web panel's subagent row.
+
+  **A nested session's progress belongs on those tiles.** Having no key means
+  a nested session has nowhere else to put a count: the deck's detail tile has
+  always passed `progress` to `renderKey`, but the web panel's row carried only
+  name, tokens and state, so on that page a session showing 6 of 9 read as a
+  dot. Measured, on the day it happened: `getLiveSessions` had
+  `{ current: 6, total: 9 }` in hand and every surface but one dropped it. The
+  row now carries `done/total` and the active task's subject. The key's own
+  square stays a *marker* — a coloured dot cannot hold nine tasks, and the key
+  belongs to the session it names.
+
+  **Whose plan that is deserves care.** In the case measured, it was not the
+  SDK session's own: superpowers' SDD controller is an ordinary `cli` session
+  that dispatches a *fresh* SDK session per task and per review, each living
+  minutes, and those run inside the worktree that holds the plan workspace —
+  so `readLedgerTasks` walks up from their cwd and hands each of them the
+  controller's ledger. The count on such a row is the plan the session is
+  working *on*, which is the useful reading, but it is not a plan that session
+  is driving. The controller itself, whose cwd is the repo root while the
+  workspace is a level down in `.claude/worktrees/<name>/`, gets nothing:
+  `findWorkspace` only ever walks up.
 
   **Which key is `nestedFor`, and it goes by parent, not folder.** An
   Agent-tool subagent carries the `parent` its synthesis in `sessions.mjs`

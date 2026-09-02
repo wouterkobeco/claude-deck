@@ -1796,10 +1796,18 @@ export const configDeps = {
           id: n.session_id,
           state: n.state,
           label: keyFields(n).label,
+          // An SDK session runs a plan of its own — a superpowers controller
+          // walking nine tasks is the case this exists for — and its key is
+          // this row: it has none of its own, so a progress it carries and
+          // nobody draws is progress that exists nowhere.
+          progress: n.progress ? { done: n.progress.current, total: n.progress.total, active: n.progress.active } : null,
           tokens: n.host
             ? null
             : await transcriptTokenTotal(
-                n.parent
+                // `subagent`, not `parent`: an SDK session has a parent too now
+                // (found in its pid ancestry) but a transcript of its own, in
+                // its own project directory.
+                n.subagent
                   ? subagentTranscriptPath({ cwd: n.cwd, parent: n.parent, agentId: n.session_id }, n.root)
                   : transcriptPathFor({ cwd: n.cwd, sessionId: n.session_id }, n.root)
               ),

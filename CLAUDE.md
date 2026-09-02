@@ -127,9 +127,14 @@ on each line. These summaries are reminders, not the rule itself.
   (board.md)
 - **Nested means spawned by another session** (`entrypoint`, or an Agent-tool
   subagent's transcript), never "in a subdirectory" — a worktree session gets
-  a real key. (sessions.md)
+  a real key. Which key it lands on is `parent`: recorded at synthesis for an
+  Agent-tool subagent, found in the pid ancestry for an SDK session, and never
+  guessed from the folder. (sessions.md)
 - **A key's colour covers its block** (`mostUrgent` over own + nested
-  states); every other field is the session's own, and the caps bar is always
+  states); every other field is the session's own — with one measured
+  exception, a task list found at a *child's* cwd when the session has none of
+  its own (an SDD controller's plan lives in the worktree its agent is
+  standing in), never at a sibling's, and the caps bar is always
   the project name, never the cwd. (board.md)
 - **"compacting" is the `/compact` marker in the transcript, parsed, or the
   PreCompact/PostCompact hook's marker file** — the silence heuristic shipped,
@@ -138,7 +143,8 @@ on each line. These summaries are reminders, not the rule itself.
   nothing anywhere until it's already over. (sessions.md, statusline.md)
 - **Dishonesty is the bug class refused outright**: a failing host reads
   `offline` rather than vanishing, an empty session reads CLEAR rather than a
-  plausible name, a stopped daemon greys the web board. (remote.md,
+  plausible name, a session that reports no `status` reads what its transcript
+  says rather than idle, a stopped daemon greys the web board. (remote.md,
   sessions.md, web.md)
 - **Hardware: MK.2, 15 keys of 72px, macOS only, exclusive HID.** Keys 13/14
   are reserved (status, usage), leaving 13 session slots; the status key folds

@@ -554,7 +554,13 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   sitting grey behind a 3×6px marker — subagents have no key, so this is the
   only way their state reaches one. The title, context gauge and task counter
   still describe the key's own session: a subagent can speak for "is anything
-  happening here", not for "what is this key about". `state` is the block's, so
+  happening here", not for "what is this key about". **One measured exception,
+  and it is a fallback rather than a fold**: a session with no task list of
+  its own takes the plan found at its running child's cwd, because superpowers'
+  SDD controller sits at the repo root while its plan lives in the worktree its
+  agent is standing in — the session that owns the plan is the one that cannot
+  see it. Only a child it spawned (`parent`), never a sibling: eight sessions
+  were open at that repo root. sessions.md carries the argument in full. `state` is the block's, so
   `renderKey` takes a separate `shell` flag for the margin's blue dot; without
   it a key greened by a subagent would erase its own background-shell marker.
 

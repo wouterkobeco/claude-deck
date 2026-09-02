@@ -301,7 +301,13 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   stays visible, subagents pinned to a tail so a twenty-task plan cannot push
   them off, a back key carved out of a fixed index. None of those constraints
   exist on a page that scrolls, so `detailPanel` shows the *whole* task list
-  and every subagent, and nothing is cut to fit a square.
+  and every subagent, and nothing is cut to fit a square. **A subagent row
+  carries `done/total` and the task it is on** when that session has a task
+  list — an SDK session has no key anywhere, so this row is the only place its
+  progress can appear, and it read as a bare dot until the day one was six
+  tasks into a nine-task plan and the page said nothing (see sessions.md, which
+  also records whose plan that actually was). An Agent-tool subagent has no
+  task list and the row is unchanged for it.
   **It's also the one place a session says which subscription it's running
   under** (`Account`, in the same facts list as Context/Model/Where) — the
   deck's own detail board doesn't carry this: its four header tiles already

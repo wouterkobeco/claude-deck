@@ -68,7 +68,12 @@ export function parseProcessTable(stdout) {
   return table;
 }
 
-async function psTable() {
+/**
+ * The live pid -> ppid table. Exported because `sessions.mjs` needs the same
+ * one to place an SDK session under the session that spawned it, and a second
+ * copy of `ps` parsing is how the two would drift.
+ */
+export async function psTable() {
   const { stdout } = await execFileAsync("ps", ["-Ao", "pid,ppid"], { maxBuffer: 8 * 1024 * 1024 });
   return parseProcessTable(stdout);
 }

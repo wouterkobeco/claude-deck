@@ -425,6 +425,9 @@ const STYLE = `
            background: #1b1b1b; margin: 0 0 4px; font-size: 13px }
   .agent .dot { flex: none; width: 8px; height: 8px; border-radius: 2px }
   .agent .nm { flex: 1; color: #e0e0e0; word-break: break-word }
+  /* The task an SDK session is on, under its name — the row is this session's
+     only place on the board, so the number goes where it can be read. */
+  .agent .nm em { display: block; font-style: normal; font-size: 11px; color: #9e9e9e }
   .agent .tok { flex: none; font-size: 11px; color: #9e9e9e }
   .agent .st { flex: none; font-size: 11px; color: #757575; letter-spacing: .1em;
                text-transform: uppercase }
@@ -629,9 +632,11 @@ export function detailPanel(d) {
                   (n) =>
                     `<div class="agent"><span class="dot" style="background:${
                       MARKER_COLORS[n.state] ?? MARKER_COLORS.idle
-                    }"></span><span class="nm">${esc(n.label || "—")}</span><span class="tok">${tokenLabel(
-                      n.tokens
-                    )}</span><span class="st">${esc(n.state)}</span></div>`
+                    }"></span><span class="nm">${esc(n.label || "—")}${
+                      n.progress?.active ? `<em>${esc(n.progress.active)}</em>` : ""
+                    }</span><span class="tok">${tokenLabel(n.tokens)}</span><span class="st">${
+                      n.progress ? `${esc(String(n.progress.done))}/${esc(String(n.progress.total))} · ` : ""
+                    }${esc(n.state)}</span></div>`
                 )
                 .join("")
             : '<p class="none">none running</p>'

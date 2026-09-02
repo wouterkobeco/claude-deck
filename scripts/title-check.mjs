@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { compactingNow, contextPercent, readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
+import { compactingNow, contextPercent, liveState, readTranscriptSignals, transcriptPathFor } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-title-check-"));
 const path = join(dir, "transcript.jsonl");
@@ -41,6 +41,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug")]), {
   startedEmpty: false,
   blockedOnDenial: false,
   pendingTool: null,
+  stopReason: null,
   model: null,
   effort: null,
   contextEstimate: null,
@@ -54,6 +55,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine, titleLine
   startedEmpty: false,
   blockedOnDenial: false,
   pendingTool: null,
+  stopReason: null,
   model: null,
   effort: null,
   contextEstimate: null,
@@ -68,6 +70,7 @@ assert.deepEqual(await signals([titleLine("Fix login bug"), clearLine]), {
   startedEmpty: false,
   blockedOnDenial: false,
   pendingTool: null,
+  stopReason: null,
   model: null,
   effort: null,
   contextEstimate: null,
@@ -81,6 +84,7 @@ assert.deepEqual(await readTranscriptSignals(join(dir, "missing.jsonl")), {
   startedEmpty: false,
   blockedOnDenial: false,
   pendingTool: null,
+  stopReason: null,
   model: null,
   effort: null,
   contextEstimate: null,
@@ -260,6 +264,7 @@ assert.deepEqual(await signals([modelLine("claude-sonnet-5", "low"), userTurnLin
   startedEmpty: false,
   blockedOnDenial: false,
   pendingTool: null,
+  stopReason: null,
   model: "claude-opus-5",
   effort: "high",
   contextEstimate: null,
@@ -274,6 +279,7 @@ assert.deepEqual(await signals([userTurnLine]), {
   startedEmpty: false,
   blockedOnDenial: false,
   pendingTool: null,
+  stopReason: null,
   model: null,
   effort: null,
   contextEstimate: null,
@@ -352,6 +358,20 @@ assert.equal(contextPercent(null, "claude-opus-5"), null, "a line with no usage 
 assert.equal(contextPercent({ input_tokens: 0 }, "claude-opus-5"), null, "an empty turn is not 0% context");
 assert.equal(contextPercent({ input_tokens: 2_000_000 }, "claude-opus-5"), 100, "never past full");
 console.log("OK: contextEstimate falls back to the transcript's own usage");
+
+// liveState: a registry entry with no `status` field at all — every SDK
+// session writes none — must not read idle while its transcript is moving.
+// Same evidence readRunningSubagents uses on a subagent: end_turn is finished,
+// anything else is work in flight. No age cap here, because a session in the
+// registry has already passed isAlive.
+const stopLine = (reason) => JSON.stringify({ type: "assistant", message: { model: "claude-opus-5", stop_reason: reason } });
+assert.equal((await signals([stopLine("end_turn")])).stopReason, "end_turn", "the newest turn's own ending");
+assert.equal((await signals([stopLine("end_turn"), stopLine("tool_use")])).stopReason, "tool_use", "newest, not first");
+assert.equal((await signals([stopLine("end_turn"), humanReplyLine])).stopReason, null, "a user line newest means the model is answering right now");
+assert.equal(liveState("end_turn"), "idle", "a finished turn writes nothing further");
+assert.equal(liveState("tool_use"), "busy", "a tool call outstanding is work in flight");
+assert.equal(liveState(null), "busy", "so is a turn that has not ended yet");
+console.log("OK: liveState covers a session that reports no status");
 
 // compactingNow: the marker (compact-hook.mjs's PreCompact/PostCompact side
 // channel) is exact and doesn't need `busy` — it brackets a compaction
