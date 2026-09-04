@@ -1,6 +1,6 @@
 {
   "name": "claude-deck",
-  "version": "1.6.18",
+  "version": "1.6.19",
   "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
   "main": "src/index.mjs",
   "directories": {
@@ -16,6 +16,7 @@
     "title-check": "node scripts/title-check.mjs",
     "tasks-check": "node scripts/tasks-check.mjs",
     "subagents-check": "node scripts/subagents-check.mjs",
+    "cmux-check": "node scripts/cmux-check.mjs",
     "colors-check": "node scripts/colors-check.mjs",
     "terminal-focus-check": "node scripts/terminal-focus-check.mjs",
     "remote-check": "node scripts/remote-check.mjs",

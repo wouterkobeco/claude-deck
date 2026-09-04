@@ -17,7 +17,20 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   either way. It joins the
   session registry against open VS Code workspace folders (a session with no
   local window is dropped), then enriches with `aiTitle` (tail-scanned from the
-  transcript jsonl), task progress, and context usage. Every file read is wrapped in try/catch
+  transcript jsonl), task progress, and context usage.
+  **A cmux pane counts as a window, and counts as its own.** A session running
+  in one needs no editor to have its folder open, so it earns a key with no
+  `ide/*.lock` behind it — and when an editor *does* happen to have that folder
+  open, the pane still wins: `folder` is the session's own cwd and `ide` stays
+  null, because `focusWindow` routes on `ide` and a borrowed editor folder
+  would send every press to VS Code instead of to the pane. What says so is the
+  registry's own `tmux` field (`cmux:@<window>.%<pane>`), already read every
+  poll, so the join costs nothing extra; `cmux-focus.mjs` answers the separate
+  and more expensive question of which pane, at press time. Only cmux's prefix
+  counts and only for a local source — a plain tmux pane is focused by a
+  mechanism this daemon doesn't have, and a remote cmux pane lives on a machine
+  whose control socket isn't reachable, so both keep the ordinary lock rule
+  rather than getting a key whose press does nothing. (vscode.md) Every file read is wrapped in try/catch
   that skips rather than throws: these files are written by another process and
   a poll can land mid-write — a source's `isAlive`/`tail` are someone else's
   code (an ssh-backed source can throw where a local read only fails), so

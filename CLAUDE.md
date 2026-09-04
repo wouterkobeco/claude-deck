@@ -14,6 +14,7 @@ npm run stats-check    # stats board formatting
 npm run cswap-check    # claude-swap accounts: parsing, graceful absence
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / pendingTool / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
+npm run cmux-check     # cmux sessions: the folder join, and which pane a press resolves to
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
 npm run vscode-state-check   # which window's storage answers for a folder
@@ -71,7 +72,7 @@ needs indexing.
 | `docs/design/board.md` | `index.mjs` — slot assignment and its exceptions, the six boards, the detail view, presses, `pulse()`, the self-restart |
 | `docs/design/render.md` | `render.mjs` — SVG→RGBA, measured text fitting, the three-tier palette and `colors-check`'s floors |
 | `docs/design/usage-stats.md` | `usage.mjs`, `stats.mjs`, `cswap.mjs`, `history.mjs`, `tokens.mjs` — the meters, the state log, the token log |
-| `docs/design/vscode.md` | `vscode-state.mjs`, `terminal-focus.mjs`, `window-state.mjs`, `extension/` — focus routing, window state, install/reload |
+| `docs/design/vscode.md` | `vscode-state.mjs`, `terminal-focus.mjs`, `cmux-focus.mjs`, `window-state.mjs`, `extension/` — focus routing (VS Code and cmux), window state, install/reload |
 | `docs/design/web.md` | `config-server.mjs`, `board-page.mjs`, `board-state.mjs`, `html.mjs` — the config/activity/board pages and their trust boundary |
 | `docs/design/persistence.md` | `publish-sessions.mjs`, `accents.mjs`, `session-transfer.mjs` — every file the daemon writes, and the read-only invariant in full |
 | `docs/design/statusline.md` | `statusline.mjs`, `compact-hook.mjs` — the two manual install steps (context gauge, auto-compaction hooks), local and remote |
@@ -125,6 +126,11 @@ on each line. These summaries are reminders, not the rule itself.
 - **A second press means "tell me more"** — matched per session against what
   the extension publishes, never a timeout and no longer the folder.
   (board.md)
+- **A cmux pane is a window, and it is its own** — a session running in one
+  earns a key with no IDE lock behind it, keeps `ide: null` even when an editor
+  has the same folder open, and routes its press to `cmux focus-panel` rather
+  than to the editor. Said by the registry's own `tmux` field; local sources
+  only. (sessions.md, vscode.md)
 - **Nested means spawned by another session** (`entrypoint`, or an Agent-tool
   subagent's transcript), never "in a subdirectory" — a worktree session gets
   a real key. Which key it lands on is `parent`: recorded at synthesis for an

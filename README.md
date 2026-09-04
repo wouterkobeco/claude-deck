@@ -433,6 +433,7 @@ All read-only, all maintained by Claude Code itself:
 |---|---|
 | `~/.claude/sessions/<pid>.json` | session id, cwd, name, **status**, liveness (pid) |
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
+| `~/.claude/sessions/<pid>.json` → `tmux` | that a session is running in a cmux pane, so it gets a key with no editor open — and a press reveals the pane instead of a window |
 | `~/.claude/projects/<cwd>/<id>.jsonl` | the session title VS Code's terminal list shows, plus its model, reasoning effort, and the context gauge when no status line writes the file below |
 | `~/.claude/tasks/<id>/*.json` | one file per task → `done/total` on the board, the full list on the detail board |
 | `<repo>/.superpowers/sdd/<plan>/` | fallback for a session whose tasks Claude Code isn't tracking: superpowers' SDD ledger, read only when the above is empty and only for a local session |

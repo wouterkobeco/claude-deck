@@ -1,4 +1,4 @@
-# VS Code integration: focus, window state, the extension
+# Editor and terminal integration: focus, window state, the extension
 
 Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads when this working set is being changed, not on every turn. Same rules as CLAUDE.md: new design notes for these files go here. A cross-reference like "see the read-only invariant below" may point at a sibling doc — CLAUDE.md's index maps which doc holds what.
 
@@ -44,6 +44,37 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   travels on the session. A press is a synchronous key handler and may not wait
   on ssh, and walking the local table for a remote pid is worse than walking
   nothing, because it finds unrelated local processes rather than none.
+- `src/cmux-focus.mjs` — the same job as `terminal-focus.mjs` for a session
+  running in a cmux pane, and it shares none of the mechanism, because cmux
+  needs none of it. **There is no self-routing here and no ancestry walk**: the
+  pane addresses itself. cmux starts every pane's shell with `CMUX_PANEL_ID`,
+  `CMUX_SOCKET_CAPABILITY`, `CMUX_BUNDLED_CLI_PATH` and `CMUX_BUNDLE_ID` in the
+  environment, so the running `claude` process carries the exact pane id, and
+  `cmux focus-panel --panel <id>` reveals it. No file, no extension, no reload
+  step — the app's own control socket is the channel, and the capability from
+  the session's environment is what opens it (without it the socket answers
+  *"only processes started inside cmux can connect"*).
+  **The environment is read at press time, not on the poll**, for the two
+  reasons `terminal-focus.mjs` reads its process table there: a `ps` per session
+  every 2s buys nothing, and a capability token is not a thing to hold in polled
+  state. `sessions.mjs` answers the cheap question — *is* this a cmux session —
+  from the registry's own `tmux` field, which is already read; this module
+  answers only the expensive one, *which pane*.
+  **The last assignment in the `ps -E` line wins, not the first.** `ps -E`
+  prints the command line before the environment, and a command line is not
+  inert text: this project's own sessions run with an `--append-system-prompt`
+  argument thousands of characters long, so an argument that mentions
+  `CMUX_PANEL_ID=` would otherwise be read as the pane to focus. A partial
+  environment yields `null` rather than a best guess — a press that spawns a
+  subprocess guaranteed to fail is worse than one that logs and does nothing.
+  **The pane is selected before the app is raised** (`focus-panel`, then
+  `open -b <bundle id>`), so the window that comes forward is already showing
+  the right session instead of switching under the cursor. `open -b` by bundle
+  id rather than `-a` by name, because the id is the one the pane itself
+  reported.
+  Local only, by construction: the socket and the capability are on this
+  machine. `sessions.mjs` refuses to mark a *remote* session as cmux for that
+  reason — its key would otherwise raise a pane on the wrong computer.
 - `src/window-state.mjs` — the reverse of `terminal-focus.mjs`: the daemon asks
   for a terminal there and learns what actually happened here.
   **`staleWindows` names the windows still to reload**, rather than leaving

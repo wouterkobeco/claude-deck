@@ -17,6 +17,7 @@ import {
 import { fetchAccountName, fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
+import { focusCmuxPane } from "./cmux-focus.mjs";
 import { requestFocus } from "./terminal-focus.mjs";
 import { publishSessions, readPublishedIds } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
@@ -577,6 +578,25 @@ async function anchorFile(folder) {
 // forgotten rather than checked.
 async function focusWindow(session, requestedAt) {
   const { folder, ide, host } = session;
+  // A cmux session's window is a cmux pane, and everything below this line is
+  // about editors — the file-to-raise-a-window trick has no meaning for a
+  // terminal multiplexer, and `openFileIn` would go read VS Code's storage for
+  // a window that is not the one to raise.
+  //
+  // `requestedAt` is stamped here as well, and it is not decoration.
+  // `isRepeatPress` uses it to tell "the reveal hasn't landed yet" from "this
+  // session can never be revealed by the extension"; a cmux session is
+  // permanently the second of those, and if a VS Code window happens to have
+  // the same folder open, leaving the stamp off would keep `askedLongAgo`
+  // disarmed and its `matching.some(...)` false forever — a key whose detail
+  // board can never be reached, silently. This is the same failure the
+  // docstring there describes; the stamp is what routes it back to the folder
+  // rule after the grace window.
+  if (session.cmux) {
+    requestedAt?.set(session.session_id, Date.now());
+    focusCmuxPane(session);
+    return;
+  }
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`

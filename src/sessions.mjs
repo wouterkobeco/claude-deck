@@ -955,7 +955,22 @@ async function sessionsFrom(source) {
     // we haven't seen yet gets a key rather than disappearing.
     const isNested = s.entrypoint?.startsWith("sdk") ?? false;
     if (!source.isAlive(s.pid)) continue;
-    const match = matchFolder(s.cwd, folders);
+    // A cmux pane is a window too, and it is its own — it needs no editor to
+    // have the folder open, and pressing its key must reach cmux rather than
+    // whatever VS Code happens to be showing the same directory. Claude Code
+    // records the pane it is running in as `tmux`, so the join costs nothing
+    // extra to read; only cmux's own prefix counts, because a plain tmux pane
+    // is focused by a different mechanism this daemon doesn't have.
+    //
+    // Local only: `cmux-focus.mjs` talks to an app socket on *this* machine,
+    // with a capability read out of the session's own environment. A remote
+    // cmux session keeps the ordinary lock rule, which is honest — its key
+    // would otherwise raise a pane on the wrong computer.
+    const cmux = !source.host && typeof s.tmux === "string" && s.tmux.startsWith("cmux:") ? s.tmux : null;
+    // The pane is the window, so its own cwd is the folder. Not the enclosing
+    // lock's folder even when one exists: `focusWindow` routes on `ide`, and a
+    // cmux session that borrowed a VS Code folder would be sent to the editor.
+    const match = cmux ? { folder: s.cwd, nested: false } : matchFolder(s.cwd, folders);
     if (!match) continue; // no live local VS Code window for this session
     matched.push({
       session_id: s.sessionId,
@@ -965,7 +980,8 @@ async function sessionsFrom(source) {
       // running this session is the one whose shell is an ancestor of it.
       // Already read just above for the liveness check.
       pid: s.pid,
-      ide: ideByFolder.get(match.folder) ?? null,
+      cmux,
+      ide: cmux ? null : (ideByFolder.get(match.folder) ?? null),
       nested: isNested,
       name: s.name ?? null,
       // Null, not "idle": an entry with no `status` field is a session that
