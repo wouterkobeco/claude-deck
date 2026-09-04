@@ -548,6 +548,16 @@ async function anchorFile(folder) {
   return chosen;
 }
 
+// cmux ships its own CLI over a local socket, addressed by pane/surface id
+// rather than by file or folder — `focus-surface` reveals the exact pane a
+// session lives in directly, which is what `openFileIn` + `requestFocus`
+// together approximate for VS Code. Hardcoded to the standard install
+// location: sessions.mjs only ever produces a `cmuxSurface` when cmux itself
+// already wrote it to its own registry, so a missing binary here means an
+// unusual install rather than "cmux isn't running" — same class of failure
+// as any other focus attempt, logged the same way.
+const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
+
 // Focuses the VS Code window owning `folder` by opening a file that lives
 // inside it — VS Code routes a file to the window whose workspace contains
 // it, which raises that window without creating or replacing one.
@@ -576,7 +586,21 @@ async function anchorFile(folder) {
 // a no-op without the extension installed, which is why it's fired and
 // forgotten rather than checked.
 async function focusWindow(session, requestedAt) {
-  const { folder, ide, host } = session;
+  const { folder, ide, host, cmuxSurface } = session;
+  // cmux owns the reveal problem itself — `focus-surface` targets the exact
+  // pane this session runs in, so there is no MRU file to find and no
+  // separate terminal-focus extension to fire. Returns before any of the
+  // VS-Code-only machinery below, which does not apply here.
+  if (ide === "cmux") {
+    if (!cmuxSurface) {
+      console.error(`focus failed for ${folder}: no live cmux surface for this session`);
+      return;
+    }
+    execFile(CMUX_BIN, ["focus-surface", "--surface", cmuxSurface], (err, _stdout, stderr) => {
+      if (err) console.error(`focus failed for ${folder}:`, stderr || err.message);
+    });
+    return;
+  }
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`

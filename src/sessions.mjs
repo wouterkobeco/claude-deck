@@ -5,6 +5,11 @@ import { readLedgerTasks } from "./sdd-ledger.mjs";
 import { ancestorChain, psTable } from "./terminal-focus.mjs";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
+// cmux (a terminal app that drives Claude Code sessions of its own) keeps its
+// own live registry here, fed by hooks it installs — the same role an IDE's
+// `.lock` file plays, in a different shape. It is macOS-local state, not part
+// of any ssh-fetched tree, so only the local source ever points at it.
+const CMUX_SESSIONS_PATH = join(homedir(), ".cmuxterm", "claude-hook-sessions.json");
 const TAIL_BYTES = 65536;
 // How long a subagent transcript can sit unwritten before the agent is assumed
 // gone. An agent that was interrupted never writes its `end_turn`, so without
@@ -874,9 +879,34 @@ export function compactingNow({ state, compactRequestedAt, marker }, now = Date.
  * derives from one root, so those three are all a remote host needs to supply;
  * everything between them is this file, unchanged, which is the point. See
  * docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
+ *
+ * `cmuxPath` is a fourth, optional field, and deliberately not part of that
+ * contract — cmux is a local macOS app with no ssh-fetched equivalent, so a
+ * remote source simply has none and its sessions get no cmux fallback.
  */
-export function localSource(root = CLAUDE_DIR) {
-  return { host: null, root, isAlive, tail: tailLines };
+export function localSource(root = CLAUDE_DIR, cmuxPath = CMUX_SESSIONS_PATH) {
+  return { host: null, root, isAlive, tail: tailLines, cmuxPath };
+}
+
+/**
+ * `sessionId -> surfaceId` for every session cmux currently shows in a live
+ * pane, read from its own hook-fed registry. Absence (no file, unreadable,
+ * cmux not running) is an empty map, not an error — most sources have no
+ * `cmuxPath` at all, and even the local one is nothing unusual before cmux is
+ * ever opened.
+ */
+async function readCmuxSurfaces(path) {
+  let data;
+  try {
+    data = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return new Map();
+  }
+  const surfaces = new Map();
+  for (const [surfaceId, entry] of Object.entries(data.activeSessionsBySurface ?? {})) {
+    if (entry?.sessionId) surfaces.set(entry.sessionId, surfaceId);
+  }
+  return surfaces;
 }
 
 /**
@@ -922,9 +952,10 @@ export async function getLiveSessions(sources = [localSource()]) {
  * `readRunningSubagents`.
  */
 async function sessionsFrom(source) {
-  const [registry, locks] = await Promise.all([
+  const [registry, locks, cmuxSurfaces] = await Promise.all([
     readJsonFiles(join(source.root, "sessions")),
     readJsonFiles(join(source.root, "ide"), [".lock"]),
+    source.cmuxPath ? readCmuxSurfaces(source.cmuxPath) : Promise.resolve(new Map()),
   ]);
 
   // Locks aren't only VS Code's — JetBrains IDEs write the same file with
@@ -955,8 +986,15 @@ async function sessionsFrom(source) {
     // we haven't seen yet gets a key rather than disappearing.
     const isNested = s.entrypoint?.startsWith("sdk") ?? false;
     if (!source.isAlive(s.pid)) continue;
-    const match = matchFolder(s.cwd, folders);
-    if (!match) continue; // no live local VS Code window for this session
+    const ideMatch = matchFolder(s.cwd, folders);
+    // cmux is a fallback, not a second vote: it only steps in for a session no
+    // IDE window already covers, so a folder open in both keeps being focused
+    // through VS Code/JetBrains exactly as before. cmux tells us the owning
+    // surface *per session*, not per folder, so unlike an IDE lock this needs
+    // no ancestor matching — a cmux session's own cwd is always the match.
+    const cmuxSurface = !ideMatch ? cmuxSurfaces.get(s.sessionId) ?? null : null;
+    const match = ideMatch ?? (cmuxSurface ? { folder: s.cwd } : null);
+    if (!match) continue; // no live local window for this session
     matched.push({
       session_id: s.sessionId,
       cwd: s.cwd,
@@ -965,7 +1003,9 @@ async function sessionsFrom(source) {
       // running this session is the one whose shell is an ancestor of it.
       // Already read just above for the liveness check.
       pid: s.pid,
-      ide: ideByFolder.get(match.folder) ?? null,
+      ide: cmuxSurface ? "cmux" : ideByFolder.get(match.folder) ?? null,
+      // Only set when `ide` is "cmux" — the surface `focusWindow` targets.
+      cmuxSurface,
       nested: isNested,
       name: s.name ?? null,
       // Null, not "idle": an entry with no `status` field is a session that
