@@ -259,7 +259,7 @@ const cmuxFx = await mkdtemp(join(tmpdir(), "streamdeck-cmux-fixture-"));
 await mkdir(join(cmuxFx, "sessions"), { recursive: true });
 await mkdir(join(cmuxFx, "ide"), { recursive: true });
 const CMUX_SID = "9c6b1c0a-15b6-4e1b-9e6a-9b6b1c0a15b6";
-const CMUX_CWD = "/Users/pieter-jan/Repositories/cmux-only-project";
+const CMUX_CWD = "/Users/dev/repos/cmux-only-project";
 await writeFile(
   join(cmuxFx, "sessions", "555.json"),
   JSON.stringify({ pid: process.pid, sessionId: CMUX_SID, cwd: CMUX_CWD, kind: "interactive", entrypoint: "cli", status: "busy" })
