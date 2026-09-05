@@ -199,3 +199,43 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   <folder>` and `vscode://` all either replace a window's content or spawn an
   extra one, and AXRaise needs Accessibility permission. The reasoning is in the
   comment above `focusWindow()` — read it before proposing an alternative.
+- **cmux is a third route into the same match, and it wins.** cmux (a terminal
+  app with its own Claude Code integration) keeps a live registry at
+  `~/.cmuxterm/claude-hook-sessions.json`, read in `sessions.mjs` as a
+  `sessionId -> surfaceId` map. Where an IDE lock is a folder-level guess —
+  some window has this path open, blind to which terminal inside it, if any,
+  is running this session — cmux's registry names the *exact* session, so it
+  is checked first: a folder open in both a cmux pane and an IDE window
+  resolves through cmux, not the IDE. That is not just a preference: a session
+  driven from a cmux pane has its pty ancestry rooted at cmux.app, never at
+  the IDE's own pty host, so `requestFocus`'s ancestry walk (and `openFileIn`,
+  for that matter) could never have reached it regardless of which one "won".
+  Requires a one-time setup on cmux's own side
+  (`cmux hooks setup --agent claude`) that this project does not perform —
+  without it the registry file simply doesn't exist yet, which reads as "no
+  cmux session" exactly the way "cmux isn't installed" does.
+  **The registry gives a surface id, and `focus-pane` takes a pane id — not
+  the same thing.** `focus-surface` is not a cmux command; the id has to be
+  resolved first, against `cmux tree --all --json --id-format uuids`'s own
+  window/workspace/pane/surface tree (`paneForSurface` in `index.mjs`, split
+  out from the shell-out around it so the walk itself is testable without
+  cmux installed). One extra round-trip per press, paid only for a
+  cmux-matched session.
+  **`requestedAt` is stamped before either branch, not only VS Code's.**
+  `isRepeatPress`'s `askedLongAgo` times out the wait on the *extension's*
+  answer — irrelevant to a cmux-focused session, since the extension can never
+  report one active, but the timeout still has to fire or a key whose lock
+  file names a window with the extension running (stale relative to a newer
+  live cmux surface) gets stuck short of the folder-rule fallback forever:
+  its detail board silently stops responding to a second press. Only
+  `requestFocus` itself — the extension ping — stays VS-Code-only.
+  **Open question, not yet resolved**: cmux's control socket has an
+  access-control layer (`capabilities` reports `"access_mode": "cmuxOnly"`),
+  and whether a daemon started outside any cmux pane (a plain shell, launchd)
+  can reach `focus-pane` at all has not been verified — every test while
+  building this ran from a process whose own ancestry already traces back
+  through cmux.app, which the socket may be trusting rather than the specific
+  command. If a real daemon gets rejected, the fix is unlikely to be a
+  different verb name; it is more likely reading the target session's own
+  process environment (`CMUX_SOCKET_CAPABILITY`, `CMUX_BUNDLED_CLI_PATH`) at
+  press time rather than calling the CLI as an unrelated external process.

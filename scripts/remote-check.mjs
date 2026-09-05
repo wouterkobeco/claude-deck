@@ -150,12 +150,13 @@ import { getLiveSessions, localSource, transcriptPathFor } from "../src/sessions
 const fx = await mkdtemp(join(tmpdir(), "streamdeck-remote-fixture-"));
 await mkdir(join(fx, "sessions"), { recursive: true });
 await mkdir(join(fx, "ide"), { recursive: true });
-// `localSource`'s cmux fallback defaults to this machine's real
+// `localSource`'s cmux fallback defaults to reading this machine's real
 // `~/.cmuxterm` state — fine for the daemon, wrong for a fixture read that
-// has nothing to do with cmux. Every call below that isn't testing the cmux
-// path itself points at a file that can never exist, so it behaves exactly
-// as it did before that fallback was added.
-const NO_CMUX = join(fx, "no-cmux.json");
+// has nothing to do with cmux. `cmuxSurfaces` is a function, the same shape
+// as `isAlive`/`tail`, so every call below that isn't testing the cmux path
+// itself just hands back an empty map directly — no file, no path, nothing
+// that could ever resolve to this machine's own registry.
+const NO_CMUX = async () => new Map();
 const SID = "3afa50c6-168d-4a35-8448-dcb2350d1bff";
 const CWD = "/home/pi/domotica/dom-setup";
 await writeFile(
@@ -251,10 +252,11 @@ assert.equal(mixed.length, 1, "a throwing source contributes nothing, but the he
 assert.equal(mixed[0].host, null, "the surviving session is the local one");
 assert.equal(localOut[0].cmuxSurface, null, "a session matched through an IDE lock carries no cmux surface");
 
-// --- cmux: a fallback for a session no IDE window covers -------------------
+// --- cmux: wins when it names this exact session ---------------------------
 // cmux keeps its own live registry, in its own shape, at a path unrelated to
-// CLAUDE_DIR — `localSource`'s second argument is the seam that lets this
-// point at a fixture instead of this machine's real `~/.cmuxterm` state.
+// CLAUDE_DIR. `localSource`'s second argument is a function — the seam that
+// lets a check hand over a canned `Map` directly, never a path, so nothing
+// here can ever read this machine's own `~/.cmuxterm`.
 const cmuxFx = await mkdtemp(join(tmpdir(), "streamdeck-cmux-fixture-"));
 await mkdir(join(cmuxFx, "sessions"), { recursive: true });
 await mkdir(join(cmuxFx, "ide"), { recursive: true });
@@ -264,40 +266,64 @@ await writeFile(
   join(cmuxFx, "sessions", "555.json"),
   JSON.stringify({ pid: process.pid, sessionId: CMUX_SID, cwd: CMUX_CWD, kind: "interactive", entrypoint: "cli", status: "busy" })
 );
-const cmuxRegistry = join(cmuxFx, "claude-hook-sessions.json");
 
-// No registry yet, no IDE lock either: exactly today's behaviour, unchanged.
-const beforeCmux = await getLiveSessions([localSource(cmuxFx, cmuxRegistry)]);
+// Nothing covers this session yet: no cmux surface, no IDE lock either.
+const beforeCmux = await getLiveSessions([localSource(cmuxFx, NO_CMUX)]);
 assert.deepEqual(beforeCmux, [], "no window of any kind covers this session, so it is dropped");
 
 // cmux's own registry names the surface, keyed by surface id, that shows this
-// exact session — the same role `workspaceFolders` plays for an IDE lock.
-await writeFile(
-  cmuxRegistry,
-  JSON.stringify({ activeSessionsBySurface: { "SURFACE-1": { sessionId: CMUX_SID, updatedAt: 1 } } })
-);
-const viaCmux = await getLiveSessions([localSource(cmuxFx, cmuxRegistry)]);
+// exact session — the same role `workspaceFolders` plays for an IDE lock, but
+// per session rather than per folder.
+const oneSurface = async () => new Map([[CMUX_SID, "SURFACE-1"]]);
+const viaCmux = await getLiveSessions([localSource(cmuxFx, oneSurface)]);
 assert.equal(viaCmux.length, 1, "cmux's own registry is enough to show the session");
 assert.equal(viaCmux[0].ide, "cmux", "its ide reads as cmux, not a guessed VS Code");
 assert.equal(viaCmux[0].cmuxSurface, "SURFACE-1", "the owning surface travels with it for focusWindow to target");
 assert.equal(viaCmux[0].folder, CMUX_CWD, "cmux matches by the session's own cwd, no ancestor logic needed");
 
-// A folder open in both an IDE window and a cmux surface keeps resolving
-// through the IDE — cmux is additive, never a second vote that could disagree
-// with an already-working match.
+// A folder open in both an IDE window and a cmux surface resolves through
+// cmux — it names this exact session, where the IDE lock only says some
+// window has the folder open and is blind to which terminal inside it, if
+// any, is actually running this session. A session in a cmux pane has its
+// pty ancestry rooted at cmux.app, never at the IDE's own pty host, so the
+// IDE path could never have reached it regardless of which one "wins".
 await writeFile(
   join(cmuxFx, "ide", "1.lock"),
   JSON.stringify({ workspaceFolders: [CMUX_CWD], ideName: "Visual Studio Code" })
 );
-const bothCovered = await getLiveSessions([localSource(cmuxFx, cmuxRegistry)]);
-assert.equal(bothCovered[0].ide, "Visual Studio Code", "an IDE window on the same folder still wins");
-assert.equal(bothCovered[0].cmuxSurface, null, "cmuxSurface stays null once the IDE path is the one used");
+const bothCovered = await getLiveSessions([localSource(cmuxFx, oneSurface)]);
+assert.equal(bothCovered[0].ide, "cmux", "cmux wins over an IDE lock on the same folder");
+assert.equal(bothCovered[0].cmuxSurface, "SURFACE-1", "its surface still travels with it");
 
-// A remote source never carries a `cmuxPath` — cmux is this machine's own
-// local state, with no ssh-fetched equivalent — so it never even attempts the
-// fallback, cmux registry or not.
+// A remote source never carries a `cmuxSurfaces` function — cmux is this
+// machine's own local state, with no ssh-fetched equivalent — so it never
+// even attempts the fallback, live cmux surface or not.
 const remoteNoCmux = await getLiveSessions([{ ...remoteSource, root: cmuxFx, isAlive: () => true }]);
 assert.equal(remoteNoCmux[0]?.ide ?? null, "Visual Studio Code", "a remote source only ever sees the IDE lock, never cmux");
+
+// --- cmux: a surface id is not a pane id ------------------------------------
+// `focus-pane` rejects a surface id outright, so raising one first costs a
+// lookup against `cmux tree --all --json --id-format uuids`'s own shape —
+// `paneForSurface` is that walk, peeled out from the shell-out around it so
+// it runs against a canned tree, no cmux installed required.
+import { paneForSurface } from "../src/index.mjs";
+
+const cmuxTree = {
+  windows: [
+    {
+      workspaces: [
+        { panes: [{ id: "pane-a", surfaces: [{ id: "surface-a" }] }] },
+        { panes: [{ id: "pane-b", surfaces: [{ id: "surface-b" }, { id: "surface-c" }] }] },
+      ],
+    },
+  ],
+};
+assert.equal(paneForSurface(cmuxTree, "surface-a"), "pane-a", "a surface in the first workspace resolves");
+assert.equal(paneForSurface(cmuxTree, "surface-c"), "pane-b", "a second surface sharing a pane still resolves");
+assert.equal(paneForSurface(cmuxTree, "surface-a"), "pane-a", "not surface-c's pane — the wrong pane would raise the wrong window");
+assert.equal(paneForSurface(cmuxTree, "gone"), null, "a surface cmux no longer reports is null, not a throw");
+assert.equal(paneForSurface({ windows: [] }, "surface-a"), null, "an empty tree is null, not a throw");
+assert.equal(paneForSurface(null, "surface-a"), null, "a malformed tree is null, not a throw");
 
 // --- the tree is replaced, never merged -----------------------------------
 import { readdir } from "node:fs/promises";

@@ -9,6 +9,13 @@ const CLAUDE_DIR = join(homedir(), ".claude");
 // own live registry here, fed by hooks it installs — the same role an IDE's
 // `.lock` file plays, in a different shape. It is macOS-local state, not part
 // of any ssh-fetched tree, so only the local source ever points at it.
+//
+// This file does not exist until cmux's Claude Code hooks are installed
+// (`cmux hooks setup --agent claude`), which is not something this project
+// does on your behalf — the read below already treats that absence as
+// "nothing to add", same as cmux not being installed at all, so nothing here
+// breaks without it. It just means a cmux-only session stays invisible until
+// that one-time setup has been run on cmux's own side.
 const CMUX_SESSIONS_PATH = join(homedir(), ".cmuxterm", "claude-hook-sessions.json");
 const TAIL_BYTES = 65536;
 // How long a subagent transcript can sit unwritten before the agent is assumed
@@ -872,28 +879,12 @@ export function compactingNow({ state, compactRequestedAt, marker }, now = Date.
 }
 
 /**
- * The local machine as a source: today's behaviour, named.
- *
- * A source is the whole host-dependent surface of this module — where the tree
- * is, whether a pid is alive, and how a transcript tail is read. Every path here
- * derives from one root, so those three are all a remote host needs to supply;
- * everything between them is this file, unchanged, which is the point. See
- * docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
- *
- * `cmuxPath` is a fourth, optional field, and deliberately not part of that
- * contract — cmux is a local macOS app with no ssh-fetched equivalent, so a
- * remote source simply has none and its sessions get no cmux fallback.
- */
-export function localSource(root = CLAUDE_DIR, cmuxPath = CMUX_SESSIONS_PATH) {
-  return { host: null, root, isAlive, tail: tailLines, cmuxPath };
-}
-
-/**
  * `sessionId -> surfaceId` for every session cmux currently shows in a live
  * pane, read from its own hook-fed registry. Absence (no file, unreadable,
- * cmux not running) is an empty map, not an error — most sources have no
- * `cmuxPath` at all, and even the local one is nothing unusual before cmux is
- * ever opened.
+ * cmux not running or never set up for Claude Code — see `CMUX_SESSIONS_PATH`)
+ * is an empty map, not an error: nothing here can tell "not installed" apart
+ * from "installed but idle", and both mean the same thing to a caller, no
+ * cmux fallback for anything.
  */
 async function readCmuxSurfaces(path) {
   let data;
@@ -907,6 +898,32 @@ async function readCmuxSurfaces(path) {
     if (entry?.sessionId) surfaces.set(entry.sessionId, surfaceId);
   }
   return surfaces;
+}
+
+/**
+ * The local machine as a source: today's behaviour, named.
+ *
+ * A source is the whole host-dependent surface of this module — where the tree
+ * is, whether a pid is alive, and how a transcript tail is read. Every path here
+ * derives from one root, so those three are all a remote host needs to supply;
+ * everything between them is this file, unchanged, which is the point. See
+ * docs/superpowers/specs/2026-08-16-remote-ssh-sessions-design.md.
+ *
+ * `cmuxSurfaces` is a fourth, optional field, and deliberately not part of
+ * that contract — cmux is a local macOS app with no ssh-fetched equivalent,
+ * so a remote source simply has none and its sessions get no cmux fallback.
+ * It is a *function*, the same shape as `isAlive`/`tail`, rather than a path
+ * for `sessionsFrom` to read itself: the first version threaded a `cmuxPath`
+ * string through instead, and every fixture that built a `localSource` for
+ * something unrelated to cmux — most of them — had to be handed an explicit
+ * dead path just to keep from silently reading this real machine's own
+ * `~/.cmuxterm`. A function is supplied already resolved, the same way a
+ * remote source's `tail` already *is* the ssh read rather than a hostname for
+ * this file to dial itself; a check can hand over a canned `Map` directly and
+ * never touch a path at all.
+ */
+export function localSource(root = CLAUDE_DIR, cmuxSurfaces = () => readCmuxSurfaces(CMUX_SESSIONS_PATH)) {
+  return { host: null, root, isAlive, tail: tailLines, cmuxSurfaces };
 }
 
 /**
@@ -955,7 +972,7 @@ async function sessionsFrom(source) {
   const [registry, locks, cmuxSurfaces] = await Promise.all([
     readJsonFiles(join(source.root, "sessions")),
     readJsonFiles(join(source.root, "ide"), [".lock"]),
-    source.cmuxPath ? readCmuxSurfaces(source.cmuxPath) : Promise.resolve(new Map()),
+    source.cmuxSurfaces ? source.cmuxSurfaces() : Promise.resolve(new Map()),
   ]);
 
   // Locks aren't only VS Code's — JetBrains IDEs write the same file with
@@ -986,14 +1003,20 @@ async function sessionsFrom(source) {
     // we haven't seen yet gets a key rather than disappearing.
     const isNested = s.entrypoint?.startsWith("sdk") ?? false;
     if (!source.isAlive(s.pid)) continue;
-    const ideMatch = matchFolder(s.cwd, folders);
-    // cmux is a fallback, not a second vote: it only steps in for a session no
-    // IDE window already covers, so a folder open in both keeps being focused
-    // through VS Code/JetBrains exactly as before. cmux tells us the owning
-    // surface *per session*, not per folder, so unlike an IDE lock this needs
-    // no ancestor matching — a cmux session's own cwd is always the match.
-    const cmuxSurface = !ideMatch ? cmuxSurfaces.get(s.sessionId) ?? null : null;
-    const match = ideMatch ?? (cmuxSurface ? { folder: s.cwd } : null);
+    // cmux wins when it names this exact session — it is a precise,
+    // per-session match (this session is *in* that pane, full stop), where an
+    // IDE lock is only a folder-level guess that some window has this path
+    // open, blind to which terminal inside it, if any, is actually running
+    // this session. A session driven from a cmux pane has its pty ancestry
+    // rooted at cmux.app, never at the IDE's own pty host, so even a correct
+    // IDE-lock match would raise a window whose terminal-reveal path can
+    // never find it — cmux is the only route that can ever actually work for
+    // that session, IDE lock or not. cmux tells us the owning surface *per
+    // session*, so unlike an IDE lock this needs no ancestor matching — a
+    // cmux session's own cwd is always the match.
+    const cmuxSurface = cmuxSurfaces.get(s.sessionId) ?? null;
+    const ideMatch = !cmuxSurface ? matchFolder(s.cwd, folders) : null;
+    const match = cmuxSurface ? { folder: s.cwd } : ideMatch;
     if (!match) continue; // no live local window for this session
     matched.push({
       session_id: s.sessionId,
