@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import qrcode from "qrcode-terminal";
 import {
@@ -548,6 +549,52 @@ async function anchorFile(folder) {
   return chosen;
 }
 
+// cmux ships its own CLI over a local socket, addressed by pane id — not by
+// surface id, though a session's own registry only ever names its surface.
+// `focus-pane` rejects a surface id outright ("Pane not found"), so raising
+// one first costs a lookup: `cmux tree --all --json --id-format uuids` dumps
+// every window/workspace/pane/surface with real ids attached, walked here for
+// the pane whose `surfaces` list contains the one we want. Hardcoded to the
+// standard install location: sessions.mjs only ever produces a `cmuxSurface`
+// when cmux itself already wrote it to its own registry, so a missing binary
+// here means an unusual install rather than "cmux isn't running" — same class
+// of failure as any other focus attempt, logged the same way.
+const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
+const execFileAsync = promisify(execFile);
+
+// The pane id owning `surfaceId` in `cmux tree --all --json --id-format
+// uuids`'s own shape, or null if that surface isn't in it at all (the pane
+// closed, or cmux's registry is stale). Split out from the shell-out below so
+// the walk itself — windows -> workspaces -> panes -> surfaces, matched on the
+// real id rather than the ref cmux also hands back, which is not stable
+// across restarts — is exercised straight from a canned tree, no cmux
+// installed required.
+export function paneForSurface(tree, surfaceId) {
+  for (const w of tree?.windows ?? []) {
+    for (const ws of w.workspaces ?? []) {
+      for (const p of ws.panes ?? []) {
+        if (p.surfaces?.some((s) => s.id === surfaceId)) return p.id;
+      }
+    }
+  }
+  return null;
+}
+
+// Walks the tree cmux's own CLI reports and returns the pane id owning
+// `surfaceId`. No caching: a pane can move between workspaces between
+// presses, and this is one local socket round-trip, not a network call —
+// cheaper than the guess it would take to invalidate a cache correctly.
+async function cmuxPaneFor(surfaceId) {
+  let tree;
+  try {
+    const { stdout } = await execFileAsync(CMUX_BIN, ["tree", "--all", "--json", "--id-format", "uuids"]);
+    tree = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  return paneForSurface(tree, surfaceId);
+}
+
 // Focuses the VS Code window owning `folder` by opening a file that lives
 // inside it — VS Code routes a file to the window whose workspace contains
 // it, which raises that window without creating or replacing one.
@@ -576,7 +623,40 @@ async function anchorFile(folder) {
 // a no-op without the extension installed, which is why it's fired and
 // forgotten rather than checked.
 async function focusWindow(session, requestedAt) {
-  const { folder, ide, host } = session;
+  const { folder, ide, host, cmuxSurface } = session;
+  // Stamped unconditionally, before either branch below — `isRepeatPress`
+  // times out its wait on the *extension's* answer using this same map
+  // (`askedLongAgo`), regardless of which mechanism actually raised the
+  // window. A cmux-only press used to return before this was ever set: the
+  // extension can never report a cmux session active (it isn't in that
+  // window at all), so `askedLongAgo` could never arm, and a key whose lock
+  // file happened to still name a VS Code window with the extension running
+  // — stale relative to the live cmux surface, but still present in
+  // `readWindowStates()` — got stuck forever short of the folder-rule
+  // fallback: its detail board silently stopped responding to a second
+  // press. `requestFocus` itself stays VS-Code-only; only the timestamp
+  // needs to be unconditional.
+  requestedAt?.set(session.session_id, Date.now());
+
+  // cmux owns the reveal problem itself, but by pane, not by surface —
+  // `cmuxPaneFor` is the lookup that bridges the two. No MRU file to find and
+  // no separate terminal-focus extension to fire; returns before any of the
+  // VS-Code-only machinery below, which does not apply here.
+  if (ide === "cmux") {
+    if (!cmuxSurface) {
+      console.error(`focus failed for ${folder}: no live cmux surface for this session`);
+      return;
+    }
+    const paneId = await cmuxPaneFor(cmuxSurface);
+    if (!paneId) {
+      console.error(`focus failed for ${folder}: cmux no longer reports a pane for this surface`);
+      return;
+    }
+    execFile(CMUX_BIN, ["focus-pane", "--pane", paneId], (err, _stdout, stderr) => {
+      if (err) console.error(`focus failed for ${folder}:`, stderr || err.message);
+    });
+    return;
+  }
   const app = ide ?? "Visual Studio Code";
   // Reveal the session's own terminal inside the window we're about to raise.
   // Not awaited: the two are independent, and a press must not wait on a `ps`
@@ -587,24 +667,20 @@ async function focusWindow(session, requestedAt) {
   // raw field would silently disable this for most sessions. `app` is the
   // normalised name the line above already computes for exactly this reason.
   //
-  // Called here, above `openFileIn`, and specifically before this function's
-  // first `await` — `requestFocus`'s own press-order guard takes its sequence
-  // number synchronously at call time, so that number has to be stamped in
-  // press order. `openFileIn` shells out to `sqlite3` and, on a cold
-  // `storageDirCache`, first `readdir`s all of VS Code's `workspaceStorage`;
-  // that's hundreds of milliseconds and varies wildly per folder. Call this
-  // after `await openFileIn(...)` instead and a press on an already-focused
+  // Called here, above `openFileIn`, and before this function's own first
+  // await — `requestFocus`'s own press-order guard takes its sequence number
+  // synchronously at call time, and that number has to reflect press order.
+  // `openFileIn` shells out to `sqlite3` and, on a cold `storageDirCache`,
+  // first `readdir`s all of VS Code's `workspaceStorage`; that's hundreds of
+  // milliseconds and varies wildly per folder. Call this after
+  // `await openFileIn(...)` instead and a press on an already-focused
   // (warm-cache, fast) project can resolve before an earlier press on a
-  // cold-cache project — stamping the *earlier* press with the *higher*
-  // number, so it wins the guard and the deck reveals the wrong terminal.
-  // Keep this above the await.
-  //
-  // Stamped in the same breath as the request, not after it: `isRepeatPress`
-  // uses this to tell "hasn't been revealed yet" from "can never be revealed"
-  // (see its docstring), and that's only a fair test starting from when the
-  // ask actually went out.
+  // cold-cache project — sequencing the *earlier* press *after* it, so it
+  // wins the guard and the deck reveals the wrong terminal. Keep this above
+  // the await. (`requestedAt` is a different map, stamped once up top for
+  // every session regardless of `app` — this call is only the extension
+  // ping, which genuinely is VS-Code-only.)
   if (app === "Visual Studio Code") {
-    requestedAt?.set(session.session_id, Date.now());
     requestFocus(session);
   }
   const file = app === "Visual Studio Code" ? await openFileIn(folder, host) : null;
