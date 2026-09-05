@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, resumeView, seedSessionOrder, stillUnread, markSeen, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, reconnectDecision, headlessDeck, resumeView, seedSessionOrder, stillUnread, markSeen, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 import { recentlyIdle, RECENT_IDLE_S, SPLASH_LETTERS, SPLASH_MS } from "../src/render.mjs";
 
@@ -964,6 +964,30 @@ eq(
   // An edit that lands back on what we are running — a branch switched away
   // and back — closes the window rather than leaving it half-open.
   eq(restartDecision(V, V, 1000, 4000, settle).since, 0, "returning to our own version clears the clock");
+}
+
+// reconnectDecision: a replugged deck must come back on its own. The device
+// list is the only witness — neither half of this raises an event worth
+// waiting for — and none of it is visible without hardware to pull out.
+{
+  const A = "DevSrvsID:1", B = "DevSrvsID:2";
+  eq(reconnectDecision(null, []), false, "a headless run with nothing plugged in stays headless");
+  eq(reconnectDecision(null, [A]), true, "and hands back the moment a deck appears");
+
+  eq(reconnectDecision(A, [A]), false, "a run driving its own deck keeps driving it");
+  eq(reconnectDecision(A, []), true, "an unplugged deck is gone even if `error` never fired");
+  // The path changes across a replug, so "some deck is listed" is not the
+  // question — a pull and a push between two polls must still read as gone,
+  // or the run keeps writing to a handle that no longer resolves.
+  eq(reconnectDecision(A, [B]), true, "and a replug between two polls is a different path, not ours");
+}
+
+// headlessDeck: the stand-in the board page runs behind. Fifteen MK.2-shaped
+// keys, and every draw path silently swallowed.
+{
+  const d = headlessDeck();
+  eq(d.CONTROLS.length, 15, "the stand-in has the MK.2's key count");
+  eq(d.CONTROLS.every((c) => c.type === "button" && c.pixelSize.width === 72), true, "with the MK.2's key size");
 }
 
 // seedSessionOrder: first-seen order carried across a restart, so a session

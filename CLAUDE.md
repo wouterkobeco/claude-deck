@@ -111,6 +111,11 @@ on each line. These summaries are reminders, not the rule itself.
   writing to another machine without that per-host yes. `sessions:restore` is
   the only thing that writes a transcript, and stays a two-step command you
   run, never a poll. (persistence.md, statusline.md)
+- **A deck coming back is asked for, never waited for** — plugging one in
+  raises no event at all and an unplug raises `error` only sometimes, so
+  `reconnectDecision` reads the device list every poll: headless leaves when
+  any deck appears, a real run leaves when *its own* path stops being listed.
+  The board server is closed between runs, never carried over. (board.md)
 - **The daemon replaces itself on a version change** (`process.execve` —
   settle window, splash sweep, board resume) and that is the only thing it
   does to itself. (board.md)

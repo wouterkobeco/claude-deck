@@ -3,8 +3,8 @@
 Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads when this working set is being changed, not on every turn. Same rules as CLAUDE.md: new design notes for these files go here. A cross-reference like "see the read-only invariant below" may point at a sibling doc — CLAUDE.md's index maps which doc holds what.
 
 - `src/index.mjs` — daemon loop, slot assignment, focus. Exports `assignSlots`,
-  `accentFor`, `attentionQueue`, `detailLayout`, `pageOf`, `restartDecision`,
-  `resumeView` and `stillUnread` for the checks — the rule, which outlives any
+  `accentFor`, `attentionQueue`, `detailLayout`, `pageOf`, `reconnectDecision`,
+  `restartDecision`, `resumeView` and `stillUnread` for the checks — the rule, which outlives any
   list of names, being that anything deciding something the hardware would have
   to show you gets to be a function with a case in `slots-check`; the `import.meta.url === argv[1]` guard at the
   bottom is what keeps importing it from starting a daemon. Also owns **which
@@ -314,6 +314,42 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   chose. It is validated against a closed set of board kinds, because the
   value reaches the poll loop's own board dispatch and a kind that isn't a
   board leaves the daemon drawing nothing at all.
+- **A deck coming back is asked for, never waited for** (`reconnectDecision`).
+  `run()` opens one device and drives it until `disconnected`; `main()` then
+  waits `RECONNECT_MS` and calls `run()` again. Both halves of that were broken
+  for an unplug, and both halves failed silently, which is why this is a
+  decision function rather than an event handler.
+
+  **Nothing raises an event when a deck is plugged in** — there is no handle
+  yet to raise it on. So a run that found no device stood in `headlessDeck()`
+  and, because that stand-in never errors, its poll loop never ended: the
+  daemon sat behind a working web board with a real deck plugged into it,
+  forever. The 5s reconnect made this the *normal* outcome of an unplug — pull
+  the deck, and five seconds later the daemon has committed to being headless
+  and there is no path back.
+
+  **And an unplug does not reliably raise one either.** `deck.on("error")` fires
+  from node-hid's native read thread when it notices, and it does not always;
+  a run that never learns its deck is gone keeps writing to a dead handle,
+  catches its own throw once per poll, and prints `refresh failed:` until
+  someone reads the terminal.
+
+  So the device list is asked on every poll instead — one enumeration on a poll
+  that is already reading a tree of files. A headless run leaves when anything
+  appears; a real run leaves when **its own path** stops being listed, not when
+  the list empties: macOS gives a replugged deck a new path, so a pull and a
+  push between two polls has to read as gone or the run keeps drawing to the
+  old handle. The `error` event still sets `disconnected` — it is faster when
+  it does fire, and this is the floor under it, not a replacement.
+
+  **The board server is closed between runs, not carried over.** Every closure
+  in `serverDeps` points at the buttons, the view and the session list of the
+  run that ended, so a reused server would answer an iPad from a board that
+  stopped existing. Closing it also frees the remembered port for the next run
+  to ask for again — `createConfigServer` falls back to an ephemeral port when
+  the remembered one is taken, so a leaked server meant every reconnect
+  silently killed the iPad's bookmark, which is exactly the failure
+  `board-state.mjs` exists to prevent.
 - **The poll loop's board branches are the part nothing checks, and one of them
   was deleted without anyone noticing.** `refreshStats` was removed by an edit
   aimed at the function *above* it — a text slice that reached further than it

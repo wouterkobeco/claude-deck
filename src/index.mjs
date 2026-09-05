@@ -2483,11 +2483,17 @@ async function pulse(deck, buttons, statusButton, isOverlayView, isDisconnected,
 // out. Nothing else may reach for this — every draw path is handed its deck.
 let activeDeck = null;
 
+// The listening board server, for the one thing that has to close it between
+// runs — `main`, which cannot reach run()'s local. Same reasoning as
+// `activeDeck`: a process-wide resource that outlives the scope that made it.
+let activeServer = null;
+
 // No deck plugged in: the board page and config server are still worth
 // running, so stand in a device with the MK.2's shape whose draws go nowhere.
 // Every draw path is handed its deck, so nothing else has to know.
-// ponytail: no hot-plug — a deck plugged in later needs a restart.
-function headlessDeck() {
+// Not a permanent state — `reconnectDecision` watches for one being plugged
+// in and hands the run back to `main`, which opens it for real.
+export function headlessDeck() {
   const noop = async () => {};
   return {
     PRODUCT_NAME: "no Stream Deck (web board only)",
@@ -2503,7 +2509,10 @@ async function run() {
   let boardServer = null;
   let restartSince = 0;
   const devices = await listStreamDecks();
-  const deck = devices.length === 0 ? headlessDeck() : await openStreamDeck(devices[0].path);
+  // Null for a headless run, and the half of `reconnectDecision` that says
+  // which question this run is asking of the device list every poll.
+  const deckPath = devices.length === 0 ? null : devices[0].path;
+  const deck = deckPath === null ? headlessDeck() : await openStreamDeck(deckPath);
   activeDeck = deck;
   // Read here rather than at module scope: importing this file must not touch
   // the real ~/.claude, or every check inherits this machine's live palette.
@@ -2626,6 +2635,7 @@ async function run() {
       const { server, port, token, warning } = await startServer(serverDeps, "0.0.0.0", { port: wanted, remember: true });
       // Held only so a restart can close it before exec'ing — see restartInto.
       boardServer = server;
+      activeServer = server;
       const ip = lanAddress();
       const boardUrl = `http://${ip ?? "127.0.0.1"}:${port}/board?t=${token}`;
       // Printed as text as well as scanned: lanAddress takes the first
@@ -2994,11 +3004,42 @@ async function run() {
       // is an ordinary poll that logged a line.
       if (decided.restart) await restartInto(onDisk, deck, allKeys, boardServer, view);
     }
+    // Asked of the hardware rather than waited for as an event, for the
+    // reasons on `reconnectDecision`. Leaving the loop is all this does: the
+    // reopen is `main`'s, which already knows how to do it.
+    if (reconnectDecision(deckPath, (await listStreamDecks().catch(() => [])).map((d) => d.path))) {
+      console.log(deckPath === null ? "Stream Deck plugged in" : "Stream Deck unplugged");
+      disconnected = true;
+    }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
 
   activeDeck = null;
   await deck.close().catch(() => {});
+}
+
+/**
+ * Whether this run should hand its deck back to `main` and start over.
+ *
+ * Both halves of "is the board still the real one" are asked of the device
+ * list every poll rather than waited for as an event, because neither event
+ * exists to wait for. A deck being *plugged in* raises nothing at all — there
+ * is no handle yet to raise it on — so a headless run would otherwise stand in
+ * for a device that is sitting there plugged in, forever. And an unplug raises
+ * `error` only when node-hid's read thread notices; it is a native addon's
+ * thread and it does not always, which is the failure this was written for: a
+ * replugged deck that never came back because the daemon never learnt the
+ * first one was gone. The device list is a fact, and asking it costs one
+ * enumeration on a poll that is already reading a tree of files.
+ *
+ * `deckPath` null means this run is headless. A real run watches for *its own*
+ * path leaving rather than the list emptying: the path changes across a
+ * replug, so a deck pulled and pushed back between two polls still has to read
+ * as gone, or the run keeps writing to a handle that no longer resolves.
+ */
+export function reconnectDecision(deckPath, paths) {
+  if (deckPath === null) return paths.length > 0;
+  return !paths.includes(deckPath);
 }
 
 /**
@@ -3209,6 +3250,13 @@ async function main() {
         process.exit(1);
       }
     }
+    // Closed, not carried over: every closure in `serverDeps` points at the
+    // buttons, the view and the sessions of the run that just ended. Closing
+    // it also frees the remembered port for the next run to ask for again —
+    // a reconnect that fell through to an ephemeral one would leave the iPad's
+    // bookmark dead with nothing on the board saying so.
+    await closeServer(activeServer);
+    activeServer = null;
     console.log(`Reconnecting in ${RECONNECT_MS / 1000}s...`);
     await new Promise((r) => setTimeout(r, RECONNECT_MS));
   }
