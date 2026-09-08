@@ -34,7 +34,8 @@ assert.equal(formatReset("2026-08-12T09:00:00Z", "days", now), "21h"); // < 24h 
 assert.equal(formatReset("2026-08-11T12:30:00Z", "days", now), "30m"); // same drop applies to the week tile
 assert.equal(formatReset("2026-08-11T15:20:00Z", "hours", now), "3h20m"); // hours carry their minutes, no ceil to "4h"
 assert.equal(formatReset("2026-08-12T09:45:00Z", "days", now), "21h45m"); // and so does the week tile under a day
-assert.equal(formatReset("2026-08-12T12:00:00Z", "days", now), "1d"); // a day or more out stays coarse
+assert.equal(formatReset("2026-08-13T09:45:00Z", "days", now), "45h45m"); // the week tile is in hours from two days out
+assert.equal(formatReset("2026-08-13T12:00:00Z", "days", now), "2d"); // two days or more out stays coarse
 console.log("OK: formatReset");
 
 assert.deepEqual(subscriptionChange(undefined, "max", "default_claude_max_20x"), {

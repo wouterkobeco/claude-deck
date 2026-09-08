@@ -120,10 +120,12 @@ export function formatReset(iso, unit, now = Date.now()) {
   if (!iso) return null;
   const minutes = minutesUntil(iso, now);
   if (minutes < 60) return `${minutes}m`;
-  // "days" drops to the finer unit under a day, the same reason "hours" drops
-  // to minutes under an hour: `daysUntil` ceils, so 1h and 23h both read "1d"
-  // otherwise — honest about "resets today" but not about how soon.
-  if (unit === "days" && minutes >= 1440) return `${daysUntil(iso, now)}d`;
+  // "days" drops to the finer unit from two days out, the same reason "hours"
+  // drops to minutes under an hour: `daysUntil` ceils, so 1h and 23h both read
+  // "1d" otherwise — honest about "resets today" but not about how soon. The
+  // cut is two days rather than one because "2d" covers a day and an hour just
+  // as uselessly, and the last two days are the ones worth planning around.
+  if (unit === "days" && minutes >= 2880) return `${daysUntil(iso, now)}d`;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m ? `${h}h${m}m` : `${h}h`;
