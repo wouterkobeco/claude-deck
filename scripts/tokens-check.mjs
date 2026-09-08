@@ -11,7 +11,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CLAUDE, CODEX, collectTokens, compactTokens, groupTokens, readTokens, repoOf, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
+import { CLAUDE, CODEX, CODEX_API, collectTokens, compactTokens, groupTokens, readTokens, repoOf, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "streamdeck-tokens-check-"));
 const projects = join(root, "projects");
@@ -24,11 +24,12 @@ const HOUR = Date.parse("2026-08-18T09:00:00.000Z");
 // machine happens to have logged.
 const codex = join(root, "codex-sessions");
 await mkdir(join(codex, "2026", "08", "18"), { recursive: true });
-// ledgerPath the same way, and for the same reason: left to default it reads
-// this machine's real ship-review ledger and every count below is whatever
-// happens to be on disk.
-const ledger = join(root, "ship-reviews.jsonl");
-const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, ledgerPath: ledger });
+// codexApiRoot the same way: it defaults to the real `~/.codex-api`, where the
+// metered rung's rollouts live, and left alone it prices whatever this machine
+// happens to have spent into every assertion below.
+const codexApi = join(root, "codex-api-sessions");
+await mkdir(join(codexApi, "2026", "08", "18"), { recursive: true });
+const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, codexApiRoot: codexApi });
 
 // One assistant message, in the shape Claude Code writes it.
 const msg = (minute, usage, { model = "claude-opus-5", cwd = "/Users/me/thing" } = {}) =>
@@ -148,9 +149,9 @@ assert.equal(await collect(), 1, "a shrunk transcript is re-read from zero");
 // Nothing here may throw. This runs on the daemon's own timer, and a home
 // directory it cannot read is a quiet zero, not a crash.
 assert.deepEqual(readTokens(join(root, "nope")), [], "an unreadable log reads as nothing collected");
-const nowhere = { root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex"), ledgerPath: join(root, "no-ledger") };
+const nowhere = { root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex"), codexApiRoot: join(root, "no-codex-api") };
 assert.equal(await collectTokens(nowhere), 0, "a missing projects tree collects nothing");
-assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI or ship ledger is not an error either");
+assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex home is not an error either");
 
 // --- Codex -----------------------------------------------------------------
 
@@ -222,56 +223,79 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI o
   assert.deepEqual(byProvider.map((r) => `${r.provider}:${r.out}`), ["codex:507", "claude:214"], "and they are separable");
 }
 
-// --- the ship-review ledger ------------------------------------------------
+// --- the metered rung ------------------------------------------------------
 
-// The metered rung is the one nothing else here can see: it runs under a
-// second CODEX_HOME so an API key can never land in the ChatGPT login, and
-// that tree is deliberately not scanned. The ledger is its source of record —
-// and the only place on the machine that knows what a review cost.
+// The second CODEX_HOME exists so an API key can never overwrite the ChatGPT
+// login, and that is exactly what makes it readable as money: everything under
+// it billed a key. Same reader as the tree above, priced on the way past — the
+// ship-review ledger used to be the source here and was never the whole bill,
+// since it records one line per *review* and this home runs everything else
+// that wants the API too.
 {
-  const review = (minute, reviewer, cost, tokens) =>
+  const at = (minute) => new Date(HOUR + minute * 60000).toISOString();
+  const turn = (minute, { input, cached, written = 0, out, reasoning = 0 }) =>
     JSON.stringify({
-      ts: new Date(HOUR + minute * 60000).toISOString(),
-      repo: "wouterkobeco/thing",
-      reviewer,
-      model: "gpt-5.6-terra",
-      cost_usd: cost,
-      tokens,
+      type: "event_msg",
+      timestamp: at(minute),
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            cache_write_input_tokens: written,
+            output_tokens: out,
+            reasoning_output_tokens: reasoning,
+          },
+        },
+      },
     });
+  const rollout = join(codexApi, "2026", "08", "18", "rollout-2026-08-18T09-10-00-def.jsonl");
   writeFileSync(
-    ledger,
+    rollout,
     [
-      review(10, "codex-api", 0.43, { input_tokens: 1000, cached_input_tokens: 600, cache_write_input_tokens: 100, output_tokens: 4108, reasoning_output_tokens: 2139 }),
-      // Already counted from ~/.codex/sessions: ingesting it here would count
-      // the same review twice.
-      review(11, "codex", 0, { input_tokens: 900, cached_input_tokens: 0, output_tokens: 999 }),
-      // A Fable review is a Claude subagent, already in its own transcript,
-      // and the ledger records no tokens for it at all.
-      review(12, "fable", 0, null),
+      JSON.stringify({ type: "session_meta", timestamp: at(10), payload: { cwd: "/Users/me/thing" } }),
+      JSON.stringify({ type: "turn_context", timestamp: at(10), payload: { model: "gpt-5.6-terra" } }),
+      turn(10, { input: 1000, cached: 600, written: 100, out: 4108, reasoning: 2139 }),
     ].join("\n") + "\n"
   );
 
-  assert.equal(await collect(), 1, "only the metered rung earns a bucket");
+  assert.equal(await collect(), 1, "a metered session is a bucket of its own");
   const b = readTokens(root).at(-1);
-  assert.equal(b.provider, "codex-api", "tagged as the rung that costs money");
-  assert.equal(b.costUsd, 0.43, "with the money the ledger recorded");
-  assert.equal(b.out, 4108, "and its output");
-  assert.equal(b.calls, 1, "one ledger row is one review, not one turn");
-  // input_tokens in both Codex sources is the whole prompt, with the cached
-  // read and the cache write as subsets — where Claude's counts neither. The
-  // subsets come off, or one table's column means two things.
-  assert.equal(b.in, 300, "the prompt is stored net of its cached and written parts");
+  assert.equal(b.provider, CODEX_API, "tagged as the rung that costs money");
+  assert.equal(b.cwd, "/Users/me/thing", "against the folder it actually ran in, which is a real path");
+  // Terra: $2.00 fresh in, $0.20 cache read, $2.50 cache write, $12.00 out, per
+  // million. Every one of the four rates has to be applied to its own subset —
+  // a cache write costs *more* than fresh input, so folding it in with either
+  // of the others is money in the wrong direction.
+  const want = (300 * 2 + 600 * 0.2 + 100 * 2.5 + 4108 * 12) / 1e6;
+  assert.ok(Math.abs(b.costUsd - want) < 1e-9, `priced from its own tokens: ${b.costUsd} ~ ${want}`);
+  assert.equal(b.in, 300, "the prompt stored net of its cached and written parts");
   assert.equal(b.cacheRead, 600, "which are kept as their own figures");
   assert.equal(b.cacheWrite, 100, "under the no-ttl-reported column, not the 5m one");
-  assert.equal(b.cacheWrite5m, 0, "since Codex says nothing about how long its cache lives");
-  assert.equal(await collect(), 0, "and the ledger is read incrementally like everything else");
+  assert.equal(b.out, 4108, "and its output");
+  assert.equal(await collect(), 0, "read incrementally like every other tree here");
 
-  // A rollout lookup that failed writes `tokens: null` and still records the
-  // money. The review happened and it was billed.
-  appendFileSync(ledger, review(20, "codex-api", 1.5, null) + "\n");
-  assert.equal(await collect(), 1, "a row with no tokens still counts for its cost");
-  assert.equal(readTokens(root).at(-1).costUsd, 1.5, "which is the number that matters");
-  assert.equal(readTokens(root).at(-1).out, 0, "and it claims no tokens it does not have");
+  // A subscription turn is prepaid, not free: it must stay at exactly zero, or
+  // "out of pocket" stops meaning out of pocket.
+  assert.equal(readTokens(root).filter((r) => r.provider === CODEX).every((r) => r.costUsd === 0), true, "the plan's own rung is never priced");
+
+  // An invented rate reads as a fact. A model with none on file is counted for
+  // its tokens and for no money at all — the same rule the context gauge
+  // follows for a context window it has not measured.
+  const unknown = join(codexApi, "2026", "08", "18", "rollout-2026-08-18T09-20-00-ghi.jsonl");
+  writeFileSync(
+    unknown,
+    [
+      JSON.stringify({ type: "session_meta", timestamp: at(20), payload: { cwd: "/Users/me/thing" } }),
+      JSON.stringify({ type: "turn_context", timestamp: at(20), payload: { model: "gpt-9-unpriced" } }),
+      turn(20, { input: 500, cached: 0, out: 90 }),
+    ].join("\n") + "\n"
+  );
+  assert.equal(await collect(), 1, "a model with no rate on file still collects");
+  const u = readTokens(root).at(-1);
+  assert.equal(u.out, 90, "its tokens are real and counted");
+  assert.equal(u.costUsd, 0, "its price is not invented");
 }
 
 // The bookmark drops transcripts that no longer exist rather than remembering
@@ -283,15 +307,16 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI o
     [
       "-Users-me-thing/parent-id/subagents/agent-abc.jsonl",
       "-Users-me-thing/session-a.jsonl",
+      "codex-api/2026/08/18/rollout-2026-08-18T09-10-00-def.jsonl",
+      "codex-api/2026/08/18/rollout-2026-08-18T09-20-00-ghi.jsonl",
       "codex/2026/08/18/rollout-2026-08-18T09-00-00-abc.jsonl",
-      "ledger/ship-reviews.jsonl",
     ],
     "one bookmark per live file, relative to its own tree and namespaced by which tree that is"
   );
 }
 
-// The join between the two things a bucket's `cwd` can be: a path, and the
-// ledger's `owner/name`. Both spellings of a remote, a worktree's indirection,
+// What rolls a folder's money up to its repo: a worktree and its checkout are
+// two rows and one bill. Both spellings of a remote, a worktree's indirection,
 // and every shape that is not a checkout at all — a wrong answer here puts real
 // money on the wrong project, which is worse than no answer.
 {
@@ -315,9 +340,25 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI o
   writeFileSync(join(tree, ".git"), `gitdir: ${join(ssh, ".git", "worktrees", "feature")}\n`);
   assert.equal(repoOf(tree), "owner/name", "a worktree answers with its repo");
 
+  // A worktree that has since been removed leaves no `.git` behind and its
+  // money is still real, so the walk climbs to the checkout containing it. This
+  // is a containing directory, not a name that looks similar: work done inside
+  // a checkout belongs to it.
+  const gone = join(ssh, ".claude", "worktrees", "merged-and-deleted");
+  await mkdir(gone, { recursive: true });
+  assert.equal(repoOf(gone), "owner/name", "a folder under a checkout answers with that checkout's repo");
+
+  // But only past folders that are not checkouts. A nested checkout with no
+  // origin is a different project, and borrowing its parent's remote would put
+  // its money on the wrong one — the exact failure the basename match had.
+  const nestedNoRemote = join(ssh, "vendored");
+  await mkdir(join(nestedNoRemote, ".git"), { recursive: true });
+  writeFileSync(join(nestedNoRemote, ".git", "config"), "[core]\n\tbare = false\n");
+  assert.equal(repoOf(nestedNoRemote), null, "a checkout with no origin stops the walk rather than borrowing its parent's");
+
   const bare = join(repos, "nogit");
   await mkdir(bare, { recursive: true });
-  assert.equal(repoOf(bare), null, "a folder that is not a checkout has no repo");
+  assert.equal(repoOf(bare), null, "a folder that is not a checkout, under nothing that is, has no repo");
   assert.equal(repoOf(join(repos, "does-not-exist")), null, "and neither does a path that isn't on this machine at all");
   const noremote = join(repos, "noremote");
   await mkdir(join(noremote, ".git"), { recursive: true });
@@ -325,4 +366,4 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI o
   assert.equal(repoOf(noremote), null, "a checkout with no origin is not guessed from another remote");
 }
 
-console.log("OK: token extraction, incremental reads, codex, the review ledger, grouping, compaction, the repo join");
+console.log("OK: token extraction, incremental reads, codex, the metered rung and its prices, grouping, compaction, the repo join");

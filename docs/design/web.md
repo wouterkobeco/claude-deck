@@ -151,28 +151,35 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   project.** Every rung but the metered one is zero by construction — a
   subscription turn is prepaid, not free — so the section is *absent* rather
   than $0.00 for a window nothing was billed in, the same rule the legend
-  follows for a vendor that never ran. The per-project rows come out of
-  `groupTokens(buckets, "cwd")`, which the model chart already pays for, and
-  they are labelled with what the row actually holds: a metered row's `cwd` is
-  the ship-review ledger's `owner/name` repo, because the review ran under its
-  own CODEX_HOME and never in a cwd this daemon has seen. The amber is
+  follows for a vendor that never ran. It counts **turns**, not runs: the
+  money comes from `~/.codex-api`'s rollouts now rather than the ship-review
+  ledger's one-line-per-review (usage-stats.md has why), and a rollout is read
+  per `token_count` event. The amber is
   `codex-api`'s own fill from the token chart, so the caption, the bars and the
   columns above them are visibly the same money.
-  **The same money is a column in the project table**, joined by `repoOf` —
+  **Rows are labelled by repo, not by folder**, and it is the same rollup the
+  project table claims its column from — one `owed` map, built once. A metered
+  turn's `cwd` is a real folder and is very often a *worktree*, so a repo's
+  spend arrives split across its checkouts; three bars named for three
+  worktrees of one repo answer a question nobody asked. The join is `repoOf` —
   the origin remote in a folder's own `.git/config`, not a basename match:
   `kob-trace` names a folder here and a repo there only by coincidence, and a
-  coincidence that fails puts real money on the wrong project. A repo claims
-  its money **once**, on the row that spent the most time (which is why the
-  rows are sorted before they are mapped rather than after): the ledger records
-  which repo a review was billed to and cannot say which checkout of it, so
-  two folders of one repo in the table would otherwise show the same amount
-  twice and the column would sum past the section's total. The cell names the
-  repo in its `title` for that reason — a folder is not obviously a repo, and
-  the tooltip is where that stops being a surprise. A remote project's folder
-  is another machine's path, so it has no local checkout to read and reads an
-  em dash: this machine's ledger holds this machine's reviews. The section
-  stays regardless, and is the one that is complete — a repo nothing has a
-  session in this window still appears there.
+  coincidence that fails puts real money on the wrong project. A cwd that
+  resolves to no repo keys under itself rather than being dropped, which is
+  also what keeps pre-rollout records (whose `cwd` is the old ledger's
+  `owner/name`) counted.
+  **The table's column is the same money against its folders.** A repo claims
+  it **once**, on the row that spent the most time (which is why the rows are
+  sorted before they are mapped rather than after): two folders of one repo
+  would otherwise both show the total and the column would sum past the
+  section's. Claimed through a `Set` rather than by deleting from the map,
+  because the section below renders that same map and has to stay complete.
+  The cell names the repo in its `title` — a folder is not obviously a repo,
+  and the tooltip is where that stops being a surprise. A remote project's
+  folder is another machine's path, so it has no local checkout to read and
+  reads an em dash: this machine's CODEX_HOME holds this machine's spend. The
+  section stays regardless, and is the one that is complete — a repo nothing
+  has a session in this window still appears there.
   `fetch`, while client JS inside a template literal is the one thing here that
   nothing can lint, import or run. Its whole coupling to the daemon is a `deps`
   object of `projects()` and `setAccent()`, so when drag-to-reorder needs real

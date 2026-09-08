@@ -24,7 +24,7 @@
 import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 // The Codex CLI's own session log. The ship-review skill drives `codex exec`
@@ -33,13 +33,41 @@ const CLAUDE_DIR = join(homedir(), ".claude");
 // as Claude's transcripts and the same answer: read it here, keep it longer
 // than the source does.
 const CODEX_DIR = join(homedir(), ".codex", "sessions");
-// The ship-review skill's own usage ledger, one JSON line per review. It is
-// the only place on this machine that knows what a review *cost*: the metered
-// rung runs under a second CODEX_HOME (`~/.codex-api`) so an API key can never
-// overwrite the ChatGPT login, and no rollout log anywhere records money.
-// KOB_SHIP_LEDGER is the skill's own override, honoured here so the two cannot
-// drift apart.
-const LEDGER_PATH = process.env.KOB_SHIP_LEDGER || join(homedir(), ".kobeco", "ship-reviews.jsonl");
+// The metered rung's own CODEX_HOME. The second home exists so an API key can
+// never overwrite the ChatGPT login, and that separation is exactly what makes
+// this tree readable as money: a rollout under here billed a key, one under
+// `~/.codex` billed the plan. Same reader, priced on the way past.
+//
+// This replaced the ship-review ledger as the source of record for the metered
+// rung, because the ledger was never the whole bill. It gets one line per
+// *review*, and this home runs everything else that wants the API too —
+// `codex exec` from any skill, and a review abandoned mid-triage that never
+// writes its row. Seven days reading $0.00 against $41 actually spent is what
+// that gap looked like. The rollouts are the thing that was always complete;
+// the ledger's money was a subset of theirs, so reading both would count the
+// reviews twice.
+const CODEX_API_DIR = join(homedir(), ".codex-api", "sessions");
+
+// $ per million tokens, as of August 2026, and deliberately the same four
+// numbers the ship-review skill prices its own runs with. Input bills at three
+// rates: fresh, a cache read (90% off), and a cache write — 1.25x fresh, so a
+// write costs *more* than fresh input rather than less. A model this table has
+// never heard of is counted for its tokens and for no money at all: an invented
+// rate reads as a fact, which is the same reason the context gauge draws
+// nothing for a model outside its own measured table. If these look wrong they
+// are stale — https://developers.openai.com/api/docs/pricing, not a guess.
+const RATES = {
+  sol: { in: 5.0, read: 0.5, write: 6.25, out: 30.0 },
+  terra: { in: 2.0, read: 0.2, write: 2.5, out: 12.0 },
+  luna: { in: 0.2, read: 0.02, write: 0.25, out: 1.2 },
+};
+
+/** What one turn's tokens cost, or 0 for a model with no rate on file. */
+function priceOf(model, u) {
+  const rate = RATES[Object.keys(RATES).find((tier) => model.includes(tier))];
+  if (!rate) return 0;
+  return (u.in * rate.in + u.cacheRead * rate.read + u.cacheWrite * rate.write + u.out * rate.out) / 1e6;
+}
 const logIn = (root) => join(root, "streamdeck-tokens.jsonl");
 const posIn = (root) => join(root, "streamdeck-tokens.pos");
 
@@ -86,9 +114,9 @@ function usageOf(u) {
 // says nothing about how long it lives, and filing that under the 5m column
 // would be a number that reads as a fact and is a guess. Total cache writes are
 // the three of them summed.
-// `costUsd` is the only non-token metric and the only float: money, from the
-// ledger, for the metered rung alone. Every other row is zero by construction,
-// not by accident — a subscription turn is prepaid, not free.
+// `costUsd` is the only non-token metric and the only float: money, priced from
+// this row's own tokens, for the metered rung alone. Every other row is zero by
+// construction, not by accident — a subscription turn is prepaid, not free.
 const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", "cacheWrite", "cacheRead", "costUsd"];
 
 /**
@@ -132,14 +160,17 @@ export async function transcriptTokenTotal(path) {
  * The `owner/name` a folder's git origin points at, or null for anything that
  * isn't a checkout of one.
  *
- * This is the join between the two things a bucket's `cwd` can be. A Claude or
- * Codex row's is a real path, because that is where the session ran; a metered
- * row's is the ship-review ledger's `owner/name`, because that review ran under
- * its own CODEX_HOME and never in a cwd this daemon has seen. Matching them on
- * a basename was the obvious cheap answer and is the wrong one — `kob-trace`
+ * This is what rolls money up to the project it was spent on. Every bucket's
+ * `cwd` is now a real path — the metered rung's included, since its rollouts
+ * record the folder they ran in — but a repo's spend arrives split across its
+ * checkouts and its worktrees, and one project is one row. Matching those on a
+ * basename was the obvious cheap answer and is the wrong one — `kob-trace`
  * names a folder here and a repo there only by coincidence, and a coincidence
  * that fails puts real money on the wrong project. The remote a folder actually
- * pushes to is a fact on disk instead.
+ * pushes to is a fact on disk instead. (Records written before the rollouts
+ * were read carry the old ledger's `owner/name` in that field and answer null
+ * here, which is why the caller keys them under themselves rather than
+ * dropping them.)
  *
  * Read out of `.git/config` rather than shelled out to `git`: this runs per
  * table row when the activity page is opened, never on a poll, and a file read
@@ -147,16 +178,50 @@ export async function transcriptTokenTotal(path) {
  * A **worktree**'s `.git` is a file pointing at `<repo>/.git/worktrees/<name>`,
  * so the suffix is stripped and the repo's own config is read — a worktree
  * pushes where its repo does, and this project makes real keys for worktree
- * sessions, so they must not read as repo-less.
+ * sessions, so they must not read as repo-less. A worktree that has since been
+ * *removed* has no `.git` left to follow, and its money is still real, so the
+ * walk continues up the path until an ancestor is a checkout — `.claude/
+ * worktrees/<name>` under a repo lands on that repo. This is a containing
+ * directory rather than a name that looks similar: work done inside a checkout
+ * belongs to it, and a nested checkout answers for itself first because it is
+ * hit first. The walk stops at the home directory, so nothing ever reads
+ * `~/.git`.
  *
  * A remote session's folder is another machine's path and simply isn't here,
- * which is the honest answer: this machine's ledger holds this machine's
- * reviews.
+ * which is the honest answer: this machine's CODEX_HOME holds this machine's
+ * spend.
  */
 export function repoOf(folder) {
+  for (let at = folder; at; ) {
+    const repo = repoAt(at);
+    // `null` is a checkout that cannot be *named* — no origin, or a worktree
+    // pointing nowhere — and that stops the walk: the folder is its own repo,
+    // and its parent's remote is a different project's. Only `undefined`, "no
+    // checkout here at all", keeps climbing.
+    if (repo !== undefined) return repo;
+    const up = dirname(at);
+    // `up === at` is the filesystem root; the rest are the shapes a `cwd` takes
+    // when it is not a path at all (a pre-rollout record's `owner/name`).
+    if (up === at || up === "." || up === "/" || up === homedir()) return null;
+    at = up;
+  }
+  return null;
+}
+
+/**
+ * The repo one folder is itself a checkout of; `null` if it is a checkout that
+ * cannot be named, `undefined` if it is not one at all.
+ */
+function repoAt(folder) {
   let gitDir = join(folder, ".git");
+  let entry;
   try {
-    if (statSync(gitDir).isFile()) {
+    entry = statSync(gitDir);
+  } catch {
+    return undefined; // nothing here — the caller keeps walking up
+  }
+  try {
+    if (entry.isFile()) {
       const at = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitDir, "utf8"))?.[1];
       if (!at) return null;
       gitDir = at.trim().replace(/\/worktrees\/[^/]+\/?$/, "");
@@ -184,9 +249,10 @@ export function repoOf(folder) {
 // column.
 export const CLAUDE = "claude";
 export const CODEX = "codex";
-// The metered rung, and the only one that costs money per run. The ship skill
-// tries the ChatGPT subscription first and falls back to this; `reviewer` in
-// its ledger is what says which one ran.
+// The metered rung, and the only one that costs money per turn. Which home a
+// rollout was found under is what says whether it ran here or on the plan — the
+// only thing on disk that knows, and the reason the two trees are read
+// separately rather than as one.
 export const CODEX_API = "codex-api";
 
 // One bucket per hour per cwd per model per kind. `sub` is whether the
@@ -276,7 +342,7 @@ export async function collectTokens({
   root = CLAUDE_DIR,
   projectsRoot = join(root, "projects"),
   codexRoot = CODEX_DIR,
-  ledgerPath = LEDGER_PATH,
+  codexApiRoot = CODEX_API_DIR,
 } = {}) {
   const previous = readPositions(root);
   // Rebuilt from the paths that exist *now* rather than mutated in place: Claude
@@ -330,8 +396,8 @@ export async function collectTokens({
     moved = true;
   }
 
-  if (await collectCodex(codexRoot, previous, positions, buckets)) moved = true;
-  if (await collectLedger(ledgerPath, previous, positions, buckets)) moved = true;
+  if (await collectCodex(codexRoot, previous, positions, buckets, CODEX)) moved = true;
+  if (await collectCodex(codexApiRoot, previous, positions, buckets, CODEX_API)) moved = true;
 
   if (!moved) return 0;
   try {
@@ -395,7 +461,7 @@ function codexUsage(t) {
   };
 }
 
-async function collectCodex(codexRoot, previous, positions, buckets) {
+async function collectCodex(codexRoot, previous, positions, buckets, provider = CODEX) {
   let moved = false;
   let names = [];
   try {
@@ -405,7 +471,7 @@ async function collectCodex(codexRoot, previous, positions, buckets) {
   }
 
   for (const name of names) {
-    const key = `codex/${name}`;
+    const key = `${provider}/${name}`;
     const path = join(codexRoot, name);
     let size;
     try {
@@ -450,72 +516,17 @@ async function collectCodex(codexRoot, previous, positions, buckets) {
       const ts = Date.parse(rec?.timestamp ?? "");
       if (!last || Number.isNaN(ts)) continue;
       const usage = codexUsage(last);
+      // Per turn, not per session: the turn is where the model is known for
+      // certain (a session can switch mid-way) and where the timestamp is, so
+      // the money lands in the hour that spent it like every other bucket here.
+      if (provider === CODEX_API) usage.costUsd = priceOf(model, usage);
       if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
-      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, cwd, model, false, usage, CODEX);
+      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, cwd, model, false, usage, provider);
     }
     positions.set(key, slice.at);
     moved = true;
   }
   return moved;
-}
-
-/**
- * The ship-review skill's usage ledger: one line per review, and the only
- * record anywhere of what the metered rung cost.
- *
- * **Only `codex-api` rows are read.** The other rungs are already counted from
- * their own logs — a `codex` row's tokens are in `~/.codex/sessions` and a
- * `fable` row's are a Claude subagent's transcript — so ingesting those would
- * count the same review twice. The metered rung is the one nothing else here
- * can see: it runs under a second CODEX_HOME (`~/.codex-api`) precisely so an
- * API key cannot land in the ChatGPT login, and that tree is deliberately not
- * scanned. The ledger is the source of record for it, which is also what keeps
- * these numbers agreeing with the `review-usage` skill rather than being a
- * second opinion about the same money.
- *
- * The cost of that choice, worth stating because it is the same one
- * `review-usage` documents: a review abandoned mid-triage writes no ledger
- * row, so its tokens and its money are invisible here. A missing row is not a
- * missing review.
- */
-async function collectLedger(path, previous, positions, buckets) {
-  const key = "ledger/ship-reviews.jsonl";
-  let size;
-  try {
-    ({ size } = await stat(path));
-  } catch {
-    return false; // the ship-review skill has never run here
-  }
-  const seen = previous.get(key) ?? 0;
-  const from = seen > size ? 0 : seen;
-  positions.set(key, from);
-  if (from >= size) return false;
-
-  const slice = await newLines(path, from, size);
-  if (!slice) return false;
-  for (const line of slice.lines) {
-    let rec;
-    try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (rec?.reviewer !== CODEX_API) continue;
-    const ts = Date.parse(rec.ts ?? "");
-    if (Number.isNaN(ts)) continue;
-    // `tokens` is null when the rollout lookup failed, and the row still
-    // carries a cost. Counting it for its money alone is right: the review
-    // happened and it was billed.
-    const usage = { ...codexUsage(rec.tokens ?? {}), costUsd: typeof rec.cost_usd === "number" ? rec.cost_usd : 0 };
-    if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
-    // `repo` is `owner/name`, not a path — it is what the ledger records and
-    // the only locator a review has. It sits in the same field a cwd does
-    // because both answer "which project", which is all anything downstream
-    // asks of it.
-    addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, rec.repo ?? "", rec.model ?? "", false, usage, CODEX_API);
-  }
-  positions.set(key, slice.at);
-  return true;
 }
 
 /** Every parseable bucket, in file order. A bad line is skipped, not fatal. */
@@ -569,8 +580,10 @@ export function summariseTokens(records, from, to, step = HOUR_MS) {
     if (rec.sub) row.subCalls += rec.calls ?? 0;
     const p = rec.provider ?? CLAUDE;
     row.outBy[p] = (row.outBy[p] ?? 0) + (rec.out ?? 0);
-    // One ledger row is one review, so calls on the metered rung count runs
-    // rather than turns — the unit anyone asking about cost is thinking in.
+    // Turns, not runs: a rollout is read per `token_count` event, so this is
+    // how many billed round-trips the window holds. The caption says "turns"
+    // for that reason — it used to say "runs" when one ledger row was one
+    // review, and the word had to follow the meaning.
     if (p === CODEX_API) row.apiCalls += rec.calls ?? 0;
   }
   return [...buckets.values()];

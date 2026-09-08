@@ -172,9 +172,40 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   the longest session on disk. `cwd` and `model` live in the session header and
   in `turn_context`, which a byte cursor has usually already passed, so the
   head of the file is re-read for them rather than carried in the bookmark; and
-  bookmarks are namespaced `codex/…` because both trees are keyed by a relative
-  path into one map. Codex reports no cache-write counter and no ttl split, so
+  bookmarks are namespaced by provider (`codex/…`, `codex-api/…`) because all
+  three trees are keyed by a relative path into one map. Codex reports no
+  cache-write counter and no ttl split, so
   those stay zero — absent, not zero-because-nothing-was-written.
+  **The metered rung is the same reader over a second home, priced.**
+  `~/.codex-api` exists so an API key can never overwrite the ChatGPT login,
+  and that separation is what makes the tree readable as money: everything
+  under it billed a key, everything under `~/.codex` billed the plan. Nothing
+  else on the machine knows which — the rollout records tokens and never a
+  price — so `RATES` holds the four per-million figures per model tier (fresh
+  input, cache read, cache **write** at 1.25x fresh rather than a discount, and
+  output), deliberately the same numbers the ship-review skill prices its own
+  runs with. Priced **per turn**, where the model is known for certain (a
+  session can switch mid-way) and where the timestamp is, so money lands in the
+  hour that spent it like every other bucket. A model with no rate on file is
+  counted for its tokens and for **no money at all** — an invented rate reads
+  as a fact, the same rule the context gauge follows for an unmeasured context
+  window.
+  **This replaced the ship-review ledger, which was never the whole bill.**
+  `~/.kobeco/ship-reviews.jsonl` gets one line per *review*, written after
+  triage; the API home runs everything else that wants the API too — `codex
+  exec` from any skill — and an abandoned review writes no row at all. Seven
+  days reading `$0.00` against $41 actually spent is what that gap looked like,
+  and it is the bug class this project refuses outright. The rollouts were
+  always the complete record and the ledger's money a subset of theirs, so
+  reading both would have counted every review twice; the ledger is no longer
+  read here. The cost of the switch, paid once: the figure no longer agrees
+  with the `review-usage` skill by construction — that skill answers "what did
+  the reviews cost", this one answers "what did the API cost", and those are
+  different questions with the same currency. It also means a metered bucket's
+  `cwd` is now a real path like every other bucket's, where the ledger recorded
+  `owner/name`; records written before the switch still hold the old spelling
+  and `repoOf` answers null for them, which is why `index.mjs` keys an
+  unresolvable cwd under itself rather than dropping it.
   **What is still not captured is Claude billed to the API rather than the
   subscription.** Nothing in a transcript says which: no `costUSD`, no
   `apiKeySource`, and `service_tier` is `"standard"` on all of it. When that

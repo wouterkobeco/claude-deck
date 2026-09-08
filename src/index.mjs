@@ -1885,15 +1885,27 @@ export const configDeps = {
     const byCwd = groupTokens(buckets, "cwd", from, now);
     const byProjectTokens = new Map(byCwd.map((r) => [r.cwd, r]));
     const money = (n) => `$${n.toFixed(2)}`;
-    // Money is keyed by repo rather than by path — a metered row's `cwd` is the
-    // ledger's `owner/name` — so a row claims it through `repoOf`, and claims
-    // it *once*: the ledger records which repo a review was billed to and
-    // cannot say which checkout of it, so a repo with two folders in this table
-    // would otherwise show the same money twice and the column would sum past
-    // the total below. Rows are sorted before the map for exactly that reason,
-    // so the one that wins the claim is the folder that spent the most time
-    // rather than whichever the state log happened to mention first.
-    const owedByRepo = new Map(byCwd.filter((r) => (r.costUsd ?? 0) > 0).map((r) => [r.cwd.toLowerCase(), r.costUsd]));
+    // Money is keyed by repo rather than by path, and summed rather than picked:
+    // the metered rung runs wherever the work does, so one repo's spend arrives
+    // split across its checkouts and its worktrees while a table row is a
+    // single folder. A cwd that is no checkout — or is a pre-rollout record,
+    // where the field held the old ledger's `owner/name` — keys under itself.
+    // A repo then claims that total *once*, on the row that spent the most time
+    // (which is why the rows are sorted before they are mapped rather than
+    // after): two folders of one repo would otherwise both show it and the
+    // column would sum past the section below.
+    const owed = new Map();
+    for (const r of byCwd) {
+      if (!((r.costUsd ?? 0) > 0)) continue;
+      const label = repoOf(r.cwd) ?? r.cwd;
+      const at = owed.get(label.toLowerCase());
+      if (at) at.costUsd += r.costUsd;
+      else owed.set(label.toLowerCase(), { label, costUsd: r.costUsd });
+    }
+    // Claimed rather than deleted, because the section below renders the same
+    // map and must stay complete — it is the one that shows a repo with no
+    // session in this window at all.
+    const claimed = new Set();
     const rows = Object.entries(totals)
       // A minute is the floor `dur` can render, so anything under it is a row
       // of four em dashes and a slice too thin to see. Same threshold in both
@@ -1903,8 +1915,9 @@ export const configDeps = {
       .map(([key, st]) => {
         const t = byProjectTokens.get(key);
         const repo = repoOf(key);
-        const owed = repo ? owedByRepo.get(repo.toLowerCase()) : undefined;
-        if (owed) owedByRepo.delete(repo.toLowerCase());
+        const at = repo?.toLowerCase();
+        const billed = at && !claimed.has(at) ? owed.get(at) : undefined;
+        if (billed) claimed.add(at);
         return {
           key,
           name: liveProjects.get(key)?.name ?? key.split("/").filter(Boolean).pop() ?? key,
@@ -1921,8 +1934,8 @@ export const configDeps = {
           tokens: t ? compactCount(t.in + t.out + t.cacheWrite5m + t.cacheWrite1h + t.cacheWrite + t.cacheRead) : "—",
           // The repo the money was billed to, named in the cell's own tooltip:
           // it is what the ledger recorded, and a folder is not obviously one.
-          cost: owed ? money(owed) : "—",
-          repo: owed ? repo : null,
+          cost: billed ? money(billed.costUsd) : "—",
+          repo: billed ? repo : null,
           pct: tracked ? (spent(st) / tracked) * 100 : 0,
           spentMs: spent(st),
         };
@@ -1986,24 +1999,23 @@ export const configDeps = {
     // not printing at all.
     //
     // Per project as well as overall, because "what did this cost me" is asked
-    // about a project far more often than about a machine. It is grouped by
-    // the same `cwd` field everything else is, but a metered row's is the
-    // ledger's `owner/name` repo rather than a path — the review never ran in
-    // a cwd this daemon knows — so it is labelled as recorded. The table above
-    // carries the same money against its folders, joined by `repoOf`; this
-    // section is the one that is complete, since a repo with no session in the
-    // window has no row up there to land on.
+    // about a project far more often than about a machine. Labelled by repo,
+    // the same rollup the table above claims its column from — a metered turn's
+    // cwd is a real folder, often a worktree, and three rows of one repo's
+    // worktrees is a chart that answers a question nobody asked. This section
+    // is the one that is complete, since a repo with no session in the window
+    // has no row up there to land on.
     const total = perBucket.reduce((a, r) => a + (r.costUsd ?? 0), 0);
-    const reviews = perBucket.reduce((a, r) => a + (r.apiCalls ?? 0), 0);
-    const byCost = byCwd.filter((r) => (r.costUsd ?? 0) > 0).sort((a, b) => b.costUsd - a.costUsd);
+    const turns = perBucket.reduce((a, r) => a + (r.apiCalls ?? 0), 0);
+    const byCost = [...owed.values()].sort((a, b) => b.costUsd - a.costUsd);
     // Bars scale to the priciest project, like every other chart here: a run
     // that cost forty cents against a fixed dollar would draw as a sliver.
     const peakCost = scale(byCost.map((r) => r.costUsd));
     const spend = total > 0
       ? {
-          caption: `${money(total)} billed outside the subscription · ${reviews} run${reviews === 1 ? "" : "s"}`,
+          caption: `${money(total)} billed outside the subscription · ${turns} turn${turns === 1 ? "" : "s"}`,
           rows: byCost.map((r) => ({
-            label: r.cwd || "unknown",
+            label: r.label || "unknown",
             bars: [{ state: "codex-api", pct: (r.costUsd / peakCost) * 100 }],
             value: money(r.costUsd),
           })),

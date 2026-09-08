@@ -75,12 +75,15 @@ The page's **Activity** tab is everything a 72px key can't carry:
   second opinion, so that work shows beside Claude's rather than going
   uncounted; the columns only stack (and the legend only appears) if more than
   one vendor actually ran in the window.
-- **What the metered reviews cost.** That skill falls back from the ChatGPT
-  subscription to the paid OpenAI API, and those runs are the only ones on the
-  machine that cost money per run. The dollar figure comes from the skill's own
-  ledger (`~/.kobeco/ship-reviews.jsonl`, the same file the `review-usage`
-  skill reads), so the two always agree. A window with no paid review says
-  nothing rather than `$0.00` — the other rungs are prepaid, not free.
+- **What the API cost.** Codex run against a paid OpenAI key uses its own
+  `CODEX_HOME` (`~/.codex-api`, kept separate so a key can never overwrite the
+  ChatGPT login), and everything logged under there is the only work on this
+  machine that costs money per turn. Its rollouts are read and priced per turn
+  from the published rates; a model with no rate on file is counted for its
+  tokens and for no money, never a guessed amount. A window with nothing billed
+  says nothing rather than `$0.00` — the other rungs are prepaid, not free.
+  This is broader than the `review-usage` skill's figure on purpose: that one
+  answers "what did the reviews cost", this one "what did the API cost".
 - **Sessions in parallel**, the peak per bucket, coloured by what they were doing.
   Open is not the same as working, and this is the difference. An hour the
   daemon wasn't running is drawn striped rather than empty — a sleeping
@@ -153,8 +156,8 @@ overwritten. The conversation itself comes across whole.
 
 The state history is `~/.claude/streamdeck-history.jsonl`, kept 30 days; the
 token totals are `~/.claude/streamdeck-tokens.jsonl`, kept a year, read from
-Claude Code's transcripts, the Codex CLI's session logs, and the ship-review
-ledger. That second
+Claude Code's transcripts and the Codex CLI's session logs — both homes, the
+subscription's and the API's. That second
 file exists because both tools delete their own history — Claude Code after 30
 days (`cleanupPeriodDays`) — so the numbers have to be copied out while
 they're there. Both are read-only history — delete either and the charts start again
