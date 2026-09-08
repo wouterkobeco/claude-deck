@@ -147,6 +147,20 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   field lives by. **Server-rendered HTML with form POSTs,
   not a JSON API**, and the deciding reason is this repo's quality model rather
   than taste: a POST handler is checkable by a real server on port 0 and a real
+  **"Out of pocket" is money the subscriptions did not cover, overall and per
+  project.** Every rung but the metered one is zero by construction — a
+  subscription turn is prepaid, not free — so the section is *absent* rather
+  than $0.00 for a window nothing was billed in, the same rule the legend
+  follows for a vendor that never ran. The per-project rows come out of
+  `groupTokens(buckets, "cwd")`, which the model chart already pays for, and
+  they are labelled with what the row actually holds: a metered row's `cwd` is
+  the ship-review ledger's `owner/name` repo, because the review ran under its
+  own CODEX_HOME and never in a cwd this daemon has seen. Matching that repo
+  back onto a local folder — so the money could become a column in the project
+  table above — would be a basename guess, and a wrong one attributes real
+  money to the wrong project; the list stands on its own instead. The amber is
+  `codex-api`'s own fill from the token chart, so the caption, the bars and the
+  columns above them are visibly the same money.
   `fetch`, while client JS inside a template literal is the one thing here that
   nothing can lint, import or run. Its whole coupling to the daemon is a `deps`
   object of `projects()` and `setAccent()`, so when drag-to-reorder needs real

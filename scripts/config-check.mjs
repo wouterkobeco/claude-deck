@@ -234,12 +234,19 @@ const activity = {
     // a legend. A machine that never runs the ship review reports one provider
     // and gets neither.
     providers: ["claude", "codex"],
-    // Money is its own line rather than another number in the heading: every
-    // rung but the metered one is zero by construction.
-    cost: "$5.75 billed to the metered API · 17 reviews",
     cols: [
       { label: "09:00", tick: "9h", bars: [{ state: "claude", pct: 70 }, { state: "codex", pct: 30 }], value: "claude 630k · codex 270k" },
       { label: "10:00", tick: "", bars: [{ state: "claude", pct: 40 }], value: "claude 360k" },
+    ],
+  },
+  // Money in its own section: the overall total as a caption, then one row
+  // per project. A metered row's project is the ledger's `owner/name` repo
+  // rather than a path, which is what reaches the label here.
+  spend: {
+    caption: "$5.75 billed outside the subscription · 17 runs",
+    rows: [
+      { label: "wouterkobeco/alpha", bars: [{ state: "codex-api", pct: 100 }], value: "$4.00" },
+      { label: '<script>"x', bars: [{ state: "codex-api", pct: 44 }], value: "$1.75" },
     ],
   },
   // Input has its own chart — it runs orders of magnitude above output — and
@@ -364,10 +371,10 @@ eq(hHtml.split('class="blocked"').length - 1, 1, "an em dash in the blocked colu
 eq(hHtml.includes("height:70%"), true, "the tallest column fills the plot");
 eq(hHtml.includes("height:40%"), true, "and a shorter one is scaled against it");
 eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row per name");
-// Three token segments, one model bar, two session segments, two token-legend
-// swatches, four state-legend swatches — and the two rate-limit meters that
-// moved onto the top of this page, which are one fill each.
-eq(hHtml.split("<i style=").length - 1, 26, "one element per bar segment, plus the legend swatches and the eight meters");
+// Three token segments, two spend bars, one model bar, two session segments,
+// two token-legend swatches, four state-legend swatches — and the two
+// rate-limit meters that moved onto the top of this page, one fill each.
+eq(hHtml.split("<i style=").length - 1, 28, "one element per bar segment, plus the legend swatches and the eight meters");
 eq(hHtml.split('class="col unseen"').length - 1, 3, "an unwatched hour is striped rather than empty — in the sessions and both memory charts");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.
@@ -381,12 +388,13 @@ eq(hHtml.includes("peak 900k"), true, "and the scale is stated, since no column 
 // legend only because more than one of them ran.
 eq(hHtml.includes("background:#4fc3f7"), true, "claude keeps the page's blue");
 eq(hHtml.includes("background:#66bb6a"), true, "codex gets its own");
-eq(hHtml.includes("$5.75 billed to the metered API · 17 reviews"), true, "and the metered rung's cost is stated as money, not tokens");
+eq(hHtml.includes("$5.75 billed outside the subscription · 17 runs"), true, "and the metered rung's cost is stated as money, not tokens");
+eq(hHtml.includes("$4.00") && hHtml.includes("$1.75"), true, "with the same money broken out per project");
 const free = await createConfigServer({
   projects,
   setAccent: () => {},
   reorder: () => {},
-  activity: () => ({ ...activity, tokens: { ...activity.tokens, cost: null } }),
+  activity: () => ({ ...activity, spend: null }),
   // The activity page absorbed the rate-limit block, so every server that
   // renders it needs both formatters.
   status: async () => ({

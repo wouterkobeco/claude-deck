@@ -118,9 +118,10 @@ const STYLE = `
   .legend { display:flex; gap:18px; font-size:13px; color:#757575; margin:10px 0 0 }
   .legend i { display:inline-block; width:11px; height:11px; border-radius:2px;
               margin-right:6px; vertical-align:-1px }
-  /* Money, not tokens — its own line rather than another number crowding the
-     heading, and in the metered rung's own amber. */
-  .cost { font-size:14px; color:#ffb300; margin:12px 0 0 }
+  /* Money, not tokens — its own line above the per-project bars rather than
+     another number crowding the heading, and in the metered rung's own amber
+     so the caption and the bars under it read as one thing. */
+  .cost { font-size:14px; color:#ffb300; margin:0 0 12px }
   /* Time series run left to right, so their bars stand up: one column per
      hour, height as a percentage of the busiest one. The horizontal .chart
      above stays for the by-model list, where the categories are names rather
@@ -376,7 +377,7 @@ const facts = (blocked, stats) =>
     .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, input, sessions, models, memory: memCharts = [] }, status) {
+function activityPage(token, { period, periods, rows, pie, tokens, spend, input, sessions, models, memory: memCharts = [] }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th><th>Tokens</th></tr>
@@ -425,7 +426,14 @@ function activityPage(token, { period, periods, rows, pie, tokens, input, sessio
           ? ""
           : `<h2>Output tokens<span class="peak">peak ${esc(tokens.peak)}</span></h2>${columns(tokens)}${
               tokens.providers.length > 1 ? legend(tokens.providers) : ""
-            }${tokens.cost ? `<p class="cost">${esc(tokens.cost)}</p>` : ""}`
+            }`
+      }
+      ${
+        // Money, next to the chart whose amber bars it explains. Absent rather
+        // than $0.00 when nothing was billed — see where it is computed.
+        !spend
+          ? ""
+          : `<h2>Out of pocket</h2><p class="cost">${esc(spend.caption)}</p>${chart(spend.rows, true)}`
       }
       ${
         !input || input.cols.length === 0

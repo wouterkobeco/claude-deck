@@ -1946,15 +1946,8 @@ export const configDeps = {
     // entry — a machine that has never run the ship review must not grow a
     // legend explaining a colour it will never see.
     const providers = [...new Set(perBucket.flatMap((r) => Object.keys(r.outBy)))].sort();
-    // Money is its own line, not another number in the heading: every rung but
-    // the metered one is zero by construction — prepaid, not free — so a total
-    // that is zero says "no API review ran in this window" and is worth not
-    // printing at all.
-    const spend = perBucket.reduce((a, r) => a + (r.costUsd ?? 0), 0);
-    const reviews = perBucket.reduce((a, r) => a + (r.apiCalls ?? 0), 0);
     const tokens = {
       peak: `${compactCount(peakOut)}/${unit}`,
-      cost: spend > 0 ? `$${spend.toFixed(2)} billed to the metered API · ${reviews} review${reviews === 1 ? "" : "s"}` : null,
       providers,
       cols: perBucket.map((r, i) => ({
         label: title(new Date(r.hour)),
@@ -1967,6 +1960,38 @@ export const configDeps = {
           : compactCount(r.out),
       })),
     };
+
+    // Money, in its own section rather than as a number in a heading: every
+    // rung but the metered one is zero by construction — prepaid, not free —
+    // so a total of zero says "nothing was billed in this window" and is worth
+    // not printing at all.
+    //
+    // Per project as well as overall, because "what did this cost me" is asked
+    // about a project far more often than about a machine. It is grouped by
+    // the same `cwd` field everything else is, but a metered row's is the
+    // ledger's `owner/name` repo rather than a path — the review never ran in
+    // a cwd this daemon knows — so it is labelled as recorded rather than
+    // matched against a folder. Guessing which local checkout `kob-trace`
+    // means is the kind of plausible answer this project refuses.
+    const total = perBucket.reduce((a, r) => a + (r.costUsd ?? 0), 0);
+    const reviews = perBucket.reduce((a, r) => a + (r.apiCalls ?? 0), 0);
+    const byCost = groupTokens(buckets, "cwd", from, now)
+      .filter((r) => (r.costUsd ?? 0) > 0)
+      .sort((a, b) => b.costUsd - a.costUsd);
+    // Bars scale to the priciest project, like every other chart here: a run
+    // that cost forty cents against a fixed dollar would draw as a sliver.
+    const peakCost = scale(byCost.map((r) => r.costUsd));
+    const money = (n) => `$${n.toFixed(2)}`;
+    const spend = total > 0
+      ? {
+          caption: `${money(total)} billed outside the subscription · ${reviews} run${reviews === 1 ? "" : "s"}`,
+          rows: byCost.map((r) => ({
+            label: r.cwd || "unknown",
+            bars: [{ state: "codex-api", pct: (r.costUsd / peakCost) * 100 }],
+            value: money(r.costUsd),
+          })),
+        }
+      : null;
 
     // Input, on its own chart: it runs two orders of magnitude above output
     // here (cache reads dominate), so sharing an axis would flatten output to
@@ -2061,7 +2086,7 @@ export const configDeps = {
     };
     const memory = [memoryCharts("This Mac", null), ...memoryHosts(records).map((h) => memoryCharts(h, h))];
 
-    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, input, models, sessions, memory };
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, spend, input, models, sessions, memory };
   },
 };
 
