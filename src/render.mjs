@@ -555,6 +555,11 @@ const GAUGE_HEIGHT = 3;
 // none when `active` is left out (the memory key), and rows that carry either a
 // `pct` (a bar) or a `text` (a reset time, no bar). Without them this is the
 // usage key exactly as it always was.
+// A value too wide for its slot shrinks rather than running under its own
+// caps: "12%" never needed this, "21h45m" on a reset tile does.
+export const fitValue = (s, budget, size) =>
+  Math.min(size, Math.floor((size * budget) / Math.max(1, measureText(s, size))));
+
 export async function renderUsage({ width, height, session, week, title, active, rows }) {
   const titleH = title ? Math.round(height * 0.18) : 0;
   const half = (height - titleH) / 2;
@@ -593,10 +598,12 @@ export async function renderUsage({ width, height, session, week, title, active,
       // line — "SE  12%" — centred on each other, rather than stacking.
       if (title) {
         const y = top + (known ? half * 0.4 : half * 0.5);
+        const short = { SESSION: "SE", WEEK: "WK" }[caps] ?? caps;
+        const size = fitValue(value, width - 15 - measureText(short, capSize, CAPS_LETTER_SPACING), pctSize);
         return `
         <text x="6" y="${y}" font-family="sans-serif" font-size="${capSize}" font-weight="bold"
-              letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" dominant-baseline="middle">${{ SESSION: "SE", WEEK: "WK" }[caps] ?? caps}</text>
-        <text x="${width - 6}" y="${y}" font-family="sans-serif" font-size="${pctSize}" fill="#ffffff"
+              letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" dominant-baseline="middle">${short}</text>
+        <text x="${width - 6}" y="${y}" font-family="sans-serif" font-size="${size}" fill="#ffffff"
               text-anchor="end" dominant-baseline="middle">${value}</text>
         ${bar}`;
       }
@@ -604,7 +611,7 @@ export async function renderUsage({ width, height, session, week, title, active,
         <text x="50%" y="${top + half * 0.24}" font-family="sans-serif" font-size="${capSize}"
               font-weight="bold" letter-spacing="${CAPS_LETTER_SPACING}" fill="#ffffff99" text-anchor="middle"
               dominant-baseline="middle">${caps}</text>
-        <text x="50%" y="${top + half * (text !== undefined ? 0.68 : 0.6)}" font-family="sans-serif" font-size="${pctSize}"
+        <text x="50%" y="${top + half * (text !== undefined ? 0.68 : 0.6)}" font-family="sans-serif" font-size="${fitValue(value, width - 12, pctSize)}"
               fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${value}</text>
         ${bar}`;
     })

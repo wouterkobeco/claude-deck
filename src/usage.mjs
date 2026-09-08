@@ -112,19 +112,21 @@ export const daysUntil = (iso, now = Date.now()) => until(iso, 86_400_000, now);
 export const hoursUntil = (iso, now = Date.now()) => until(iso, 3_600_000, now);
 export const minutesUntil = (iso, now = Date.now()) => until(iso, 60_000, now);
 
-// The reset tiles' text: coarse unit ("hours" for the 5h window, "days" for
-// the 7d one) until under an hour is left, where "0h" stops being honest and
-// minutes take over. Null through to the caller's own placeholder.
+// The reset tiles' text: hours carry their minutes ("3h20m"), because a bare
+// "3h" was a ceil that read the same at 2h01m as at 3h00m. Under an hour it's
+// minutes alone; a week further than a day out stays "days", where the
+// minutes would be noise. Null through to the caller's own placeholder.
 export function formatReset(iso, unit, now = Date.now()) {
   if (!iso) return null;
   const minutes = minutesUntil(iso, now);
   if (minutes < 60) return `${minutes}m`;
-  if (unit === "hours") return `${hoursUntil(iso, now)}h`;
   // "days" drops to the finer unit under a day, the same reason "hours" drops
   // to minutes under an hour: `daysUntil` ceils, so 1h and 23h both read "1d"
   // otherwise — honest about "resets today" but not about how soon.
-  const hours = hoursUntil(iso, now);
-  return hours < 24 ? `${hours}h` : `${daysUntil(iso, now)}d`;
+  if (unit === "days" && minutes >= 1440) return `${daysUntil(iso, now)}d`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h}h${m}m` : `${h}h`;
 }
 
 export async function fetchUsage() {

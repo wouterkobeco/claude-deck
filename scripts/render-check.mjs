@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, renderIcon, wrapLabel, wrapWords, ellipsize, measureText } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, renderIcon, wrapLabel, wrapWords, ellipsize, measureText, fitValue } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -543,5 +543,14 @@ for (const size of [180, 192, 512]) {
   eq(meta.width, size, `icon-${size} is that wide`);
   eq(meta.height, size, `icon-${size} is square`);
 }
+
+// A usage row's value shrinks only when it would run into its own caps: the
+// reset tiles now carry minutes ("21h45m"), a percentage almost never does.
+{
+  const budget = 44;
+  eq(fitValue("3h", budget, 18), 18, "a value that already fits keeps its size");
+  for (const s of ["3h20m", "21h45m"]) eq(measureText(s, fitValue(s, budget, 18)) <= budget, true, `${s} fits its slot`);
+}
+console.log("OK: usage value fits its slot");
 
 console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, inactive key, leaving bar, back key, compacting spinner, home-screen icon");

@@ -296,13 +296,15 @@ const limits = (rows) =>
     )
     .join("")}</div>`;
 
-// "5h" -> "5 hours", "45m" -> "45 minutes", "6d" -> "6 days".
+// "5h" -> "5 hours", "45m" -> "45 minutes", "6d" -> "6 days",
+// "3h20m" -> "3 hours 20 minutes".
 const UNIT_WORDS = { h: "hour", m: "minute", d: "day" };
 function resetPhrase(compact) {
-  const m = /^(\d+)([hmd])$/.exec(compact ?? "");
-  if (!m) return null;
-  const n = Number(m[1]);
-  return `${n} ${UNIT_WORDS[m[2]]}${n === 1 ? "" : "s"}`;
+  const s = compact ?? "";
+  if (!/^\d+[hmd](\d+m)?$/.test(s)) return null;
+  return [...s.matchAll(/(\d+)([hmd])/g)]
+    .map(([, n, u]) => `${n} ${UNIT_WORDS[u]}${Number(n) === 1 ? "" : "s"}`)
+    .join(" ");
 }
 
 // A rate-limit window. The title states the reset directly — "Session

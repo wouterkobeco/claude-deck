@@ -299,7 +299,7 @@ const withHistory = await createConfigServer({
   // The activity page absorbed the rate-limit block, so every server that
   // renders it needs both formatters.
   status: async () => ({
-    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    usage: { session: 82, week: 26, sessionResets: "2h35m", weekResets: "7d" },
     stats: [{ label: "Sessions", value: "4.4k" }],
     blocked: "41m",
     version: "9.9.9",
@@ -390,7 +390,7 @@ const free = await createConfigServer({
   // The activity page absorbed the rate-limit block, so every server that
   // renders it needs both formatters.
   status: async () => ({
-    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    usage: { session: 82, week: 26, sessionResets: "2h35m", weekResets: "7d" },
     stats: [{ label: "Sessions", value: "4.4k" }],
     blocked: "41m",
     version: "9.9.9",
@@ -407,7 +407,7 @@ const oneVendor = await createConfigServer({
   // The activity page absorbed the rate-limit block, so every server that
   // renders it needs both formatters.
   status: async () => ({
-    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    usage: { session: 82, week: 26, sessionResets: "2h35m", weekResets: "7d" },
     stats: [{ label: "Sessions", value: "4.4k" }],
     blocked: "41m",
     version: "9.9.9",
@@ -457,7 +457,7 @@ const emptyHistory = await createConfigServer({
   reorder: () => {},
   activity: () => ({ period: "24h", periods: PERIODS, rows: [], tokens: { peak: "—", cols: [] }, models: [], sessions: { peak: "—", cols: [] } }),
   status: async () => ({
-    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    usage: { session: 82, week: 26, sessionResets: "2h35m", weekResets: "7d" },
     stats: [{ label: "Sessions", value: "4.4k" }],
     blocked: "41m",
     version: "9.9.9",
@@ -541,7 +541,7 @@ const boardSrv = await createConfigServer({
   activity: () => activity,
   reorder: () => {},
   status: async () => ({
-    usage: { session: 82, week: 26, sessionResets: "2h", weekResets: "7d" },
+    usage: { session: 82, week: 26, sessionResets: "2h35m", weekResets: "7d" },
     // Untrusted the same way every other label here is — this reaches the page
     // from another tool's cache file.
     stats: [{ label: '<script>alert(1)</script>', value: "66b" }, { label: "Sessions", value: "4.4k" }],
@@ -624,7 +624,7 @@ eq(board.includes('<p class="sver">Claude Deck v9.9.9</p>'), true, "the sheet ca
 eq((await fetch(`${bBase}/status?t=${bToken}`)).status, 404, "the page they used to live on is gone");
 const act = await (await fetch(`${bBase}/activity?t=${bToken}`)).text();
 eq(act.includes("82%"), true, "the session window's percentage is on the activity page");
-eq(act.includes("Session resets in 2 hours"), true, "the reset is stated directly in the title");
+eq(act.includes("Session resets in 2 hours 35 minutes"), true, "the reset is stated directly in the title, minutes and all");
 eq(act.includes("Week resets in 7 days"), true, "and the same for the week");
 eq(act.includes("41m"), true, "today's blocked time, which the deck lost a slot for once");
 eq(act.includes("9.9.9"), true, "and the daemon's own version");
