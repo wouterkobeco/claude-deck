@@ -208,11 +208,14 @@ withOrder.server.close();
 // rather than reconstructing a day of transitions and a gigabyte of
 // transcripts.
 const historyRows = [
-  { key: ALPHA, name: "alpha", accent: "#4fc3f7", busy: "3h12m", waiting: "41m", blocked: "18m", total: "4h11m", pct: 80 },
+  // `cost`/`repo` are the metered spend this project's own repo was billed —
+  // index.mjs owns the repo join and the once-per-repo rule, so what reaches
+  // the page is a formatted amount and the repo to name in its tooltip.
+  { key: ALPHA, name: "alpha", accent: "#4fc3f7", busy: "3h12m", waiting: "41m", blocked: "18m", total: "4h11m", tokens: "1.2M", cost: "$4.00", repo: "wouterkobeco/alpha", pct: 80 },
   // An accent reaches a CSS colour slot rather than text, so a hostile one is
   // a fixture rather than a hypothetical: readAccents only checks that the
   // stored value is a string.
-  { key: NASTY, name: '<script>"x', accent: "red;background:url(evil)", busy: "—", waiting: "—", blocked: "—", total: "51m", pct: 20 },
+  { key: NASTY, name: '<script>"x', accent: "red;background:url(evil)", busy: "—", waiting: "—", blocked: "—", total: "51m", tokens: "—", cost: "—", repo: null, pct: 20 },
 ];
 const PERIODS = [{ key: "24h", name: "24 hours" }, { key: "7d", name: "7 days" }, { key: "all", name: "all time" }];
 const activity = {
@@ -364,6 +367,10 @@ eq(hHtml.includes("&lt;script&gt;"), true, "it is escaped there too");
 // row with none must not wear it: alpha has a value, the second row an em
 // dash.
 eq(hHtml.split('class="blocked"').length - 1, 1, "an em dash in the blocked column is not coloured");
+// The money column, on the row whose repo the ledger billed. The caption below
+// is one class="cost" of its own, so the count is the cell plus that paragraph.
+eq(hHtml.includes('class="cost" title="billed to wouterkobeco/alpha">$4.00'), true, "a project's spend names the repo it was billed to");
+eq(hHtml.split('class="cost"').length - 1, 2, "and a project the subscription covered gets a grey em dash, not a coloured zero");
 
 // The charts. Widths are the only thing the browser is asked to do, so the
 // percentage has to survive into the attribute — a bar that renders at 0%
@@ -394,7 +401,10 @@ const free = await createConfigServer({
   projects,
   setAccent: () => {},
   reorder: () => {},
-  activity: () => ({ ...activity, spend: null }),
+  // A window where nothing was billed has no section *and* no cell — the two
+  // come from the same buckets, so a fixture with one and not the other would
+  // be a state that cannot happen.
+  activity: () => ({ ...activity, spend: null, rows: historyRows.map((r) => ({ ...r, cost: "—", repo: null })) }),
   // The activity page absorbed the rate-limit block, so every server that
   // renders it needs both formatters.
   status: async () => ({
@@ -405,7 +415,8 @@ const free = await createConfigServer({
   }),
 });
 const nocost = await (await fetch(free.url.replace("/?", "/activity?"))).text();
-eq(nocost.includes('class="cost"'), false, "a window with no API review says nothing rather than $0.00");
+eq(nocost.includes("Out of pocket</h2>"), false, "a window with no API review says nothing rather than $0.00");
+eq(nocost.includes('class="cost"'), false, "and nothing in the table is coloured as spend either");
 free.server.close();
 const oneVendor = await createConfigServer({
   projects,

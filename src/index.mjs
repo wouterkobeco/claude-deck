@@ -29,6 +29,7 @@ import {
   groupTokens,
   HOUR_MS,
   readTokens,
+  repoOf,
   summariseTokens,
   transcriptTokenTotal,
 } from "./tokens.mjs";
@@ -1881,14 +1882,29 @@ export const configDeps = {
     // another read. Keyed on the bare cwd, which is what a local project's
     // history key already is — a remote project's key carries its host and
     // never matches, since tokens.mjs never reads a remote transcript at all.
-    const byProjectTokens = new Map(groupTokens(buckets, "cwd", from, now).map((r) => [r.cwd, r]));
+    const byCwd = groupTokens(buckets, "cwd", from, now);
+    const byProjectTokens = new Map(byCwd.map((r) => [r.cwd, r]));
+    const money = (n) => `$${n.toFixed(2)}`;
+    // Money is keyed by repo rather than by path — a metered row's `cwd` is the
+    // ledger's `owner/name` — so a row claims it through `repoOf`, and claims
+    // it *once*: the ledger records which repo a review was billed to and
+    // cannot say which checkout of it, so a repo with two folders in this table
+    // would otherwise show the same money twice and the column would sum past
+    // the total below. Rows are sorted before the map for exactly that reason,
+    // so the one that wins the claim is the folder that spent the most time
+    // rather than whichever the state log happened to mention first.
+    const owedByRepo = new Map(byCwd.filter((r) => (r.costUsd ?? 0) > 0).map((r) => [r.cwd.toLowerCase(), r.costUsd]));
     const rows = Object.entries(totals)
       // A minute is the floor `dur` can render, so anything under it is a row
       // of four em dashes and a slice too thin to see. Same threshold in both
       // places rather than two that nearly agree.
       .filter(([key, st]) => key && spent(st) >= 60000)
+      .sort(([, a], [, b]) => spent(b) - spent(a))
       .map(([key, st]) => {
         const t = byProjectTokens.get(key);
+        const repo = repoOf(key);
+        const owed = repo ? owedByRepo.get(repo.toLowerCase()) : undefined;
+        if (owed) owedByRepo.delete(repo.toLowerCase());
         return {
           key,
           name: liveProjects.get(key)?.name ?? key.split("/").filter(Boolean).pop() ?? key,
@@ -1903,11 +1919,14 @@ export const configDeps = {
           blocked: dur(st.requires_action),
           total: dur(spent(st)),
           tokens: t ? compactCount(t.in + t.out + t.cacheWrite5m + t.cacheWrite1h + t.cacheWrite + t.cacheRead) : "—",
+          // The repo the money was billed to, named in the cell's own tooltip:
+          // it is what the ledger recorded, and a folder is not obviously one.
+          cost: owed ? money(owed) : "—",
+          repo: owed ? repo : null,
           pct: tracked ? (spent(st) / tracked) * 100 : 0,
           spentMs: spent(st),
         };
-      })
-      .sort((a, b) => b.spentMs - a.spentMs);
+      });
 
     // Cumulative stops rather than shares: a conic-gradient wants "this colour
     // from here to there", and doing that running total in the page would put
@@ -1970,18 +1989,16 @@ export const configDeps = {
     // about a project far more often than about a machine. It is grouped by
     // the same `cwd` field everything else is, but a metered row's is the
     // ledger's `owner/name` repo rather than a path — the review never ran in
-    // a cwd this daemon knows — so it is labelled as recorded rather than
-    // matched against a folder. Guessing which local checkout `kob-trace`
-    // means is the kind of plausible answer this project refuses.
+    // a cwd this daemon knows — so it is labelled as recorded. The table above
+    // carries the same money against its folders, joined by `repoOf`; this
+    // section is the one that is complete, since a repo with no session in the
+    // window has no row up there to land on.
     const total = perBucket.reduce((a, r) => a + (r.costUsd ?? 0), 0);
     const reviews = perBucket.reduce((a, r) => a + (r.apiCalls ?? 0), 0);
-    const byCost = groupTokens(buckets, "cwd", from, now)
-      .filter((r) => (r.costUsd ?? 0) > 0)
-      .sort((a, b) => b.costUsd - a.costUsd);
+    const byCost = byCwd.filter((r) => (r.costUsd ?? 0) > 0).sort((a, b) => b.costUsd - a.costUsd);
     // Bars scale to the priciest project, like every other chart here: a run
     // that cost forty cents against a fixed dollar would draw as a sliver.
     const peakCost = scale(byCost.map((r) => r.costUsd));
-    const money = (n) => `$${n.toFixed(2)}`;
     const spend = total > 0
       ? {
           caption: `${money(total)} billed outside the subscription · ${reviews} run${reviews === 1 ? "" : "s"}`,

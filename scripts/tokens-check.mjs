@@ -11,7 +11,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CLAUDE, CODEX, collectTokens, compactTokens, groupTokens, readTokens, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
+import { CLAUDE, CODEX, collectTokens, compactTokens, groupTokens, readTokens, repoOf, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "streamdeck-tokens-check-"));
 const projects = join(root, "projects");
@@ -290,4 +290,39 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with no Codex CLI o
   );
 }
 
-console.log("OK: token extraction, incremental reads, codex, the review ledger, grouping, compaction");
+// The join between the two things a bucket's `cwd` can be: a path, and the
+// ledger's `owner/name`. Both spellings of a remote, a worktree's indirection,
+// and every shape that is not a checkout at all — a wrong answer here puts real
+// money on the wrong project, which is worse than no answer.
+{
+  const repos = join(root, "repos");
+  const mk = async (name, url) => {
+    const dir = join(repos, name);
+    await mkdir(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".git", "config"), `[core]\n\tbare = false\n[remote "origin"]\n\tpushurl = git@github.com:someone/wrong.git\n\turl = ${url}\n[branch "main"]\n`);
+    return dir;
+  };
+  const ssh = await mk("ssh", "git@github.com:owner/name.git");
+  assert.equal(repoOf(ssh), "owner/name", "an ssh remote is owner/name, and pushurl is not url");
+  const https = await mk("https", "https://github.com/Owner/Other");
+  assert.equal(repoOf(https), "Owner/Other", "an https remote too, with no .git to strip");
+
+  // A worktree's .git is a file pointing into the repo's own gitdir. This
+  // project makes real keys for worktree sessions, so they must not read as
+  // repo-less — they push where their repo does.
+  const tree = join(repos, "tree");
+  await mkdir(tree, { recursive: true });
+  writeFileSync(join(tree, ".git"), `gitdir: ${join(ssh, ".git", "worktrees", "feature")}\n`);
+  assert.equal(repoOf(tree), "owner/name", "a worktree answers with its repo");
+
+  const bare = join(repos, "nogit");
+  await mkdir(bare, { recursive: true });
+  assert.equal(repoOf(bare), null, "a folder that is not a checkout has no repo");
+  assert.equal(repoOf(join(repos, "does-not-exist")), null, "and neither does a path that isn't on this machine at all");
+  const noremote = join(repos, "noremote");
+  await mkdir(join(noremote, ".git"), { recursive: true });
+  writeFileSync(join(noremote, ".git", "config"), '[core]\n\tbare = false\n[remote "upstream"]\n\turl = git@github.com:x/y.git\n');
+  assert.equal(repoOf(noremote), null, "a checkout with no origin is not guessed from another remote");
+}
+
+console.log("OK: token extraction, incremental reads, codex, the review ledger, grouping, compaction, the repo join");

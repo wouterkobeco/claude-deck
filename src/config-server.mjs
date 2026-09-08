@@ -118,10 +118,14 @@ const STYLE = `
   .legend { display:flex; gap:18px; font-size:13px; color:#757575; margin:10px 0 0 }
   .legend i { display:inline-block; width:11px; height:11px; border-radius:2px;
               margin-right:6px; vertical-align:-1px }
-  /* Money, not tokens — its own line above the per-project bars rather than
+  /* Money, not tokens — the caption above the per-project bars rather than
      another number crowding the heading, and in the metered rung's own amber
-     so the caption and the bars under it read as one thing. */
-  .cost { font-size:14px; color:#ffb300; margin:0 0 12px }
+     so the caption, the bars under it and the table's own column all read as
+     the same money. Applied per cell the way the blocked column is — no
+     backticks in here, STYLE is a template literal — so an em dash for "the
+     subscription covered it" stays grey rather than being coloured as spend. */
+  .cost { color:#ffb300 }
+  p.cost { font-size:14px; margin:0 0 12px }
   /* Time series run left to right, so their bars stand up: one column per
      hour, height as a percentage of the busiest one. The horizontal .chart
      above stays for the by-model list, where the categories are names rather
@@ -380,7 +384,7 @@ const facts = (blocked, stats) =>
 function activityPage(token, { period, periods, rows, pie, tokens, spend, input, sessions, models, memory: memCharts = [] }, status) {
   const table = () => `
     <table>
-      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th><th>Tokens</th></tr>
+      <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th><th>Tokens</th><th>Out of pocket</th></tr>
       ${rows
         .map(
           (r) => `<tr>
@@ -390,6 +394,7 @@ function activityPage(token, { period, periods, rows, pie, tokens, spend, input,
         <td${r.blocked === "—" ? "" : ' class="blocked"'}>${esc(r.blocked)}</td>
         <td>${esc(r.total)}</td>
         <td>${esc(r.tokens)}</td>
+        <td${r.repo ? ` class="cost" title="billed to ${esc(r.repo)}"` : ""}>${esc(r.cost)}</td>
       </tr>`
         )
         .join("")}

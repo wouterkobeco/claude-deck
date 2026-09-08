@@ -21,7 +21,7 @@
 // the log — a bookmark is rewritten on every pass and the log is only ever
 // appended to — and without it every pass would re-read 2GB and double every
 // total.
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -126,6 +126,53 @@ export async function transcriptTokenTotal(path) {
     totals.cacheRead += usage.cacheRead;
   }
   return totals;
+}
+
+/**
+ * The `owner/name` a folder's git origin points at, or null for anything that
+ * isn't a checkout of one.
+ *
+ * This is the join between the two things a bucket's `cwd` can be. A Claude or
+ * Codex row's is a real path, because that is where the session ran; a metered
+ * row's is the ship-review ledger's `owner/name`, because that review ran under
+ * its own CODEX_HOME and never in a cwd this daemon has seen. Matching them on
+ * a basename was the obvious cheap answer and is the wrong one — `kob-trace`
+ * names a folder here and a repo there only by coincidence, and a coincidence
+ * that fails puts real money on the wrong project. The remote a folder actually
+ * pushes to is a fact on disk instead.
+ *
+ * Read out of `.git/config` rather than shelled out to `git`: this runs per
+ * table row when the activity page is opened, never on a poll, and a file read
+ * is cheaper than a subprocess by enough that no cache is worth its staleness.
+ * A **worktree**'s `.git` is a file pointing at `<repo>/.git/worktrees/<name>`,
+ * so the suffix is stripped and the repo's own config is read — a worktree
+ * pushes where its repo does, and this project makes real keys for worktree
+ * sessions, so they must not read as repo-less.
+ *
+ * A remote session's folder is another machine's path and simply isn't here,
+ * which is the honest answer: this machine's ledger holds this machine's
+ * reviews.
+ */
+export function repoOf(folder) {
+  let gitDir = join(folder, ".git");
+  try {
+    if (statSync(gitDir).isFile()) {
+      const at = /^gitdir:\s*(.+)$/m.exec(readFileSync(gitDir, "utf8"))?.[1];
+      if (!at) return null;
+      gitDir = at.trim().replace(/\/worktrees\/[^/]+\/?$/, "");
+    }
+    // The first `url` of the origin section alone — `[^[]*?` cannot leave the
+    // section, and `\b` keeps it off `pushurl`.
+    const cfg = readFileSync(join(gitDir, "config"), "utf8");
+    const url = /\[remote "origin"\][^[]*?\burl\s*=\s*(.+)/.exec(cfg)?.[1]?.trim();
+    if (!url) return null;
+    // Both spellings GitHub hands out end in the same two segments:
+    // `git@host:owner/name.git` and `https://host/owner/name`.
+    const parts = url.replace(/\.git$/, "").split(/[/:]/).filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join("/") : null;
+  } catch {
+    return null; // not a checkout, not readable, or not on this machine
+  }
 }
 
 // Which vendor's meter ran. Records written before this field existed are

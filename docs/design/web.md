@@ -155,12 +155,24 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   `groupTokens(buckets, "cwd")`, which the model chart already pays for, and
   they are labelled with what the row actually holds: a metered row's `cwd` is
   the ship-review ledger's `owner/name` repo, because the review ran under its
-  own CODEX_HOME and never in a cwd this daemon has seen. Matching that repo
-  back onto a local folder — so the money could become a column in the project
-  table above — would be a basename guess, and a wrong one attributes real
-  money to the wrong project; the list stands on its own instead. The amber is
+  own CODEX_HOME and never in a cwd this daemon has seen. The amber is
   `codex-api`'s own fill from the token chart, so the caption, the bars and the
   columns above them are visibly the same money.
+  **The same money is a column in the project table**, joined by `repoOf` —
+  the origin remote in a folder's own `.git/config`, not a basename match:
+  `kob-trace` names a folder here and a repo there only by coincidence, and a
+  coincidence that fails puts real money on the wrong project. A repo claims
+  its money **once**, on the row that spent the most time (which is why the
+  rows are sorted before they are mapped rather than after): the ledger records
+  which repo a review was billed to and cannot say which checkout of it, so
+  two folders of one repo in the table would otherwise show the same amount
+  twice and the column would sum past the section's total. The cell names the
+  repo in its `title` for that reason — a folder is not obviously a repo, and
+  the tooltip is where that stops being a surprise. A remote project's folder
+  is another machine's path, so it has no local checkout to read and reads an
+  em dash: this machine's ledger holds this machine's reviews. The section
+  stays regardless, and is the one that is complete — a repo nothing has a
+  session in this window still appears there.
   `fetch`, while client JS inside a template literal is the one thing here that
   nothing can lint, import or run. Its whole coupling to the daemon is a `deps`
   object of `projects()` and `setAccent()`, so when drag-to-reorder needs real
