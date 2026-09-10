@@ -1768,9 +1768,9 @@ export const configDeps = {
     // view is the one place per project you can be looking at, so an SDK
     // session with no parent to point at belongs on it.
     const nested = nestedFor(session, lastSessions.filter((s) => s.nested), true);
-    // Same null-for-remote rule as the deck's: readLedgerTasks needs a path on
-    // *this* machine, and a remote session's cwd is not one.
-    const tasks = await readTaskList(session.session_id, session.root, session.host ? null : session.cwd);
+    // The places the deck's progress bar asked (`ledgerCwds`, null for a remote
+    // session), so the panel can't show a plan the key doesn't.
+    const tasks = await readTaskList(session.session_id, session.root, session.ledgerCwds ?? null);
     const { label, project, age } = keyFields(session);
     return {
       id,
@@ -2365,9 +2365,9 @@ async function refreshDetail(deck, buttons, view) {
   // per project you can be looking at. They're short-lived, so one may well
   // vanish between two polls.
   const nested = nestedFor(session, sessions.filter((s) => s.nested), true);
-  // Same null-for-remote rule as the progress bar: readLedgerTasks reads a
-  // path on this machine, and a remote session's cwd isn't one.
-  const tasks = await readTaskList(session.session_id, session.root, session.host ? null : session.cwd);
+  // The places the progress bar asked (`ledgerCwds`, null for a remote
+  // session), so this board can't show a plan the key doesn't.
+  const tasks = await readTaskList(session.session_id, session.root, session.ledgerCwds ?? null);
   const { age } = keyFields(session);
   const fresh = detailLayout({ session, tasks, nested, age, slotCount: buttons.length });
   view.tiles ??= fresh;

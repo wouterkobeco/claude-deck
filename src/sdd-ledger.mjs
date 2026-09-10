@@ -28,11 +28,6 @@ import { dirname, join } from "node:path";
 
 const WORKSPACE = join(".superpowers", "sdd");
 
-// How far up from a session's cwd to look for the workspace. It sits at the
-// git root, and finding that properly means a `git rev-parse` subprocess per
-// session per 2s poll — for a directory this is a handful of failed stats.
-const MAX_DEPTH = 6;
-
 // A finished plan deletes its own workspace, so anything still here is either
 // live or abandoned, and an abandoned one would otherwise show "3 of 6" on a
 // key forever. The ledger is appended to at every dispatch and every
@@ -97,35 +92,56 @@ export function ledgerTasks(progress, briefs = new Map()) {
 const subjectOf = (head) => head.replace(/^#+\s*/, "").trim();
 
 /**
- * The newest live plan workspace at or above `cwd`, or null.
+ * The nearest directory at or above `cwd` holding a `.git` — a directory in
+ * the main checkout, a file in a worktree — or null. What `git rev-parse
+ * --show-toplevel` answers, for a handful of stats rather than a subprocess
+ * per session per 2s poll.
+ */
+export async function gitToplevel(cwd) {
+  if (!cwd) return null;
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    try {
+      await stat(join(dir, ".git"));
+      return dir;
+    } catch {
+      if (dirname(dir) === dir) return null;
+    }
+  }
+}
+
+/**
+ * The newest live plan workspace for `cwd`'s git root, or null.
+ *
+ * Only that root, never one above it: `sdd-workspace` puts the workspace at
+ * `git rev-parse --show-toplevel`, so a session in a worktree has its own, and
+ * walking on past the worktree's `.git` lands in the main checkout — where a
+ * controller parks a finished plan's ledger between parts, and where every
+ * worktree session in the repo then read it as theirs.
  *
  * Newest by its ledger's mtime rather than by its dated name: a plan started
  * last week and picked up again today is the one being worked on, and the name
  * is the plan's date, not the work's.
  */
 async function findWorkspace(cwd, now) {
-  for (let dir = cwd, depth = 0; depth < MAX_DEPTH; depth++, dir = dirname(dir)) {
-    let plans = [];
-    try {
-      plans = await readdir(join(dir, WORKSPACE));
-    } catch {
-      if (dirname(dir) === dir) break;
-      continue;
-    }
-    let best = null;
-    for (const plan of plans) {
-      const workspace = join(dir, WORKSPACE, plan);
-      try {
-        const { mtimeMs } = await stat(join(workspace, "progress.md"));
-        if (!best || mtimeMs > best.mtimeMs) best = { workspace, mtimeMs };
-      } catch {
-        // Not a plan directory, or a ledger caught mid-write.
-      }
-    }
-    if (best) return now - best.mtimeMs < MAX_AGE_MS ? best.workspace : null;
-    if (dirname(dir) === dir) break;
+  const root = await gitToplevel(cwd);
+  if (!root) return null;
+  let plans;
+  try {
+    plans = await readdir(join(root, WORKSPACE));
+  } catch {
+    return null;
   }
-  return null;
+  let best = null;
+  for (const plan of plans) {
+    const workspace = join(root, WORKSPACE, plan);
+    try {
+      const { mtimeMs } = await stat(join(workspace, "progress.md"));
+      if (!best || mtimeMs > best.mtimeMs) best = { workspace, mtimeMs };
+    } catch {
+      // Not a plan directory, or a ledger caught mid-write.
+    }
+  }
+  return best && now - best.mtimeMs < MAX_AGE_MS ? best.workspace : null;
 }
 
 /**

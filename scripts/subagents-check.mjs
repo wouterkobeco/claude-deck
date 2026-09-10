@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentCwds, readRunningSubagents } from "../src/sessions.mjs";
+import { agentCwds, ledgerCwds, readRunningSubagents } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-subagents-check-"));
 
@@ -88,6 +88,26 @@ assert.deepEqual(agentCwds({ session_id: "s-3", cwd: "/repo" }, agents), [], "a 
 // carries that gap, or the count blinks off and back on every dispatch.
 assert.deepEqual(agentCwds(parent, []), ["/repo/.claude/worktrees/wt"], "remembered across a gap with nothing running");
 assert.deepEqual(agentCwds({ session_id: "s-9", cwd: "/repo" }, []), [], "and never invented for a session that has never run one");
+
+// Standing somewhere is not the same as owning its plan. A controller parked a
+// finished ledger at the main checkout, and all ten sessions open there read it
+// as theirs — an idle one-question session among them. Shared root: nobody
+// claims it by cwd; a session alone at its root, or a nested one, still does.
+{
+  const rootOf = new Map([["s-1", "/repo"], ["s-2", "/repo"], ["s-4", "/repo/.claude/worktrees/wt"], ["n-1", "/repo"]]);
+  const all = [
+    { session_id: "s-1", cwd: "/repo" },
+    { session_id: "s-2", cwd: "/repo" },
+    { session_id: "s-4", cwd: "/repo/.claude/worktrees/wt" },
+    { session_id: "n-1", cwd: "/repo", nested: true },
+  ];
+  const [s1, s2, s4, n1] = all;
+  assert.deepEqual(ledgerCwds(s1, rootOf, all, agents), ["/repo/.claude/worktrees/wt"], "crowded: only its own agent's cwd");
+  assert.deepEqual(ledgerCwds(s2, rootOf, all, agents), ["/repo/.claude/worktrees/other"], "a sibling's agent is still not its");
+  assert.deepEqual(ledgerCwds(s4, rootOf, all, []), ["/repo/.claude/worktrees/wt"], "alone at its root: its own cwd");
+  assert.deepEqual(ledgerCwds(n1, rootOf, all, []), ["/repo"], "a nested session has no key to mislabel and keeps its cwd");
+  assert.deepEqual(ledgerCwds(s1, rootOf, [s1], []), ["/repo", "/repo/.claude/worktrees/wt"], "alone: own cwd first, as before");
+}
 console.log("OK: only an agent this session spawned answers for it");
 
 // The signal that replaced end_turn. A background subagent doesn't end its

@@ -1,7 +1,7 @@
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readLedgerTasks } from "./sdd-ledger.mjs";
+import { gitToplevel, readLedgerTasks } from "./sdd-ledger.mjs";
 import { ancestorChain, psTable } from "./terminal-focus.mjs";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -719,6 +719,32 @@ export function agentCwds(session, subagents) {
 }
 
 /**
+ * Where a session's SDD ledger may be looked for: its own cwd, then its own
+ * agents' (`agentCwds`). The progress bar and the detail board both read this
+ * list, so the two cannot disagree about whose plan a key is showing.
+ *
+ * Its own cwd only when no other key-holding session stands in the same git
+ * root (`rootOf`). A workspace sits at a git root, not in a session, so every
+ * session there finds it — measured: a controller parked a finished plan's
+ * ledger at the main checkout, and all ten sessions open there showed its 3/3,
+ * an idle one-question session among them. Shared, nobody claims it by
+ * standing there; the controller still reaches its live plan through its
+ * agent. A nested session has no key to mislabel and keeps its cwd.
+ *
+ * ponytail: a controller whose plan is at a root it shares, with its agents
+ * at that same root, shows no count — honest-blank rather than a guess; name
+ * the ledger's writer from its tool calls if that case turns up.
+ */
+export function ledgerCwds(session, rootOf, sessions, subagents) {
+  const root = rootOf.get(session.session_id);
+  const crowded =
+    !session.nested &&
+    root &&
+    sessions.some((o) => o !== session && !o.nested && rootOf.get(o.session_id) === root);
+  return [...(crowded ? [] : [session.cwd]), ...agentCwds(session, subagents)];
+}
+
+/**
  * Task progress for a session, from the per-task JSON files Claude Code keeps
  * in ~/.claude/tasks/<session id>/. Returns null when a session isn't using
  * tasks at all, so the button can stay clean rather than showing "0/0".
@@ -1063,6 +1089,11 @@ async function sessionsFrom(source) {
   // Both kinds of child, in one list: an Agent-tool subagent synthesised above
   // and an SDK session that has just been given its parent.
   const nestedAll = [...matched.filter((m) => m.nested), ...subagents];
+  // Each session's git root, for `ledgerCwds`. Local only: a remote cwd is a
+  // path on the other machine.
+  const rootOf = source.host
+    ? new Map()
+    : new Map(await Promise.all(matched.map(async (s) => [s.session_id, await gitToplevel(s.cwd)])));
 
   const enriched = await Promise.all(
     matched.map(async (s) => {
@@ -1086,6 +1117,7 @@ async function sessionsFrom(source) {
       const marker = await readCompactMarker(s.session_id, source.root);
       const state = s.state ?? liveState(stopReason);
       const compacting = compactingNow({ state, compactRequestedAt, marker });
+      const ledgerAt = source.host ? null : ledgerCwds(s, rootOf, matched, nestedAll);
       return {
         ...s,
         ...signals,
@@ -1108,12 +1140,11 @@ async function sessionsFrom(source) {
         // sessions were open at that repo root, and a plan found by scanning
         // the tree downward would have landed on all eight. This is the same
         // rule `nestedFor` follows for colour — a child may speak for its
-        // parent, a sibling may not.
-        progress: await readTaskProgress(
-          s.session_id,
-          source.root,
-          source.host ? null : [s.cwd, ...agentCwds(s, nestedAll)]
-        ),
+        // parent, a sibling may not. And its own cwd only when it is alone at
+        // that git root (`ledgerCwds`), for the same reason.
+        progress: await readTaskProgress(s.session_id, source.root, ledgerAt),
+        // Kept so the detail board asks the same places the bar did.
+        ledgerCwds: ledgerAt,
         // The ctx file first — it knows the real window size. Without one (no
         // status line installed, here or on a remote host) the transcript's own
         // last usage carries the gauge, for the models whose window is known.

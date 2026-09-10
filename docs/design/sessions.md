@@ -178,6 +178,25 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   synthesis; a sibling may not, and `agentCwds` is where that is enforced. An
   agent's cwd equal to its parent's is dropped — it was already tried first.
 
+  **A session's own cwd is a sibling's too, when they share a git root.** The
+  walk upward used to be the one place the sibling rule leaked. Measured: after
+  shipping part 1, a controller `cp -R`'d its ledger to the main checkout to
+  park it, and every kob-trace key showed that finished 3/3 — ten sessions at
+  the root, including an idle one that had answered a single question, plus
+  every worktree session, whose walk went on past its own `.git` into the main
+  checkout. The controller itself showed the parked copy too, because its own
+  cwd was tried before its agent's live plan. Two fixes, one per leak.
+  `findWorkspace` looks only at `gitToplevel(cwd)`, the directory
+  `sdd-workspace` itself writes to (`git rev-parse --show-toplevel`), so a
+  worktree never borrows the checkout it lives under. And `ledgerCwds` drops
+  the own-cwd candidate when another key-holding session stands in the same
+  git root: standing somewhere is not owning its plan. The controller still
+  reaches its plan through its agent. The ceiling is written down there: a
+  controller whose plan is at a root it shares, with its agents at that same
+  root, shows no count, an honest blank instead of a guess. The progress bar and both detail
+  board sites read the one list (`session.ledgerCwds`), where the detail board
+  used to pass the bare cwd and could disagree with its own key.
+
   **Both kinds of child count, and that needed a pid.** SDD alternates: an
   Agent-tool subagent implements a task, an *SDK session* reviews it. The
   first carries a `parent`; the second records none, so the controller's key

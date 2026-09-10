@@ -187,9 +187,12 @@ const remoteSource = {
 const remoteOut = await getLiveSessions([remoteSource]);
 assert.equal(remoteOut.length, 1, "the same tree read as remote yields the same one session");
 assert.equal(remoteOut[0].host, "192.168.2.6", "a remote session carries its host");
+// Except where a ledger may be looked for: a remote cwd is a path on the other
+// machine, so it is never one (sdd-ledger.mjs's one exception to "same code").
+assert.equal(remoteOut[0].ledgerCwds, null, "a remote session's cwd is never read locally");
 assert.deepEqual(
-  { ...remoteOut[0], host: null },
-  { ...localOut[0], host: null },
+  { ...remoteOut[0], host: null, ledgerCwds: null },
+  { ...localOut[0], host: null, ledgerCwds: null },
   "a remote source and a local source cannot disagree about a session"
 );
 

@@ -151,6 +151,7 @@ assert.deepEqual(ledgerTasks("# SDD ledger — plan: x.md\n\nnothing yet\n"), []
   const root = await mkdtemp(join(tmpdir(), "streamdeck-ledger-check-"));
   const workspace = join(root, ".superpowers/sdd/2026-08-18-plan");
   await mkdir(workspace, { recursive: true });
+  await mkdir(join(root, ".git"));
   await writeFile(join(workspace, "progress.md"), LEDGER);
   for (const [n, subject] of briefs) await writeFile(join(workspace, `task-${n}-brief.md`), `### ${subject}\n\nbody\n`);
 
@@ -165,6 +166,14 @@ assert.deepEqual(ledgerTasks("# SDD ledger — plan: x.md\n\nnothing yet\n"), []
   );
 
   assert.deepEqual(await readLedgerTasks(join(root, "..")), [], "not from above it");
+  // A worktree is its own git root (`.git` is a file there), and sdd-workspace
+  // writes to `git rev-parse --show-toplevel` — so a plan parked in the main
+  // checkout is not this worktree's. Measured: every worktree session in a
+  // repo showed a finished 3/3 that the controller had copied to the root.
+  const worktree = join(root, ".claude/worktrees/other/src");
+  await mkdir(worktree, { recursive: true });
+  await writeFile(join(root, ".claude/worktrees/other/.git"), "gitdir: ../../../.git/worktrees/other\n");
+  assert.deepEqual(await readLedgerTasks(worktree), [], "not across a worktree's own git root");
   assert.deepEqual(await readLedgerTasks(null), [], "and never for a remote session, whose cwd is another machine's");
 
   // Candidates, in order: an SDD controller's own cwd finds nothing (the plan
