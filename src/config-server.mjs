@@ -302,11 +302,13 @@ const limits = (rows) =>
     .join("")}</div>`;
 
 // "5h" -> "5 hours", "45m" -> "45 minutes", "6d" -> "6 days",
-// "3h20m" -> "3 hours 20 minutes".
+// "3h20m" -> "3 hours 20 minutes", "1d21h" -> "1 day 21 hours". The second
+// unit is whatever `formatReset` paired with the first — hours under a day,
+// days above it — so the pattern has to allow both rather than only minutes.
 const UNIT_WORDS = { h: "hour", m: "minute", d: "day" };
 function resetPhrase(compact) {
   const s = compact ?? "";
-  if (!/^\d+[hmd](\d+m)?$/.test(s)) return null;
+  if (!/^\d+[hmd](\d+[hm])?$/.test(s)) return null;
   return [...s.matchAll(/(\d+)([hmd])/g)]
     .map(([, n, u]) => `${n} ${UNIT_WORDS[u]}${Number(n) === 1 ? "" : "s"}`)
     .join(" ");

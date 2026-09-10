@@ -81,7 +81,9 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   assert.deepEqual(parseMeminfo("MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n"), { pressure: 75, swap: null, totalMb: 1, swapTotalMb: null }, "a Linux host: what isn't available is pressure; no swap is unknown");
   assert.deepEqual(parseMeminfo(""), { pressure: null, swap: null, totalMb: null, swapTotalMb: null });
   assert.deepEqual(parseMemory("", "total = 0.00M  used = 0.00M"), { pressure: null, swap: null, totalMb: null, swapTotalMb: null }, "no swap configured is unknown, not 0/0");
-  assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "6d" }]);
+  // A week tile carries its hours past the day mark — "6d" was a ceil that read
+  // the same at 5d01h as at 6d00h.
+  assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "5d18h" }]);
   assert.equal(tiles[0].active, true);
   assert.deepEqual(tiles[2].rows[0], { caps: "SESSION", pct: null }, "an unknown window is a dash, not zero");
   assert.deepEqual(tiles[3].rows, [{ caps: "SESSION", text: "—" }, { caps: "WEEK", text: "—" }]);

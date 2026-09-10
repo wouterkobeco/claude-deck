@@ -316,7 +316,7 @@ const withHistory = await createConfigServer({
     account: "Wouter",
     memory: [{ name: "This Mac", pressure: 41, swap: 93.2, totalMb: 65536, swapTotalMb: 20480 }, { name: "pi", pressure: 40, swap: null }],
     accounts: [
-      { name: "wouter@kobeco.be", active: true, usage: { session: 0, week: 29, sessionResets: "", weekResets: "6d" } },
+      { name: "wouter@kobeco.be", active: true, usage: { session: 0, week: 29, sessionResets: "", weekResets: "6d3h" } },
       { name: "claude2@denayer.com", active: false, usage: { session: 0, week: 0, sessionResets: "", weekResets: "" } },
     ],
   }),
@@ -336,7 +336,7 @@ eq(hHtml.includes('class="account active">wouter@kobeco.be · active<'), true, "
 // a row carrying a title tooltip (the swap meter's "occupancy, not activity").
 eq((hHtml.match(/class="limit"[ >]/g) ?? []).length, 8, "two per cswap account, two per machine for memory — the live pair is the active account's");
 eq(hHtml.includes('title="Occupancy, not activity'), true, "the swap meter says which reading it is");
-eq(hHtml.includes("Week resets in 6 days"), true, "a known reset is stated directly in the title, not a separate line");
+eq(hHtml.includes("Week resets in 6 days 3 hours"), true, "a known reset is stated directly in the title, not a separate line");
 eq(hHtml.includes('class="lcap lonly">Session reset time is unknown<'), true, "an unknown reset is one centered line and nothing else — no bar, no percentage");
 eq(hHtml.includes("<h2>Input tokens<span") && hHtml.includes("cache-read 36M"), true, "input gets its own stacked chart");
 eq(hHtml.includes("Memory held by Claude sessions · This Mac<span") && hHtml.includes("17 sessions"), true, "the sessions' own footprint has a chart, named once there are two machines");

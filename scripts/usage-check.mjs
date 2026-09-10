@@ -2,7 +2,7 @@
 // field names above can be confirmed against a real account.
 // Run: node scripts/usage-check.mjs [--live]
 import assert from "node:assert/strict";
-import { parseUsage, fetchUsage, getUsage, daysUntil, hoursUntil, formatReset, subscriptionChange, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
+import { parseUsage, fetchUsage, getUsage, minutesUntil, formatReset, subscriptionChange, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
 
 assert.deepEqual(
   parseUsage({
@@ -15,27 +15,25 @@ assert.deepEqual(parseUsage({}), { session: null, week: null, sessionResetsAt: n
 console.log("OK: parseUsage");
 
 const now = Date.parse("2026-08-11T12:00:00Z");
-assert.equal(daysUntil(null, now), null);
-assert.equal(daysUntil("2026-08-14T23:00:00Z", now), 4); // 3.46 days away, rounds up
-assert.equal(daysUntil("2026-08-11T00:00:00Z", now), 0); // already past
-console.log("OK: daysUntil");
 
-assert.equal(hoursUntil(null, now), null);
-assert.equal(hoursUntil("2026-08-11T15:00:00Z", now), 3);
-assert.equal(hoursUntil("2026-08-11T15:20:00Z", now), 4); // 3.33h away, rounds up
-assert.equal(hoursUntil("2026-08-11T00:00:00Z", now), 0); // already past
-console.log("OK: hoursUntil");
+assert.equal(minutesUntil(null, now), null);
+assert.equal(minutesUntil("2026-08-11T15:20:00Z", now), 200);
+assert.equal(minutesUntil("2026-08-11T12:00:29Z", now), 1); // part of a minute rounds up
+assert.equal(minutesUntil("2026-08-11T00:00:00Z", now), 0); // already past
+console.log("OK: minutesUntil");
 
-assert.equal(formatReset(null, "hours", now), null);
-assert.equal(formatReset("2026-08-11T15:00:00Z", "hours", now), "3h"); // >= 1h left, coarse unit
-assert.equal(formatReset("2026-08-11T12:45:00Z", "hours", now), "45m"); // < 1h left, drops to minutes
-assert.equal(formatReset("2026-08-14T23:00:00Z", "days", now), "4d");
-assert.equal(formatReset("2026-08-12T09:00:00Z", "days", now), "21h"); // < 24h left, drops to hours rather than reading "1d"
-assert.equal(formatReset("2026-08-11T12:30:00Z", "days", now), "30m"); // same drop applies to the week tile
-assert.equal(formatReset("2026-08-11T15:20:00Z", "hours", now), "3h20m"); // hours carry their minutes, no ceil to "4h"
-assert.equal(formatReset("2026-08-12T09:45:00Z", "days", now), "21h45m"); // and so does the week tile under a day
-assert.equal(formatReset("2026-08-13T09:45:00Z", "days", now), "45h45m"); // the week tile is in hours from two days out
-assert.equal(formatReset("2026-08-13T12:00:00Z", "days", now), "2d"); // two days or more out stays coarse
+// Two units, and the two the remaining time is actually in — the window it
+// belongs to no longer decides anything, which is why none of these say which
+// one they are.
+assert.equal(formatReset(null, now), null);
+assert.equal(formatReset("2026-08-11T12:45:00Z", now), "45m"); // < 1h left, minutes alone
+assert.equal(formatReset("2026-08-11T15:00:00Z", now), "3h"); // on the hour, so there are no minutes to carry
+assert.equal(formatReset("2026-08-11T15:20:00Z", now), "3h20m"); // hours carry their minutes, no ceil to "4h"
+assert.equal(formatReset("2026-08-12T09:45:00Z", now), "21h45m"); // still under a day, still hours and minutes
+assert.equal(formatReset("2026-08-12T12:00:00Z", now), "24h"); // exactly a day is a day's worth of hours, not "1d"
+assert.equal(formatReset("2026-08-13T09:45:00Z", now), "1d21h"); // past a day, days carry their hours
+assert.equal(formatReset("2026-08-14T23:00:00Z", now), "3d11h"); // and the minutes are dropped at that scale
+assert.equal(formatReset("2026-08-13T12:00:00Z", now), "2d"); // whole days show no hours
 console.log("OK: formatReset");
 
 assert.deepEqual(subscriptionChange(undefined, "max", "default_claude_max_20x"), {

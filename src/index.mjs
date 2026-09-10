@@ -985,8 +985,8 @@ export function cswapTiles(accounts, now = Date.now()) {
       {
         ...head,
         rows: [
-          { caps: "SESSION", text: formatReset(a.sessionResetsAt, "hours", now) ?? "—" },
-          { caps: "WEEK", text: formatReset(a.weekResetsAt, "days", now) ?? "—" },
+          { caps: "SESSION", text: formatReset(a.sessionResetsAt, now) ?? "—" },
+          { caps: "WEEK", text: formatReset(a.weekResetsAt, now) ?? "—" },
         ],
       },
     ];
@@ -1731,8 +1731,8 @@ export const configDeps = {
       usage: {
         session,
         week,
-        sessionResets: formatReset(sessionResetsAt, "hours") ?? "",
-        weekResets: formatReset(weekResetsAt, "days") ?? "",
+        sessionResets: formatReset(sessionResetsAt) ?? "",
+        weekResets: formatReset(weekResetsAt) ?? "",
       },
       stats: await getStats(),
       blocked: blockedTodayTile().value,
@@ -1746,8 +1746,8 @@ export const configDeps = {
         usage: {
           session: a.session,
           week: a.week,
-          sessionResets: formatReset(a.sessionResetsAt, "hours") ?? "",
-          weekResets: formatReset(a.weekResetsAt, "days") ?? "",
+          sessionResets: formatReset(a.sessionResetsAt) ?? "",
+          weekResets: formatReset(a.weekResetsAt) ?? "",
         },
       })),
     };
