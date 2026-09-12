@@ -590,6 +590,98 @@ export async function readRunningSubagents(dir, tail = tailLines, parentPath = n
 }
 
 /**
+ * The live members of a session's own team — a *different* mechanism from
+ * `readRunningSubagents` above, for an Agent tool call given a `name` that
+ * cmux opened in its own pane. Measured live: a teammate is not an entry
+ * under `subagents/` at all. It's a full, independent top-level session —
+ * its own transcript file, sibling to this one in the same project directory
+ * — and Claude Code keeps the roster in a place `readRunningSubagents` never
+ * looks: `~/.claude/teams/session-<this session's id>/config.json`, one
+ * `members` entry per teammate (`backendType:"tmux"`; the lead itself is the
+ * one `"in-process"` entry, and isn't a teammate of itself).
+ *
+ * That file never records *which* transcript belongs to which member, so the
+ * match is made by content: every line a teammate writes carries `teamName`
+ * (`"session-<lead id>"`) and `agentName` (its own name) — the newest line
+ * still carrying this team's name is trusted for both facts, the same
+ * "newest wins" rule every other backward scan in this file follows.
+ *
+ * Running is read off the same idea `readRunningSubagents` reads `end_turn`
+ * with, but the marker is different: a teammate that has gone idle writes a
+ * `type:"system", subtype:"away_summary"` line — Claude Code's own "done,
+ * available for another task" — which plays `end_turn`'s role here. No
+ * config.json entry is ever removed when that happens (it stays on the team,
+ * ready for the next prompt), so "on the roster" and "currently running" are
+ * different questions and only the transcript answers the second one.
+ */
+export async function readTeammates(session, root = CLAUDE_DIR, tail = tailLines) {
+  // Truncated to the UUID's first segment — measured against a live roster
+  // (`~/.claude/teams/session-3cbc56b7/` for a session id starting
+  // `3cbc56b7-...`), not the full session id this reads everywhere else.
+  const teamName = `session-${session.session_id.split("-")[0]}`;
+  let config;
+  try {
+    config = JSON.parse(await readFile(join(root, "teams", teamName, "config.json"), "utf8"));
+  } catch {
+    return []; // no team — the ordinary case, for almost every session
+  }
+  const members = new Map(
+    (config.members ?? []).filter((m) => m.backendType !== "in-process").map((m) => [m.name, m])
+  );
+  if (!members.size) return [];
+
+  const dir = projectDirFor(session.cwd, root);
+  let files;
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl") && f !== `${session.session_id}.jsonl`);
+  } catch {
+    return [];
+  }
+
+  const found = [];
+  await Promise.all(
+    files.map(async (f) => {
+      const path = join(dir, f);
+      let mtimeMs;
+      try {
+        ({ mtimeMs } = await stat(path));
+      } catch {
+        return; // vanished mid-scan
+      }
+      // A teammate's transcript can't predate its own team, and one silent
+      // past SUBAGENT_IDLE_MAX_S is presumed gone the same way an
+      // interrupted subagent is — this also keeps every poll's tail reads to
+      // the handful of files that could plausibly still be a live teammate,
+      // not every session this project directory has ever held.
+      if (mtimeMs < config.createdAt || (Date.now() - mtimeMs) / 1000 > SUBAGENT_IDLE_MAX_S) return;
+
+      const { lines } = await tail(path).catch(() => ({ lines: [] }));
+      let agentName = null,
+        away = false,
+        settled = false;
+      for (let i = lines.length - 1; i >= 0 && (!settled || agentName === null); i--) {
+        let o;
+        try {
+          o = JSON.parse(lines[i]);
+        } catch {
+          continue; // truncated line at the start of the tail slice
+        }
+        if (o.teamName !== teamName) continue; // not this team's line
+        if (!settled) {
+          settled = true;
+          away = o.type === "system" && o.subtype === "away_summary";
+        }
+        if (agentName === null && typeof o.agentName === "string") agentName = o.agentName;
+      }
+      const member = agentName ? members.get(agentName) : null;
+      if (!member || away) return;
+      found.push({ id: f.replace(/\.jsonl$/, ""), name: agentName, cwd: member.cwd ?? session.cwd, ts: Math.floor(mtimeMs / 1000) });
+    })
+  );
+  return found;
+}
+
+/**
  * Works out "task X of Y" for a list of tasks.
  *
  * Two numbering schemes, because a list's own numbering can disagree with its
@@ -1067,39 +1159,65 @@ async function sessionsFrom(source) {
   // whichever key happens to come first in the block, and an idle session
   // sitting green for a sibling's agent is a lie the deck can't be read past.
   // An SDK session has no such key to land on and carries no `parent`.
+  //
+  // Two independent sources feed the same list: `readRunningSubagents` for
+  // an anonymous Task-tool call under `subagents/`, `readTeammates` for a
+  // named one running as its own top-level session under `~/.claude/teams/`.
+  // Both fold onto the same key the same way — `teamName` is what tells them
+  // apart downstream, not which of the two found them.
   const subagents = (
     await Promise.all(
-      matched.map(async (s) =>
-        (
-          await readRunningSubagents(
+      matched.map(async (s) => {
+        const [classic, teammates] = await Promise.all([
+          readRunningSubagents(
             join(projectDirFor(s.cwd, source.root), s.session_id, "subagents"),
             source.tail,
             transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root)
-          )
-        ).map((a) => ({
-          ...s,
-          session_id: a.id,
-          // Where the agent is working, kept *beside* the parent's `cwd`
-          // rather than replacing it: this session's transcript lives under
-          // the parent's project slug (`subagentTranscriptPath`), so a cwd
-          // pointing at the worktree would send every later reader to a
-          // directory that doesn't hold it.
-          agentCwd: a.cwd ?? null,
-          parent: s.session_id,
-          // What makes this an *Agent-tool* subagent, now that an SDK session
-          // can carry a `parent` too: only these live at
-          // `subagentTranscriptPath`, under their parent's project slug.
-          subagent: true,
-          nested: true,
-          name: a.description,
-          // Kept apart from `name` above (which stays the description, the
-          // only thing an anonymous subagent has): this is only ever set for
-          // one the caller addressed by name — a teammate, not a helper.
-          teamName: a.teamName,
-          state: "busy",
-          ts: a.ts,
-        }))
-      )
+          ),
+          readTeammates(s, source.root, source.tail),
+        ]);
+        return [
+          ...classic.map((a) => ({
+            ...s,
+            session_id: a.id,
+            // Where the agent is working, kept *beside* the parent's `cwd`
+            // rather than replacing it: this session's transcript lives under
+            // the parent's project slug (`subagentTranscriptPath`), so a cwd
+            // pointing at the worktree would send every later reader to a
+            // directory that doesn't hold it.
+            agentCwd: a.cwd ?? null,
+            parent: s.session_id,
+            // What makes this an *Agent-tool* subagent, now that an SDK session
+            // can carry a `parent` too: only these live at
+            // `subagentTranscriptPath`, under their parent's project slug.
+            subagent: true,
+            nested: true,
+            name: a.description,
+            // Kept apart from `name` above (which stays the description, the
+            // only thing an anonymous subagent has): this is only ever set for
+            // one the caller addressed by name — a teammate, not a helper.
+            teamName: a.teamName,
+            state: "busy",
+            ts: a.ts,
+          })),
+          ...teammates.map((t) => ({
+            ...s,
+            session_id: t.id,
+            agentCwd: t.cwd,
+            parent: s.session_id,
+            // Not `subagentTranscriptPath` scheme — a teammate's own
+            // transcript is an ordinary top-level session file, found at the
+            // same place `transcriptPathFor` already looks for one. Leaving
+            // `subagent` false is what keeps token lookups pointed there.
+            subagent: false,
+            nested: true,
+            name: t.name,
+            teamName: t.name,
+            state: "busy",
+            ts: t.ts,
+          })),
+        ];
+      })
     )
   ).flat();
 

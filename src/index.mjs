@@ -1624,11 +1624,14 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
     }
     const isPrimary = i === 0 || folderKeyFor(ordered[i - 1]) !== folderKeyFor(s);
     const own = nestedFor(s, nested, isPrimary).sort((a, b) => at(nestedOrder, a.session_id) - at(nestedOrder, b.session_id));
-    // A teammate is a subagent the caller addressed by name — cmux gave it a
-    // pane of its own, so it earns a chip of its own here too, inside the
-    // block rather than folded into the anonymous dots the rest still are.
-    const teammates = own.filter((n) => n.subagent && n.teamName);
-    const anon = own.filter((n) => !(n.subagent && n.teamName));
+    // A teammate is anything sessions.mjs found a `teamName` for — an
+    // anonymous Task-tool call never carries one, whichever of the two
+    // mechanisms (subagents/ directory or a named top-level session under
+    // ~/.claude/teams/) produced the entry. It earns a chip of its own here,
+    // inside the block, rather than folding into the anonymous dots the rest
+    // still do.
+    const teammates = own.filter((n) => n.teamName);
+    const anon = own.filter((n) => !n.teamName);
     const { label } = keyFields(s);
     return {
       id: s.session_id,
@@ -1778,15 +1781,16 @@ export const configDeps = {
     // session), so the panel can't show a plan the key doesn't.
     const tasks = await readTaskList(session.session_id, session.root, session.ledgerCwds ?? null);
     const { label, project, age } = keyFields(session);
-    // Split the same way the tile is: a subagent the caller addressed by name
-    // is a teammate, everything else — an anonymous helper or an SDK session
-    // running a plan of its own — stays a plain subagent row.
+    // Split the same way the tile is: anything sessions.mjs gave a `teamName`
+    // is a teammate (an anonymous Task-tool call, an SDK session running a
+    // plan of its own, and a finished-away teammate never carry one), and
+    // stays a plain subagent row otherwise.
     const nestedRows = await Promise.all(
       nested.map(async (n) => ({
         id: n.session_id,
         state: n.state,
         label: keyFields(n).label,
-        teamName: n.subagent ? (n.teamName ?? null) : null,
+        teamName: n.teamName ?? null,
         // An SDK session runs a plan of its own — a superpowers controller
         // walking nine tasks is the case this exists for — and its key is
         // this row: it has none of its own, so a progress it carries and

@@ -519,7 +519,22 @@ const boardKeys = [
     // anonymous dots `nested` above still draws.
     teammates: [{ id: "t-1", name: "<img src=x onerror=alert(2)>identity-governance-expert", state: "waiting" }],
   },
-  { id: "s-2", kind: "session", project: "beta", accent: ACCENTS[1], state: "idle", shell: true, label: "", context: null, squares: [], nested: [] },
+  {
+    id: "s-2",
+    kind: "session",
+    project: "beta",
+    accent: ACCENTS[1],
+    state: "idle",
+    shell: true,
+    label: "",
+    context: null,
+    squares: [],
+    nested: [],
+    // Six teammates on a fixed-height tile: more than the cap, so this also
+    // proves nothing is silently dropped the way overflow-check found it
+    // could be — the remainder says how many, in a "+N" chip.
+    teammates: Array.from({ length: 6 }, (_, i) => ({ id: `t-${i}`, name: `agent-${i}`, state: "busy" })),
+  },
   { id: "pi:/x", kind: "offline", project: "x", accent: ACCENTS[2], label: "pi offline 4m" },
   { id: "__usage", kind: "usage", session: 46, week: null },
   // One status tile, not two: attention and free are never both the answer, so
@@ -599,6 +614,13 @@ eq(board.includes("CLEAR"), true, "a session with nothing said in it reads CLEAR
 eq(board.includes('class="tchip"'), true, "a teammate gets a chip in its lead's tile");
 eq(board.includes("<img src=x onerror=alert(2)>"), false, "its name never reaches the page as a tag");
 eq(board.includes("&lt;img src=x onerror=alert(2)&gt;identity-governance-expert"), true, "escaped, same as a project's or a title's");
+// Six teammates on one fixed-height tile: the cap keeps every one of them
+// readable somewhere on the tile, honestly — a "+N" chip for the rest,
+// never a chip that just silently fails to render.
+// One from s-1's single teammate, four from s-2's capped six — the cap
+// bites per tile, not across the whole board.
+eq(board.split('class="tchip"').length - 1, 5, "a fixed tile caps its teammate chips rather than overflowing silently");
+eq(board.includes('class="tchip more">+2<'), true, "and says exactly how many more are running, not just that there are some");
 
 const grid = await (await fetch(`${bBase}/board/grid?t=${bToken}`)).text();
 eq(grid.startsWith("<div class=\"key"), true, "the poll fragment is the tiles alone, no page around them");

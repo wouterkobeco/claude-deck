@@ -302,6 +302,10 @@ const STYLE = `
   .tchip span { font-size: calc(var(--fs) * .8cqh); font-weight: 600; color: #fff;
                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                 max-width: 22cqw }
+  /* The overflow chip: no dot (it isn't one teammate), same pill so it reads
+     as one of the row rather than a different kind of thing. */
+  .tchip.more { color: #ffffffcc; font-weight: 700;
+                font-size: calc(var(--fs) * .8cqh) }
   .foot { flex: none; display: flex; gap: 1.5cqw; padding: 4cqh 4cqw }
   .foot i { flex: 1; height: 5cqh; min-height: 3px; border-radius: 1px; background: #ffffff33 }
   .foot i.done { background: #ffffffdd }
@@ -504,6 +508,12 @@ const usageHalf = (caps, pct) =>
      )}"></i></div>
    </div>`;
 
+// How many teammate chips a fixed-height tile shows before folding the rest
+// into a "+N" chip — chosen so four short names plus a "+N" still fit a
+// single wrapped row or two at the board's default size; the detail panel
+// has no such cap, since it isn't fighting a fixed grid row for space.
+const TEAMMATE_TILE_CAP = 4;
+
 /**
  * One tile. `data-id` is what the poll diffs on, and `data-session` is what a
  * tap posts — only session tiles carry one, so the reserved three and an
@@ -562,13 +572,24 @@ function tile(k, token) {
     ${
       k.teammates?.length
         ? `<div class="teammates">${k.teammates
+            // A fixed tile has a fixed height — nothing here can grow to fit
+            // an arbitrary team size the way the detail panel can, and
+            // `.key`'s own `overflow:hidden` would otherwise clip the bottom
+            // rows silently, the deck's own "nested markers trimmed to what
+            // fits" rule turned into a lie by never saying so. Trimmed here
+            // instead, honestly: a "+N" chip, never a chip that vanishes.
+            .slice(0, TEAMMATE_TILE_CAP)
             .map(
               (t) =>
                 `<div class="tchip"><i style="background:${MARKER_COLORS[t.state] ?? MARKER_COLORS.idle}"></i><span>${esc(
                   t.name
                 )}</span></div>`
             )
-            .join("")}</div>`
+            .join("")}${
+        k.teammates.length > TEAMMATE_TILE_CAP
+          ? `<div class="tchip more">+${k.teammates.length - TEAMMATE_TILE_CAP}</div>`
+          : ""
+      }</div>`
         : ""
     }
     ${
@@ -667,7 +688,12 @@ export function detailPanel(d) {
                     `<div class="tm-chip"><span class="dot" style="background:${
                       MARKER_COLORS[t.state] ?? MARKER_COLORS.idle
                     }"></span><span class="nm">${esc(t.name)}${
-                      t.doing ? `<em>${esc(t.doing)}</em>` : ""
+                      // A teammate found via ~/.claude/teams/ has no richer
+                      // signal than its own name — no aiTitle, no
+                      // description — so `doing` comes back equal to `name`.
+                      // Repeating it under itself would read as a mistake,
+                      // not a fact.
+                      t.doing && t.doing !== t.name ? `<em>${esc(t.doing)}</em>` : ""
                     }</span><span class="tok">${tokenLabel(t.tokens)}</span></div>`
                 )
                 .join("")}</div>`
