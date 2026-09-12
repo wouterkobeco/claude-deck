@@ -583,9 +583,14 @@ export async function renderUsage({ width, height, session, week, title, active,
   const body = rows
     .map(({ caps, pct, text, top }) => {
       const known = typeof pct === "number";
-      const shown = known ? Math.min(100, Math.max(0, Math.round(pct))) : 0;
+      // The bar's width can't exceed its own track, but the number beside it
+      // must say the real figure — capping both at 100 is what let the key
+      // plateau at "100%" forever past the limit, while the web dashboard and
+      // config page (which only clamp the bar) kept showing 101%, 105%, ...
+      const rounded = known ? Math.round(pct) : 0;
+      const shown = known ? Math.min(100, Math.max(0, rounded)) : 0;
       const barY = top + half - 7;
-      const value = text !== undefined ? text : known ? shown + "%" : "—";
+      const value = text !== undefined ? text : known ? rounded + "%" : "—";
       // A row with a `text` and no `pct` is a reset time — no bar. One with
       // both is an amount said over its own gauge (the memory keys in GB).
       const bar =
