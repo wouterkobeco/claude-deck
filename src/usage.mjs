@@ -102,6 +102,24 @@ export function parseUsage(json) {
   };
 }
 
+/**
+ * A window past its reset has been emptied server-side, so its cached number
+ * is no longer true — the rule cswap.mjs's `window_` applies to the other
+ * accounts. Null, not 0: what has been used since is unknown until asked.
+ * Returns `value` itself when nothing expired, so a caller can tell.
+ */
+export function expireWindows(value, now) {
+  const over = (iso) => iso != null && Date.parse(iso) <= now;
+  const session = over(value.sessionResetsAt);
+  const week = over(value.weekResetsAt);
+  if (!session && !week) return value;
+  return {
+    ...value,
+    ...(session && { session: null, sessionResetsAt: null }),
+    ...(week && { week: null, weekResetsAt: null }),
+  };
+}
+
 /** An ISO timestamp -> whole units remaining until it, floored at 0 for an already-passed reset. */
 function until(iso, unitMs, now) {
   if (!iso) return null;
@@ -251,6 +269,13 @@ function watchIdentity(now, credentialsFn) {
  */
 export async function getUsage(now = Date.now(), fetcher = fetchUsage, credentialsFn = credentials) {
   watchIdentity(now, credentialsFn);
+  // A reset is the one moment the cached numbers are known wrong, so it asks
+  // now — past the TTL and past a backoff — rather than showing the old
+  // window's 100% for up to half an hour. Once per reset: the expired window is
+  // nulled here, and a response is run through the same rule, so one that
+  // still carries a passed reset can't start a fetch every poll.
+  const current = expireWindows(cache.value, now);
+  if (current !== cache.value) cache = { at: 0, value: current };
   if (now - cache.at < TTL_MS + backoffMs) return cache.value;
   // `cache.at` isn't written until the fetch resolves, so without this a
   // request still in flight looks exactly like no request at all and the next
@@ -262,7 +287,8 @@ export async function getUsage(now = Date.now(), fetcher = fetchUsage, credentia
 
   inflight = (async () => {
     try {
-      cache = { at: Date.now(), value: parseUsage(await fetcher()) };
+      const value = parseUsage(await fetcher());
+      cache = { at: Date.now(), value: expireWindows(value, Date.now()) };
       lastError = null;
       backoffMs = 0;
     } catch (err) {

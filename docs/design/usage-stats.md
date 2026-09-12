@@ -17,6 +17,16 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   `USAGE_LOG=1` to append one line per request (timing, status, headers, live
   session count) to `~/.claude/streamdeck-usage.jsonl` before changing any of
   this.
+  **A reset is the one moment the cached numbers are known wrong, and it
+  overrides both.** Reported live: the session window reset and the key held
+  the old percentage, since only the TTL (or a backoff up to 30m) decided when
+  to look again, though the cache held the very `resets_at` that said it was
+  stale. `expireWindows` now applies the rule cswap's accounts already had:
+  past its reset, a window reads unknown ("—"), never its old number, and
+  `getUsage` asks right then. That is one request per reset: the expired window
+  is nulled so it can't trigger again, a response is run through the same rule
+  (so a server still reporting the passed reset can't start a fetch every
+  poll), and a 429 at that moment backs off as usual.
   **A `cswap switch` rewrites the keychain item instantly, but the cached
   numbers have no way to know until something asks it again.** Without a
   separate check, the TTL alone decides that — up to 5 minutes of the old

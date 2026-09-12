@@ -171,6 +171,58 @@ assert.equal(fetchesB, 1, "forced by the fingerprint change, not by the TTL — 
 assert.equal(afterSwitch.session, 22, "and the value is account B's, not a stale copy of A's");
 console.log("OK: getUsage forces a refresh when the keychain credential changes");
 
+// A reset is the one moment the cached numbers are known to be wrong: the
+// server has emptied that window, and the key kept showing the old 100% for up
+// to a TTL — or a 429 backoff — after it. Same rule cswap.mjs applies to the
+// other accounts: past its reset, a window reads unknown until asked, and it is
+// asked right then. `cache.at` is stamped with the real clock, so the times
+// here stay a few seconds off it (well inside the TTL): a fetch below can only
+// be the reset's, never the TTL's.
+{
+  const iso = (ms) => new Date(ms).toISOString();
+  let n = 0;
+  const full = async () => {
+    n++;
+    return { five_hour: { utilization: 100, resets_at: iso(Date.now() + 30_000) }, seven_day: { utilization: 40, resets_at: iso(Date.now() + 3 * 86_400_000) } };
+  };
+  const fresh = async () => {
+    n++;
+    return { five_hour: { utilization: 3, resets_at: iso(Date.now() + 5 * 3_600_000) }, seven_day: { utilization: 41, resets_at: iso(Date.now() + 3 * 86_400_000) } };
+  };
+
+  await getUsage(Date.now() + 2 * TTL_MS, full);
+  assert.equal(n, 1);
+  assert.equal((await getUsage(Date.now() + 1000, fresh)).session, 100, "before the reset: the cached value, no fetch");
+  assert.equal(n, 1);
+  const reset = await getUsage(Date.now() + 31_000, fresh);
+  assert.equal(n, 2, "the reset passing forces a fetch, a TTL early");
+  assert.equal(reset.session, 3, "and the key shows the new window");
+
+  // Denied at the reset: unknown, never the old window's 100 — and the backoff
+  // still holds after it, so a reset is one request, not one per poll.
+  await getUsage(Date.now() + 2 * TTL_MS, full);
+  const denied = await getUsage(Date.now() + 31_000, rateLimited);
+  assert.equal(denied.session, null, "a window past its reset is unknown, not its old percentage");
+  assert.equal(denied.sessionResetsAt, null, "and has no reset time left to count down");
+  assert.equal(denied.week, 40, "the week, still running, keeps its number");
+  const before = n;
+  await getUsage(Date.now() + 32_000, fresh);
+  assert.equal(n, before, "a 429 at the reset still backs off");
+
+  // A response whose own reset is already past can't start a fetch per poll.
+  let late = 0;
+  const lagging = async () => {
+    late++;
+    return { five_hour: { utilization: 100, resets_at: iso(Date.now() - 1000) } };
+  };
+  await getUsage(Date.now() + 3 * TTL_MS, lagging);
+  const lag = await getUsage(Date.now() + 2000, lagging);
+  await getUsage(Date.now() + 4000, lagging);
+  assert.equal(late, 1, "an already-expired window in a response is read as unknown, once");
+  assert.equal(lag.session, null);
+}
+console.log("OK: getUsage at a window's reset");
+
 if (process.argv.includes("--live")) {
   console.log(JSON.stringify(await fetchUsage(), null, 2));
 }
