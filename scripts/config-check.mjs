@@ -515,6 +515,9 @@ const boardKeys = [
     context: 91,
     squares: ["done", { state: "active", title: '2. Fix "x"' }, "todo"],
     nested: ["busy"],
+    // A teammate carries its own escapable name, told apart from the
+    // anonymous dots `nested` above still draws.
+    teammates: [{ id: "t-1", name: "<img src=x onerror=alert(2)>identity-governance-expert", state: "waiting" }],
   },
   { id: "s-2", kind: "session", project: "beta", accent: ACCENTS[1], state: "idle", shell: true, label: "", context: null, squares: [], nested: [] },
   { id: "pi:/x", kind: "offline", project: "x", accent: ACCENTS[2], label: "pi offline 4m" },
@@ -548,6 +551,8 @@ const detail = {
     // another tool's file, escaped like everything else.
     { id: "n-2", state: "busy", label: "client-rounds-a", progress: { done: 6, total: 9, active: "<b>Task 6" } },
   ],
+  // A teammate is a separate list from Subagents above, escaped the same way.
+  teammates: [{ id: "t-1", name: "<img src=x onerror=alert(2)>identity-governance-expert", state: "busy", doing: "<b>reviewing scope" }],
 };
 const boardSrv = await createConfigServer({
   projects,
@@ -589,6 +594,11 @@ eq(board.split("data-session=").length - 1, 2, "only the two session tiles are t
 // rather than one tile vanishing and another taking its place.
 eq(board.includes('data-id="__status"'), true, "the two queues share one tile");
 eq(board.includes("CLEAR"), true, "a session with nothing said in it reads CLEAR, as on the deck");
+// A teammate's name is escaped exactly like everything else here, and reads
+// as a chip inside its lead's own tile — not a second box beside it.
+eq(board.includes('class="tchip"'), true, "a teammate gets a chip in its lead's tile");
+eq(board.includes("<img src=x onerror=alert(2)>"), false, "its name never reaches the page as a tag");
+eq(board.includes("&lt;img src=x onerror=alert(2)&gt;identity-governance-expert"), true, "escaped, same as a project's or a title's");
 
 const grid = await (await fetch(`${bBase}/board/grid?t=${bToken}`)).text();
 eq(grid.startsWith("<div class=\"key"), true, "the poll fragment is the tiles alone, no page around them");
@@ -619,6 +629,10 @@ eq(panel.split('class="task ').length - 1, 3, "every task is listed, not a windo
 eq(panel.includes("in_progress"), true, "and carries its status, so the running one reads as running");
 eq(panel.includes("1 of 3"), true, "with the count the deck's progress bar shows");
 eq(panel.split('class="agent"').length - 1, 2, "every subagent too");
+eq(panel.split('class="tm-chip"').length - 1, 1, "and every teammate, in its own row");
+eq(panel.includes("<img src=x onerror=alert(2)>"), false, "a teammate's name never reaches the panel as a tag");
+eq(panel.includes("&lt;img src=x onerror=alert(2)&gt;identity-governance-expert"), true, "escaped, same as everywhere else");
+eq(panel.includes("<em>&lt;b&gt;reviewing scope</em>"), true, "and what it's doing, escaped too");
 eq(panel.includes("6/9 · busy"), true, "an SDK session's own task count rides its row — it has no key of its own to carry it");
 eq(panel.includes("<em>&lt;b&gt;Task 6</em>"), true, "and the task it is on, escaped like every other borrowed string");
 eq(panel.includes("<span class=\"st\">busy</span>"), true, "a subagent with no plan of its own still reads as it did");

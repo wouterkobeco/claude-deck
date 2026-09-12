@@ -836,6 +836,9 @@ eq(
   // every session out of the registry has one.
   const sess = (id, folder, extra = {}) => ({ session_id: id, folder, cwd: folder, nested: false, state: "idle", ...extra });
   const sub = (id, folder, parent, state) => ({ session_id: id, folder, nested: true, parent, state });
+  const teammate = (id, folder, parent, state, teamName) => ({
+    session_id: id, folder, nested: true, parent, state, subagent: true, teamName,
+  });
   // Fourteen sessions across two projects: more than the deck can show, which
   // is the whole reason this view exists.
   const many = [
@@ -862,6 +865,20 @@ eq(
     folded.map((t) => [t.id, t.state, t.nested]),
     [["a0", "idle", []], ["a1", "busy", ["busy"]]],
     "a busy subagent colours its own parent's tile, not its sibling's"
+  );
+
+  // A teammate — a subagent the caller addressed by name — folds its state
+  // into the block same as any other subagent, but sits in `teammates`
+  // instead of the anonymous `nested` dots, and only there.
+  const withTeam = [sess("a0", A), teammate("g2", A, "a0", "waiting", "audit-compliance-expert")];
+  assignSlots(withTeam, bslots, bnested);
+  const teamed = boardTiles(withTeam);
+  eq(teamed[0].state, "waiting", "a teammate still colours its lead's block");
+  eq(teamed[0].nested, [], "and never doubles into the anonymous dots");
+  eq(
+    teamed[0].teammates,
+    [{ id: "g2", name: "audit-compliance-expert", state: "waiting" }],
+    "a named subagent gets its own chip"
   );
 
   // `shell` is carried apart from `state` for the same reason renderKey takes

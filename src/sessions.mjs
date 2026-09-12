@@ -511,6 +511,11 @@ async function readAgentStops(parentPath, tail) {
  *
  * Takes the directory rather than a session so the check can point it at a
  * fixture. Every read is try/catch-skipped, same as everything else here.
+ *
+ * `teamName` is the meta.json's own `name` — set only when the caller
+ * addressed this agent by one, which is also what gets it a cmux pane. `null`
+ * for an ordinary, anonymous Task-tool call; `description` is all one of
+ * those ever has.
  */
 export async function readRunningSubagents(dir, tail = tailLines, parentPath = null) {
   let names;
@@ -566,12 +571,20 @@ export async function readRunningSubagents(dir, tail = tailLines, parentPath = n
     if (stopReason === "end_turn") continue;
 
     let description = null;
+    // `teamName` is only ever set when the caller gave the Agent tool call a
+    // `name` — what makes it addressable, and what cmux hands a pane so it
+    // opens as a teammate rather than running invisibly. An anonymous
+    // Task-tool call carries no such field, and stays told apart by
+    // description alone.
+    let teamName = null;
     try {
-      ({ description = null } = JSON.parse(await readFile(path.replace(/\.jsonl$/, ".meta.json"), "utf8")));
+      ({ description = null, name: teamName = null } = JSON.parse(
+        await readFile(path.replace(/\.jsonl$/, ".meta.json"), "utf8")
+      ));
     } catch {
       // no meta yet, or mid-write — the tile falls back to the agent id
     }
-    running.push({ id: name.replace(/^agent-|\.jsonl$/g, ""), description, cwd, ts: Math.floor(mtimeMs / 1000) });
+    running.push({ id: name.replace(/^agent-|\.jsonl$/g, ""), description, teamName, cwd, ts: Math.floor(mtimeMs / 1000) });
   }
   return running;
 }
@@ -1079,6 +1092,10 @@ async function sessionsFrom(source) {
           subagent: true,
           nested: true,
           name: a.description,
+          // Kept apart from `name` above (which stays the description, the
+          // only thing an anonymous subagent has): this is only ever set for
+          // one the caller addressed by name — a teammate, not a helper.
+          teamName: a.teamName,
           state: "busy",
           ts: a.ts,
         }))

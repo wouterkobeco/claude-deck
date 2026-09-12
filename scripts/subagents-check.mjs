@@ -17,10 +17,10 @@ const toolResultLine = JSON.stringify({
 });
 const thinkingLine = JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking" }] } });
 
-async function agent(id, lines, { description = null, ageS = 0 } = {}) {
+async function agent(id, lines, { description = null, name = null, ageS = 0 } = {}) {
   const path = join(dir, `agent-${id}.jsonl`);
   await writeFile(path, lines.join("\n") + "\n");
-  if (description) await writeFile(join(dir, `agent-${id}.meta.json`), JSON.stringify({ description }));
+  if (description || name) await writeFile(join(dir, `agent-${id}.meta.json`), JSON.stringify({ description, name }));
   if (ageS) {
     const t = new Date(Date.now() - ageS * 1000);
     await utimes(path, t, t);
@@ -48,6 +48,10 @@ assert.deepEqual(await ids(), ["newborn", "running"]);
 const running = (await readRunningSubagents(dir)).find((a) => a.id === "running");
 assert.equal(running.description, "Task 1: rename tables");
 assert.equal((await readRunningSubagents(dir)).find((a) => a.id === "newborn").description, null);
+// `teamName` is a separate question from `description`: only a caller who
+// addressed the agent by name sets it, which is what makes it a teammate
+// rather than an anonymous helper — "running" above never got one.
+assert.equal(running.teamName, null, "an anonymous Task-tool call has no team name");
 
 // Interrupted mid-tool: it never writes end_turn, so only the mtime cap
 // retires it. Ten minutes quiet and the marker goes away.
@@ -157,6 +161,23 @@ console.log("OK: only an agent this session spawned answers for it");
   assert.deepEqual((await readRunningSubagents(subs)).map((a) => a.id), ["stopped"], "without one, nothing changes");
   await rm(dir2, { recursive: true, force: true });
   console.log("OK: a stopped agent is retired by its parent's notification");
+}
+
+// A caller who named the Agent tool call gets teamName back; one who didn't
+// gets null — description reads independently of it either way.
+{
+  const dir3 = await mkdtemp(join(tmpdir(), "streamdeck-subagents-team-"));
+  async function namedAgent(id, lines, opts) {
+    const path = join(dir3, `agent-${id}.jsonl`);
+    await writeFile(path, lines.join("\n") + "\n");
+    await writeFile(join(dir3, `agent-${id}.meta.json`), JSON.stringify(opts));
+  }
+  await namedAgent("t1", [line("tool_use")], { description: "Audit RBAC scope", name: "audit-compliance-expert" });
+  const named = (await readRunningSubagents(dir3)).find((a) => a.id === "t1");
+  assert.equal(named.teamName, "audit-compliance-expert", "a caller-given name comes through as teamName");
+  assert.equal(named.description, "Audit RBAC scope", "description still reads independently of it");
+  await rm(dir3, { recursive: true, force: true });
+  console.log("OK: a named agent carries its team name apart from its description");
 }
 
 await rm(dir, { recursive: true, force: true });
