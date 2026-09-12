@@ -303,11 +303,15 @@ key still opens the same pages on loopback.
 
 ## Nice details
 
-- **Subagents don't get a key.** A session an SDK script started, or an agent a
-  session spawned with the Agent tool, shows as a small square on its project's
-  key, coloured by its own state, and becomes a readable tile on that project's
-  detail board (and on the attention board, if it blocks). A session *you*
-  started gets its own key wherever its cwd is — worktrees included.
+- **Subagents don't get a key — but a named teammate gets a chip.** A session
+  an SDK script started, or an anonymous Agent-tool call a session spawned,
+  shows as a small square on its project's key, coloured by its own state, and
+  becomes a readable row on that project's detail board (and on the attention
+  board, if it blocks). One a caller addressed by name — a teammate, running
+  as its own top-level session under `~/.claude/teams/` — instead earns a
+  named chip inside its lead's own key on the web board, and a row of its own
+  in the detail panel, since it's no longer anonymous. A session *you* started
+  gets its own key wherever its cwd is — worktrees included.
 - **A key's colour covers its block.** A project whose only activity is a
   subagent reads as working, not as a grey key with a 3px marker.
 - **A key uses the whole key.** Lines are filled to the width they really
@@ -438,6 +442,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude/ide/*.lock` | which folders are open in VS Code windows |
 | `~/.claude/sessions/<pid>.json` → `tmux` | that a session is running in a cmux pane, so it gets a key with no editor open — and a press reveals the pane instead of a window |
 | `~/.claude/projects/<cwd>/<id>.jsonl` | the session title VS Code's terminal list shows, plus its model, reasoning effort, and the context gauge when no status line writes the file below |
+| `~/.claude/teams/session-<id>/config.json` | a session's live named teammates — Agent-tool members running as their own top-level sessions, matched to their sibling transcript in the same project directory by `teamName`/`agentName`; distinct from the anonymous Task-tool subagents nested under that transcript's own directory |
 | `~/.claude/tasks/<id>/*.json` | one file per task → `done/total` on the board, the full list on the detail board |
 | `<repo>/.superpowers/sdd/<plan>/` | fallback for a session whose tasks Claude Code isn't tracking: superpowers' SDD ledger, read only when the above is empty and only for a local session |
 | `~/.claude/ctx/<id>.json` | context usage %, written by the status line block above — exact, and the authority wherever it exists |
