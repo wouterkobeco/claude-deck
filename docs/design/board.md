@@ -599,4 +599,50 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   were open at that repo root. sessions.md carries the argument in full. `state` is the block's, so
   `renderKey` takes a separate `shell` flag for the margin's blue dot; without
   it a key greened by a subagent would erase its own background-shell marker.
+- **A teammate earns a chip rather than a dot, and it is not a subagent —
+  two unrelated mechanisms feed the one concept.** An anonymous Task-tool
+  call is still exactly what `readRunningSubagents` always read: an entry
+  under `<parent>/subagents/`, no registry entry of its own. But an Agent
+  tool call given a `name` (what also gets it a cmux pane) turns out, measured
+  live, to run as a completely independent top-level session — its own
+  transcript, sibling to its lead's in the same project directory — with the
+  roster kept somewhere neither the deck nor `readRunningSubagents` ever
+  looked: `~/.claude/teams/session-<lead's id, truncated to its first UUID
+  segment>/config.json`. That file never records *which* transcript belongs
+  to which member, so `readTeammates` (sessions.mjs) finds it by content —
+  every line a teammate writes carries `teamName`/`agentName`, and the newest
+  one still tagged for this team says both who it is and whether it's still
+  running: a `type:"system", subtype:"away_summary"` line is Claude Code's
+  own "done, idle" signal, playing the role `end_turn` plays for an anonymous
+  subagent. No config.json entry is ever removed on going idle — it stays on
+  the team for the next prompt — so "on the roster" and "currently running"
+  are different questions and only the transcript answers the second one.
+  Both mechanisms fold into the same nested-children list `boardTiles` and
+  `configDeps.detail()` (index.mjs) already built with `nestedFor`, and both
+  are told apart from an anonymous subagent or an SDK session the same way:
+  a bare `n.teamName` check, nothing about `n.subagent` — that flag now only
+  decides which transcript-path formula a teammate's token count reads from
+  (`subagentTranscriptPath` for the classic mechanism, the ordinary
+  `transcriptPathFor` for one running as its own top-level session). The
+  split changes nothing about state or ordering: `mostUrgent` still folds
+  every nested state into the block regardless of which side it lands on.
+  **The tile** (board-page.mjs's `body()`) gets a `.teammates` row of
+  `.tchip` pills inside the lead's own card — a border-top under the text is
+  the only seam, mirroring `.bar`'s rule above the header, so a teammate
+  reads as this session's own block rather than something beside it. Capped
+  at `TEAMMATE_TILE_CAP` (4) with a `+N` chip for the rest: a fixed-height
+  tile can't grow to fit an arbitrary team size the way the detail panel can,
+  and `.key`'s own `overflow:hidden` would otherwise clip the bottom rows
+  silently — the same "trimmed to what fits" the deck's own nested markers
+  already do, but said out loud instead of just doing it quietly. Anonymous
+  subagents still fold into the existing marker dots, unchanged.
+  **The detail panel** gets a horizontal `.tm-row` of `.tm-chip`s, placed
+  between the Tasks and Subagents sections — each chip carries the same
+  facts as a Subagents row (state dot, name, its current task if any, token
+  count) but laid out across rather than down, because a teammate list
+  answers "who", not "how far along"; a teammate found via `~/.claude/teams/`
+  has no aiTitle or description of its own to put there, so a chip whose
+  "doing" would just repeat its own name leaves that line out rather than
+  saying nothing twice. An empty side says `none running` rather than
+  collapsing, same as Subagents already did.
 

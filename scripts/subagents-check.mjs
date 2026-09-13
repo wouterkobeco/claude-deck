@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentCwds, ledgerCwds, readRunningSubagents } from "../src/sessions.mjs";
+import { agentCwds, ledgerCwds, readRunningSubagents, readTeammates, projectSlug } from "../src/sessions.mjs";
 
 const dir = await mkdtemp(join(tmpdir(), "streamdeck-subagents-check-"));
 
@@ -17,10 +17,10 @@ const toolResultLine = JSON.stringify({
 });
 const thinkingLine = JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking" }] } });
 
-async function agent(id, lines, { description = null, ageS = 0 } = {}) {
+async function agent(id, lines, { description = null, name = null, ageS = 0 } = {}) {
   const path = join(dir, `agent-${id}.jsonl`);
   await writeFile(path, lines.join("\n") + "\n");
-  if (description) await writeFile(join(dir, `agent-${id}.meta.json`), JSON.stringify({ description }));
+  if (description || name) await writeFile(join(dir, `agent-${id}.meta.json`), JSON.stringify({ description, name }));
   if (ageS) {
     const t = new Date(Date.now() - ageS * 1000);
     await utimes(path, t, t);
@@ -48,6 +48,10 @@ assert.deepEqual(await ids(), ["newborn", "running"]);
 const running = (await readRunningSubagents(dir)).find((a) => a.id === "running");
 assert.equal(running.description, "Task 1: rename tables");
 assert.equal((await readRunningSubagents(dir)).find((a) => a.id === "newborn").description, null);
+// `teamName` is a separate question from `description`: only a caller who
+// addressed the agent by name sets it, which is what makes it a teammate
+// rather than an anonymous helper — "running" above never got one.
+assert.equal(running.teamName, null, "an anonymous Task-tool call has no team name");
 
 // Interrupted mid-tool: it never writes end_turn, so only the mtime cap
 // retires it. Ten minutes quiet and the marker goes away.
@@ -157,6 +161,81 @@ console.log("OK: only an agent this session spawned answers for it");
   assert.deepEqual((await readRunningSubagents(subs)).map((a) => a.id), ["stopped"], "without one, nothing changes");
   await rm(dir2, { recursive: true, force: true });
   console.log("OK: a stopped agent is retired by its parent's notification");
+}
+
+// A caller who named the Agent tool call gets teamName back; one who didn't
+// gets null — description reads independently of it either way.
+{
+  const dir3 = await mkdtemp(join(tmpdir(), "streamdeck-subagents-team-"));
+  async function namedAgent(id, lines, opts) {
+    const path = join(dir3, `agent-${id}.jsonl`);
+    await writeFile(path, lines.join("\n") + "\n");
+    await writeFile(join(dir3, `agent-${id}.meta.json`), JSON.stringify(opts));
+  }
+  await namedAgent("t1", [line("tool_use")], { description: "Audit RBAC scope", name: "audit-compliance-expert" });
+  const named = (await readRunningSubagents(dir3)).find((a) => a.id === "t1");
+  assert.equal(named.teamName, "audit-compliance-expert", "a caller-given name comes through as teamName");
+  assert.equal(named.description, "Audit RBAC scope", "description still reads independently of it");
+  await rm(dir3, { recursive: true, force: true });
+  console.log("OK: a named agent carries its team name apart from its description");
+}
+
+// readTeammates: a completely different mechanism from everything above — a
+// named Agent call running as its own top-level session under
+// ~/.claude/teams/, never an entry under subagents/ at all.
+{
+  const root = await mkdtemp(join(tmpdir(), "streamdeck-teammates-"));
+  const cwd = "/repo/project";
+  // A full UUID-shaped id, the same as a real session's — measured live,
+  // the roster's own directory truncates to its first segment
+  // ("~/.claude/teams/session-3cbc56b7/" for a session id starting
+  // "3cbc56b7-..."), not the whole id readTeammates is called with.
+  const leadId = "1234abcd-dead-beef-0000-111122223333";
+  const teamName = `session-${leadId.split("-")[0]}`;
+  const projDir = join(root, "projects", projectSlug(cwd));
+  await mkdir(projDir, { recursive: true });
+  await mkdir(join(root, "teams", teamName), { recursive: true });
+
+  await writeFile(
+    join(root, "teams", teamName, "config.json"),
+    JSON.stringify({
+      name: teamName,
+      createdAt: Date.now() - 60_000,
+      leadSessionId: leadId,
+      members: [
+        { agentId: `team-lead@${teamName}`, name: "team-lead", backendType: "in-process", cwd },
+        { agentId: `reviewer@${teamName}`, name: "reviewer", backendType: "tmux", cwd },
+        { agentId: `writer@${teamName}`, name: "writer", backendType: "tmux", cwd },
+      ],
+    })
+  );
+
+  const teammateLine = (agentName, extra = {}) =>
+    JSON.stringify({ teamName, agentName, type: "assistant", message: { content: [] }, ...extra });
+
+  // A running teammate: ordinary lines, no away marker.
+  await writeFile(join(projDir, "reviewer-session.jsonl"), teammateLine("reviewer") + "\n");
+  // A finished one: the newest line tagged for this team is the away marker
+  // — Claude Code's own "done, available for another task" signal.
+  await writeFile(
+    join(projDir, "writer-session.jsonl"),
+    [teammateLine("writer"), JSON.stringify({ teamName, agentName: "writer", type: "system", subtype: "away_summary" })].join(
+      "\n"
+    ) + "\n"
+  );
+  // A stray transcript tagged for no team at all — must never be mistaken
+  // for one just because it happens to share the directory.
+  await writeFile(join(projDir, "unrelated.jsonl"), JSON.stringify({ type: "user", message: {} }) + "\n");
+
+  const teammates = await readTeammates({ session_id: leadId, cwd }, root);
+  assert.deepEqual(teammates.map((t) => t.name).sort(), ["reviewer"], "a running teammate is found, a finished one is not");
+  assert.equal(teammates[0].id, "reviewer-session", "its own transcript's filename is its session id");
+
+  // No team at all — the ordinary case for almost every session.
+  assert.deepEqual(await readTeammates({ session_id: "solo", cwd }, root), [], "a session with no team has none");
+
+  await rm(root, { recursive: true, force: true });
+  console.log("OK: readTeammates finds a running named teammate and excludes a finished one");
 }
 
 await rm(dir, { recursive: true, force: true });

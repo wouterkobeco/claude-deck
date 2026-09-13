@@ -290,6 +290,22 @@ const STYLE = `
           align-self: flex-start;
           max-height: calc(var(--lines) * var(--lh) * 1em) }
   .text.empty { color: #ffffff88 }
+  /* Teammates: subagents the caller addressed by name, so cmux gave them a
+     pane of their own. They sit inside the lead's own card, not beside it —
+     a rule under the text is the only seam, same as .bar draws one above it. */
+  .teammates { flex: none; display: flex; flex-wrap: wrap; gap: 1cqh 1.5cqw;
+               padding: 3cqh 4cqw; border-top: 1px solid #00000055 }
+  .tchip { display: flex; align-items: center; gap: 1.2cqw; background: #00000033;
+           border-radius: 3cqh; padding: .8cqh 2cqw }
+  .tchip i { flex: none; width: 4cqw; min-width: 3px; height: 4cqw; min-height: 3px;
+             border-radius: 50% }
+  .tchip span { font-size: calc(var(--fs) * .8cqh); font-weight: 600; color: #fff;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                max-width: 22cqw }
+  /* The overflow chip: no dot (it isn't one teammate), same pill so it reads
+     as one of the row rather than a different kind of thing. */
+  .tchip.more { color: #ffffffcc; font-weight: 700;
+                font-size: calc(var(--fs) * .8cqh) }
   .foot { flex: none; display: flex; gap: 1.5cqw; padding: 4cqh 4cqw }
   .foot i { flex: 1; height: 5cqh; min-height: 3px; border-radius: 1px; background: #ffffff33 }
   .foot i.done { background: #ffffffdd }
@@ -431,6 +447,16 @@ const STYLE = `
   .agent .tok { flex: none; font-size: 11px; color: #9e9e9e }
   .agent .st { flex: none; font-size: 11px; color: #757575; letter-spacing: .1em;
                text-transform: uppercase }
+  /* Teammates get a row, not a stack — there's room here to wrap rather than
+     the tile's single line, but the point is still "who", read across, not
+     down. */
+  .tm-row { display: flex; flex-wrap: wrap; gap: 8px }
+  .tm-chip { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+             border-radius: 5px; background: #1b1b1b; font-size: 13px }
+  .tm-chip .dot { flex: none; width: 8px; height: 8px; border-radius: 2px }
+  .tm-chip .nm { color: #e0e0e0; word-break: break-word }
+  .tm-chip .nm em { display: block; font-style: normal; font-size: 11px; color: #9e9e9e }
+  .tm-chip .tok { flex: none; font-size: 11px; color: #9e9e9e }
   .none { color: #616161; font-size: 13px }
 
   /* One grip, two numbers: drag left/right for columns, up/down for rows —
@@ -481,6 +507,12 @@ const usageHalf = (caps, pct) =>
        pct ?? 0
      )}"></i></div>
    </div>`;
+
+// How many teammate chips a fixed-height tile shows before folding the rest
+// into a "+N" chip — chosen so four short names plus a "+N" still fit a
+// single wrapped row or two at the board's default size; the detail panel
+// has no such cap, since it isn't fighting a fixed grid row for space.
+const TEAMMATE_TILE_CAP = 4;
 
 /**
  * One tile. `data-id` is what the poll diffs on, and `data-session` is what a
@@ -537,6 +569,29 @@ function tile(k, token) {
   return `<div class="key${blocked ? " blocked" : ""}"${id} data-session="${esc(k.id)}" style="background:${background}">
     ${bar(k)}
     ${content}
+    ${
+      k.teammates?.length
+        ? `<div class="teammates">${k.teammates
+            // A fixed tile has a fixed height — nothing here can grow to fit
+            // an arbitrary team size the way the detail panel can, and
+            // `.key`'s own `overflow:hidden` would otherwise clip the bottom
+            // rows silently, the deck's own "nested markers trimmed to what
+            // fits" rule turned into a lie by never saying so. Trimmed here
+            // instead, honestly: a "+N" chip, never a chip that vanishes.
+            .slice(0, TEAMMATE_TILE_CAP)
+            .map(
+              (t) =>
+                `<div class="tchip"><i style="background:${MARKER_COLORS[t.state] ?? MARKER_COLORS.idle}"></i><span>${esc(
+                  t.name
+                )}</span></div>`
+            )
+            .join("")}${
+        k.teammates.length > TEAMMATE_TILE_CAP
+          ? `<div class="tchip more">+${k.teammates.length - TEAMMATE_TILE_CAP}</div>`
+          : ""
+      }</div>`
+        : ""
+    }
     ${
       k.squares?.length
         ? `<div class="foot">${k.squares
@@ -621,6 +676,28 @@ export function detailPanel(d) {
                 )
                 .join("")
             : '<p class="none">no task list — this session has not used one</p>'
+        }
+      </div>
+      <div>
+        <h3>Teammates</h3>
+        ${
+          d.teammates?.length
+            ? `<div class="tm-row">${d.teammates
+                .map(
+                  (t) =>
+                    `<div class="tm-chip"><span class="dot" style="background:${
+                      MARKER_COLORS[t.state] ?? MARKER_COLORS.idle
+                    }"></span><span class="nm">${esc(t.name)}${
+                      // A teammate found via ~/.claude/teams/ has no richer
+                      // signal than its own name — no aiTitle, no
+                      // description — so `doing` comes back equal to `name`.
+                      // Repeating it under itself would read as a mistake,
+                      // not a fact.
+                      t.doing && t.doing !== t.name ? `<em>${esc(t.doing)}</em>` : ""
+                    }</span><span class="tok">${tokenLabel(t.tokens)}</span></div>`
+                )
+                .join("")}</div>`
+            : '<p class="none">none running</p>'
         }
       </div>
       <div>

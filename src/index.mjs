@@ -1624,6 +1624,14 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
     }
     const isPrimary = i === 0 || folderKeyFor(ordered[i - 1]) !== folderKeyFor(s);
     const own = nestedFor(s, nested, isPrimary).sort((a, b) => at(nestedOrder, a.session_id) - at(nestedOrder, b.session_id));
+    // A teammate is anything sessions.mjs found a `teamName` for — an
+    // anonymous Task-tool call never carries one, whichever of the two
+    // mechanisms (subagents/ directory or a named top-level session under
+    // ~/.claude/teams/) produced the entry. It earns a chip of its own here,
+    // inside the block, rather than folding into the anonymous dots the rest
+    // still do.
+    const teammates = own.filter((n) => n.teamName);
+    const anon = own.filter((n) => !n.teamName);
     const { label } = keyFields(s);
     return {
       id: s.session_id,
@@ -1649,7 +1657,8 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
       squares: s.progress
         ? taskSquares(s.progress, 100).map((q, i) => ({ state: q.state, title: s.progress.subjects?.[i] ? `${i + 1}. ${s.progress.subjects[i]}` : `task ${i + 1}` }))
         : [],
-      nested: own.map((n) => n.state),
+      nested: anon.map((n) => n.state),
+      teammates: teammates.map((n) => ({ id: n.session_id, name: n.teamName, state: n.state })),
     };
   });
 
@@ -1772,6 +1781,33 @@ export const configDeps = {
     // session), so the panel can't show a plan the key doesn't.
     const tasks = await readTaskList(session.session_id, session.root, session.ledgerCwds ?? null);
     const { label, project, age } = keyFields(session);
+    // Split the same way the tile is: anything sessions.mjs gave a `teamName`
+    // is a teammate (an anonymous Task-tool call, an SDK session running a
+    // plan of its own, and a finished-away teammate never carry one), and
+    // stays a plain subagent row otherwise.
+    const nestedRows = await Promise.all(
+      nested.map(async (n) => ({
+        id: n.session_id,
+        state: n.state,
+        label: keyFields(n).label,
+        teamName: n.teamName ?? null,
+        // An SDK session runs a plan of its own — a superpowers controller
+        // walking nine tasks is the case this exists for — and its key is
+        // this row: it has none of its own, so a progress it carries and
+        // nobody draws is progress that exists nowhere.
+        progress: n.progress ? { done: n.progress.current, total: n.progress.total, active: n.progress.active } : null,
+        tokens: n.host
+          ? null
+          : await transcriptTokenTotal(
+              // `subagent`, not `parent`: an SDK session has a parent too now
+              // (found in its pid ancestry) but a transcript of its own, in
+              // its own project directory.
+              n.subagent
+                ? subagentTranscriptPath({ cwd: n.cwd, parent: n.parent, agentId: n.session_id }, n.root)
+                : transcriptPathFor({ cwd: n.cwd, sessionId: n.session_id }, n.root)
+            ),
+      }))
+    );
     return {
       id,
       project,
@@ -1812,28 +1848,10 @@ export const configDeps = {
         ? null
         : await transcriptTokenTotal(transcriptPathFor({ cwd: session.cwd, sessionId: session.session_id }, session.root)),
       // Likewise all of them, rather than however many the tail had room for.
-      nested: await Promise.all(
-        nested.map(async (n) => ({
-          id: n.session_id,
-          state: n.state,
-          label: keyFields(n).label,
-          // An SDK session runs a plan of its own — a superpowers controller
-          // walking nine tasks is the case this exists for — and its key is
-          // this row: it has none of its own, so a progress it carries and
-          // nobody draws is progress that exists nowhere.
-          progress: n.progress ? { done: n.progress.current, total: n.progress.total, active: n.progress.active } : null,
-          tokens: n.host
-            ? null
-            : await transcriptTokenTotal(
-                // `subagent`, not `parent`: an SDK session has a parent too now
-                // (found in its pid ancestry) but a transcript of its own, in
-                // its own project directory.
-                n.subagent
-                  ? subagentTranscriptPath({ cwd: n.cwd, parent: n.parent, agentId: n.session_id }, n.root)
-                  : transcriptPathFor({ cwd: n.cwd, sessionId: n.session_id }, n.root)
-              ),
-        }))
-      ),
+      teammates: nestedRows
+        .filter((r) => r.teamName)
+        .map(({ teamName, label, ...r }) => ({ ...r, name: teamName, doing: label })),
+      nested: nestedRows.filter((r) => !r.teamName).map(({ teamName, ...r }) => r),
     };
   },
   // Formatted here rather than in the page: config-server.mjs owns markup and
