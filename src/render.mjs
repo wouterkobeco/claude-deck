@@ -223,7 +223,7 @@ export function wrapWords(text, width, fontSize, letterSpacing = 0) {
 // Shared by each text's `letter-spacing` attribute and by the width budget
 // wrapLabel/fitCaps spend against it — the fit is only exact while they agree.
 const BODY_LETTER_SPACING = 0.1;
-const CAPS_LETTER_SPACING = 0.5;
+export const CAPS_LETTER_SPACING = 0.5;
 
 /** Truncates to what fits `width` with a trailing ellipsis, measured the same way. */
 export function ellipsize(line, width, fontSize, letterSpacing = 0) {

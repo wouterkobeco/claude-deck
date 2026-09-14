@@ -2929,7 +2929,21 @@ async function run() {
             ? [{ caps: "RAM", pct: m.pressure, text: amt(m.pressure, m.totalMb) }, { caps: "SWAP", pct: m.swap, text: amt(m.swap, m.swapTotalMb) }]
             : [{ caps: "RAM", pct: m.pressure }, { caps: "SWAP", pct: m.swap }],
         });
-        const memoryTiles = [memTile("memory", getMemory()), ...Object.entries(hostMemories()).map(([h, m]) => memTile(h, m))];
+        // Heat rides this machine's own memory key rather than taking a key
+        // of its own: the board is already sliced at the back key, and a
+        // fifth head tile would silently push the memory keys off it for
+        // anyone running four accounts. Said only when there is something to
+        // say — `NOMINAL` is the answer almost always, and a caps line that
+        // never changes is a caps line nobody reads. Unknown reads "memory"
+        // too: this can't claim "not hot" when it couldn't ask.
+        const heat = getMemory().thermal;
+        const memoryTiles = [
+          // "HOT", not "HEAT": measured, "HEAT CRITICAL" runs 69px into a
+          // 64.8px caps budget and `fitCaps` would quietly eat the word that
+          // matters. render-check holds that line.
+          memTile(heat && heat.level > 0 ? `HOT ${heat.label}` : "memory", getMemory()),
+          ...Object.entries(hostMemories()).map(([h, m]) => memTile(h, m)),
+        ];
         // Accounts lead, the version beside them, then the memory keys on a
         // row of their own — read as two things, not one run — padded to the
         // next row only when the memory keys still fit above the back key.

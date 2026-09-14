@@ -24,6 +24,28 @@ export function parseMemory(levelLine, swapLine, memsizeLine) {
   };
 }
 
+const THERMAL = ["NOMINAL", "FAIR", "SERIOUS", "CRITICAL"];
+
+/**
+ * `ProcessInfo.thermalState` -> the level and its name. This is the only
+ * throttle signal a plain user can read on Apple Silicon: `pmset -g therm`'s
+ * `CPU_Speed_Limit` is Intel-only (an M1 Max answers "No CPU power status has
+ * been recorded"), and no temperature sensor is exposed to ioreg without
+ * root, so `sudo powermetrics` is the only route to actual degrees and a
+ * daemon can't ask for that. Coarse on purpose: it is the same pressure macOS
+ * uses to tell apps to back off, not a thermometer.
+ *
+ * Anything else — an empty read, a future level — is unknown, never nominal:
+ * "not hot" is a claim, and this can't make it.
+ */
+export function parseThermal(out) {
+  // Matched as a digit rather than coerced: `Number("")` and `Number(null)`
+  // are both 0, so a read that answered nothing would have come back NOMINAL
+  // — the machine reporting "not hot" on the strength of never having asked.
+  const s = String(out ?? "").trim();
+  return /^\d$/.test(s) && Number(s) < THERMAL.length ? { level: Number(s), label: THERMAL[Number(s)] } : null;
+}
+
 /** `ps -axo rss=,comm=` -> resident MB and count of `claude` CLI processes. */
 export function parseClaudeRss(psOut) {
   let kb = 0;
@@ -37,7 +59,7 @@ export function parseClaudeRss(psOut) {
   return { mb: Math.round(kb / 1024), count };
 }
 
-let cache = { at: 0, value: { pressure: null, swap: null, claude: null } };
+let cache = { at: 0, value: { pressure: null, swap: null, claude: null, thermal: null } };
 let inflight = null;
 
 /**
@@ -54,10 +76,22 @@ export function getMemory(now = Date.now()) {
       // What the Claude sessions themselves hold, resident only — the part
       // swapped out is invisible to ps, so this is a floor, not the bill.
       run("ps", ["-axo", "rss=,comm="]).catch(() => null),
+      // Caught separately from the sysctl above rather than folded into it:
+      // this is a 160ms osascript spawn against a private framework call, and
+      // a machine where it fails must still read its own memory. Rides the
+      // same 10s TTL for the same reason — nothing here is on the poll's path.
+      run("osascript", ["-l", "JavaScript", "-e", "ObjC.import('Foundation'); $.NSProcessInfo.processInfo.thermalState"]).catch(() => null),
     ])
-      .then(([{ stdout }, ps]) => {
+      .then(([{ stdout }, ps, therm]) => {
         const [level, swap, memsize] = stdout.trim().split("\n");
-        cache = { at: Date.now(), value: { ...parseMemory(level, swap, memsize), claude: ps ? parseClaudeRss(ps.stdout) : null } };
+        cache = {
+          at: Date.now(),
+          value: {
+            ...parseMemory(level, swap, memsize),
+            claude: ps ? parseClaudeRss(ps.stdout) : null,
+            thermal: therm ? parseThermal(therm.stdout) : null,
+          },
+        };
       })
       .catch(() => { cache = { ...cache, at: Date.now() }; })
       .finally(() => { inflight = null; });

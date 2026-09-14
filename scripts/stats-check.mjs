@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { fmt, formatModel, computeStats, getStats } from "../src/stats.mjs";
 import { refreshStats, cswapTiles } from "../src/index.mjs";
-import { parseMemory, parseClaudeRss, parseMeminfo, pctWithAmount } from "../src/memory.mjs";
+import { parseMemory, parseClaudeRss, parseMeminfo, parseThermal, pctWithAmount } from "../src/memory.mjs";
 
 assert.equal(fmt(950), "950");
 assert.equal(fmt(4371), "4.4k");
@@ -81,6 +81,16 @@ assert.deepEqual(stats[6], { label: "Output tokens", value: "220" });
   assert.deepEqual(parseMeminfo("MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n"), { pressure: 75, swap: null, totalMb: 1, swapTotalMb: null }, "a Linux host: what isn't available is pressure; no swap is unknown");
   assert.deepEqual(parseMeminfo(""), { pressure: null, swap: null, totalMb: null, swapTotalMb: null });
   assert.deepEqual(parseMemory("", "total = 0.00M  used = 0.00M"), { pressure: null, swap: null, totalMb: null, swapTotalMb: null }, "no swap configured is unknown, not 0/0");
+  // Thermal pressure: the only throttle signal readable without root. The
+  // titles below are what `memTile` puts on this Mac's own memory key, and
+  // "NOMINAL" deliberately isn't one of them — the key keeps reading "memory"
+  // until there is heat to report.
+  assert.deepEqual(parseThermal("0\n"), { level: 0, label: "NOMINAL" });
+  assert.deepEqual(parseThermal("2"), { level: 2, label: "SERIOUS" });
+  assert.equal(parseThermal(""), null, "a read that answered nothing is unknown");
+  assert.equal(parseThermal("4"), null, "a level this doesn't know is unknown, never nominal");
+  assert.equal(parseThermal(null), null);
+  assert.equal(parseThermal("1.5"), null, "and it is a level, not a temperature");
   // A week tile carries its hours past the day mark — "6d" was a ceil that read
   // the same at 5d01h as at 6d00h.
   assert.deepEqual(tiles[1].rows, [{ caps: "SESSION", text: "3h" }, { caps: "WEEK", text: "5d18h" }]);

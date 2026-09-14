@@ -539,7 +539,27 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   subscriptions read as row one and the machines as row two; back at 10,
   config at 11, key 12 blank.
   Sliced at `DETAIL_BACK_INDEX`, so a fifth account falls off rather than
-  under the back key. The all-time stats, the account name, the reset pair
+  under the back key.
+  **Heat rides this Mac's memory key rather than taking one of its own**, and
+  says nothing until there is something to say: past nominal, that key's caps
+  line reads `HOT FAIR` / `HOT SERIOUS` / `HOT CRITICAL` in place of `MEMORY`.
+  A key of its own was measured and rejected — that slice above is why: a
+  sixth head tile pushes the memory keys off the board entirely for anyone
+  running four accounts, to carry a word that is `NOMINAL` almost always. The
+  wording is measured too: `HEAT CRITICAL` runs 69px into a 64.8px caps budget
+  and `fitCaps` would silently eat the half that matters, so `HOT` it is, and
+  `render-check` holds that line. The reading is `ProcessInfo.thermalState`
+  (`memory.mjs`, on the same 10s TTL as the rest — a 160ms `osascript` spawn,
+  caught apart from the sysctl so a machine where it fails still reads its own
+  memory). Coarse on purpose, and it is all there is: `pmset -g therm`'s
+  `CPU_Speed_Limit` is Intel-only (an M1 Max answers "No CPU power status has
+  been recorded") and no temperature sensor is readable without root, so
+  actual degrees would mean `sudo powermetrics`, which a daemon can't ask for.
+  An unreadable level is unknown, and unknown reads `MEMORY` — never
+  `NOMINAL`, which would be the machine claiming "not hot" on the strength of
+  never having asked. `Number("")` is 0, so that claim is exactly what the
+  first draft made; `parseThermal` matches a digit instead, and stats-check
+  holds it. The all-time stats, the account name, the reset pair
   and blocked-today all left the deck — every one of them is on the activity page, and a
   machine without cswap sees only the version here.
 - **A second press means "tell me more".** Tracked as a global "was the

@@ -2,7 +2,7 @@
 // Run: node scripts/render-check.mjs
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
-import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, renderIcon, wrapLabel, wrapWords, ellipsize, measureText, fitValue } from "../src/render.mjs";
+import { renderKey, formatAge, taskSquares, renderAttention, renderFree, renderTask, renderStat, renderBack, renderCompacting, renderIcon, wrapLabel, wrapWords, ellipsize, measureText, fitValue, CAPS_LETTER_SPACING } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
   if (got !== want) {
@@ -552,5 +552,20 @@ for (const size of [180, 192, 512]) {
   for (const s of ["3h20m", "21h45m"]) eq(measureText(s, fitValue(s, budget, 18)) <= budget, true, `${s} fits its slot`);
 }
 console.log("OK: usage value fits its slot");
+
+// The memory key's title when this Mac is being held back for heat. Every
+// level has to fit whole: `fitCaps` ellipsizes silently, and "HOT CRITIC…" is
+// the one reading where the word you need is the one that got cut. This is
+// not hypothetical — "HEAT CRITICAL" was written first and measured 69px
+// against a 64.8px budget, which nothing but this would have said. The
+// longest that fits clears it by under two pixels, so a caps size or a
+// letter-spacing nudged the wrong way lands here rather than on the deck.
+{
+  const capSize = Math.round(72 * 0.11);
+  const budget = 72 * 0.9; // fitCaps' own, keeping a side margin
+  for (const label of ["FAIR", "SERIOUS", "CRITICAL"])
+    eq(measureText(`HOT ${label}`, capSize, CAPS_LETTER_SPACING) <= budget, true, `HOT ${label} fits the memory key's caps line`);
+}
+console.log("OK: the heat title fits the memory key");
 
 console.log("OK: nested indicator, overlay tile, margin-reserved wrapping, shell dot, task tiles, detail header tiles, inactive key, leaving bar, back key, compacting spinner, home-screen icon");
