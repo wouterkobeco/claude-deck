@@ -3322,7 +3322,23 @@ async function shutdown() {
   process.exit(0);
 }
 
+// The name, once, before anything else this prints. Figlet's standard font,
+// typed out rather than generated: it is one fixed string, so a font renderer
+// (and the dependency under it) would be machinery for a value that never
+// changes. Double-quoted with the backslashes escaped because the art carries
+// both backticks and backslashes — no template literal survives it.
+const BANNER = [
+  "  ____ _                 _         ____            _    ",
+  " / ___| | __ _ _   _  __| | ___   |  _ \\  ___  ___| | __",
+  "| |   | |/ _` | | | |/ _` |/ _ \\  | | | |/ _ \\/ __| |/ /",
+  "| |___| | (_| | |_| | (_| |  __/  | |_| |  __/ (__|   < ",
+  " \\____|_|\\__,_|\\__,_|\\__,_|\\___|  |____/ \\___|\\___|_|\\_\\",
+].join("\n");
+
 async function main() {
+  // In `main` rather than `run`, which is re-entered on every reconnect: the
+  // name is said once at startup, not each time the deck comes back.
+  console.log(`\n${BANNER}\n`);
   let connectedOnce = false;
   for (;;) {
     try {
