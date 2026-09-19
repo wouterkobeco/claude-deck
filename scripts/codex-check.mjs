@@ -83,3 +83,14 @@ console.log("OK: codex rollouts, signals, and rate limits");
   eq(isCodexRollout("/home/u/.codex/sessions/2026/secret.json"), false, "a rollout, not any file");
 }
 console.log("OK: remote codex listing");
+
+// A remote metered home's listing: names are the host's and go back to it, so
+// only a dated rollout name is kept.
+{
+  const { parseRolloutList } = await import("../src/remote-fs.mjs");
+  eq(
+    parseRolloutList(["2918533 2026/09/17/rollout-2026-09-17T18-41-43-01a0.jsonl", "10 ../../.ssh/rollout-x.jsonl", "5 notes.txt", "7 2026/09/17/rollout-a b.jsonl", ""].join("\n")),
+    [{ name: "2026/09/17/rollout-2026-09-17T18-41-43-01a0.jsonl", size: 2918533 }]
+  );
+}
+console.log("OK: remote metered listing");

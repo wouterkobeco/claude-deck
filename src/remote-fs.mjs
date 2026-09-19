@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import { tailLines, transcriptPathFor } from "./sessions.mjs";
 import { HEAD_BYTES, parseHeader } from "./codex.mjs";
+import { CODEX_HEAD_BYTES } from "./tokens.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
 // because everything before it is digits and newlines.
@@ -695,4 +696,70 @@ export async function remoteDirsExist(host, controlPath, dirs) {
   );
   if (out === null) return null;
   return new Set(out.toString("utf8").split("\n").filter(Boolean));
+}
+
+/**
+ * A remote host's metered Codex home, for tokens.mjs's `collectCodex` — the
+ * same `list`/`fetch` shape `localCodexReader` gives this machine's.
+ *
+ * Two ssh calls on the poll's own connection. `list` is GNU find's
+ * `%s %P` (a Mac host prints nothing and has no metered rows here). `fetch`
+ * sends `from size name` per line on stdin — the name last, so a space in it
+ * survives `read` — and gets back three NUL-terminated fields per file: its
+ * head, the last `turn_context` line before the cursor, and the new bytes up
+ * to the listed size. Only those cross the wire after the first backfill; the
+ * host's 64MB of rollouts are never sent twice.
+ *
+ * Names are the host's, sent back to it, so they are held to a rollout's
+ * shape first: dated, relative, `rollout-*.jsonl`, no `..`. The model line
+ * is matched at the start of a line — anywhere else it is a tool output
+ * quoting one. Rejects on any
+ * ssh failure, so the caller keeps that host's cursors for next time.
+ */
+export const CODEX_API_LIST_CMD =
+  "cd ~/.codex-api/sessions 2>/dev/null || exit 0; find . -name 'rollout-*.jsonl' -printf '%s %P\\n' 2>/dev/null";
+export const CODEX_API_FETCH_CMD =
+  "cd ~/.codex-api/sessions 2>/dev/null || exit 0; " +
+  "while read -r a b f; do " +
+  `head -c ${CODEX_HEAD_BYTES} "$f" 2>/dev/null; printf '\\0'; ` +
+  `head -c "$a" "$f" 2>/dev/null | grep '^{"timestamp":"[^"]*","type":"turn_context"' | tail -n 1; printf '\\0'; ` +
+  `tail -c +$((a+1)) "$f" 2>/dev/null | head -c $((b-a)); printf '\\0'; ` +
+  "done";
+
+export function isRolloutName(name) {
+  return /^\d{4}\/\d{2}\/\d{2}\/rollout-[A-Za-z0-9._-]+\.jsonl$/.test(name) && !name.includes("..");
+}
+
+/** `%s %P` lines -> `{ name, size }`, only for names shaped like a rollout. */
+export function parseRolloutList(text) {
+  return text
+    .split("\n")
+    .map((l) => /^(\d+) (.+)$/.exec(l))
+    .filter((m) => m && isRolloutName(m[2]))
+    .map((m) => ({ name: m[2], size: Number(m[1]) }));
+}
+
+export function codexTreeReader(host, controlPath) {
+  return {
+    async list() {
+      const out = await run(["ssh", ...sshArgs(host, controlPath), CODEX_API_LIST_CMD], { timeoutMs: 15000 });
+      if (!out) throw new Error(`${host}: no listing`);
+      return parseRolloutList(out.toString("utf8"));
+    },
+    async fetch(requests) {
+      const out = await run(["ssh", ...sshArgs(host, controlPath), CODEX_API_FETCH_CMD], {
+        input: requests.map((r) => `${r.from} ${r.size} ${r.name}`).join("\n") + "\n",
+        timeoutMs: 180_000,
+      });
+      if (!out) throw new Error(`${host}: fetch failed`);
+      const fields = [];
+      let at = 0;
+      for (let end; (end = out.indexOf(0, at)) >= 0; at = end + 1) fields.push(out.subarray(at, end));
+      return requests.map((_, i) =>
+        fields.length >= 3 * (i + 1)
+          ? { head: fields[3 * i], lastTurn: fields[3 * i + 1].toString("utf8").trim() || null, slice: fields[3 * i + 2] }
+          : null
+      );
+    },
+  };
 }

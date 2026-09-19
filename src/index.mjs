@@ -14,7 +14,7 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { fetchAccountName, fetchSource } from "./remote-fs.mjs";
+import { codexTreeReader, fetchAccountName, fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
@@ -334,7 +334,12 @@ function recordHistory(sessions) {
 function collectTokensInBackground() {
   if (collecting) return;
   collecting = true;
-  collectTokens()
+  // Every host whose last poll answered: its metered Codex home bills the
+  // same key this machine's does, and rides the poll's own ssh connection.
+  const remoteApiReaders = Object.fromEntries(
+    [...remoteMemo].filter(([, e]) => e.source).map(([host]) => [host, codexTreeReader(host, join(SCRATCH_ROOT, "cm-%h"))])
+  );
+  collectTokens({ remoteApiReaders })
     .catch((err) => console.error("tokens:", err?.message ?? err))
     .finally(() => {
       collecting = false;

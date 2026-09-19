@@ -48,7 +48,7 @@ const CODEX_DIR = join(homedir(), ".codex", "sessions");
 // reviews twice.
 const CODEX_API_DIR = join(homedir(), ".codex-api", "sessions");
 
-// $ per million tokens, as of August 2026, and deliberately the same four
+// $ per million tokens, as of September 2026, and deliberately the same four
 // numbers the ship-review skill prices its own runs with. Input bills at three
 // rates: fresh, a cache read (90% off), and a cache write — 1.25x fresh, so a
 // write costs *more* than fresh input rather than less. A model this table has
@@ -57,7 +57,8 @@ const CODEX_API_DIR = join(homedir(), ".codex-api", "sessions");
 // nothing for a model outside its own measured table. If these look wrong they
 // are stale — https://developers.openai.com/api/docs/pricing, not a guess.
 const RATES = {
-  sol: { in: 5.0, read: 0.5, write: 6.25, out: 30.0 },
+  // Sol's promotional price, "available at least through November 21, 2026".
+  sol: { in: 4.0, read: 0.4, write: 5.0, out: 20.0 },
   terra: { in: 2.0, read: 0.2, write: 2.5, out: 12.0 },
   luna: { in: 0.2, read: 0.02, write: 0.25, out: 1.2 },
 };
@@ -346,15 +347,25 @@ export async function collectTokens({
   projectsRoot = join(root, "projects"),
   codexRoot = CODEX_DIR,
   codexApiRoot = CODEX_API_DIR,
+  remoteApiReaders = {},
 } = {}) {
   const previous = readPositions(root);
+  // Once: the metered rows written while the model lookup was broken priced a
+  // quarter of the bill at $0 (see collectCodex). Every rollout is still on
+  // disk, so they are dropped and re-read from byte 0 rather than patched —
+  // here, inside the pass, because this pass is the only writer of either file
+  // and a repair from outside could interleave with one.
+  if (!previous.has(REPRICED)) {
+    dropProvider(root, CODEX_API);
+    for (const k of [...previous.keys()]) if (k.startsWith(`${CODEX_API}/`)) previous.delete(k);
+  }
   // Rebuilt from the paths that exist *now* rather than mutated in place: Claude
   // Code deletes transcripts past its cleanup period, and a map that only ever
   // gained keys would carry a bookmark per transcript this machine has ever
   // written, forever, for files nothing will read again.
-  const positions = new Map();
+  const positions = new Map([[REPRICED, 1]]);
   const buckets = new Map();
-  let moved = false;
+  let moved = !previous.has(REPRICED);
 
   for (const name of await transcriptPaths(projectsRoot)) {
     const path = join(projectsRoot, name);
@@ -399,8 +410,17 @@ export async function collectTokens({
     moved = true;
   }
 
-  if (await collectCodex(codexRoot, previous, positions, buckets, CODEX)) moved = true;
-  if (await collectCodex(codexApiRoot, previous, positions, buckets, CODEX_API)) moved = true;
+  if (await collectCodex(localCodexReader(codexRoot), previous, positions, buckets, CODEX)) moved = true;
+  if (await collectCodex(localCodexReader(codexApiRoot), previous, positions, buckets, CODEX_API)) moved = true;
+  // Another machine's metered home bills the same key. Its bookmarks carry the
+  // host, and a host that can't answer this pass simply keeps its cursor.
+  for (const [host, reader] of Object.entries(remoteApiReaders)) {
+    try {
+      if (await collectCodex(reader, previous, positions, buckets, CODEX_API, `${CODEX_API}@${host}`)) moved = true;
+    } catch {
+      for (const [k, v] of previous) if (k.startsWith(`${CODEX_API}@${host}/`)) positions.set(k, v);
+    }
+  }
 
   if (!moved) return 0;
   try {
@@ -464,46 +484,113 @@ function codexUsage(t) {
   };
 }
 
-async function collectCodex(codexRoot, previous, positions, buckets, provider = CODEX) {
-  let moved = false;
-  let names = [];
-  try {
-    names = (await readdir(codexRoot, { recursive: true })).filter((n) => n.endsWith(".jsonl"));
-  } catch {
-    return false; // no Codex CLI on this machine
-  }
+// How much of a rollout's head is read for its `session_meta` (the cwd): the
+// header line runs to ~22KB.
+export const CODEX_HEAD_BYTES = 65536;
 
-  for (const name of names) {
-    const key = `${provider}/${name}`;
-    const path = join(codexRoot, name);
-    let size;
-    try {
-      ({ size } = await stat(path));
-    } catch {
-      continue;
-    }
+/**
+ * This machine's side of a Codex tree, in the shape a remote host's reader
+ * (remote-fs.mjs's `codexTreeReader`) has too: `list` names every rollout with
+ * its size, and `fetch` answers, per file, three things in one go — its head
+ * (for the cwd), the last `turn_context` line before the cursor (the model the
+ * cursor is standing in), and the bytes from the cursor to the listed size.
+ */
+export function localCodexReader(root) {
+  return {
+    async list() {
+      let names;
+      try {
+        names = (await readdir(root, { recursive: true })).filter((n) => n.endsWith(".jsonl"));
+      } catch {
+        return []; // no Codex here
+      }
+      const out = [];
+      for (const name of names) {
+        try {
+          out.push({ name, size: (await stat(join(root, name))).size });
+        } catch {} // vanished between readdir and stat
+      }
+      return out;
+    },
+    async fetch(requests) {
+      return Promise.all(
+        requests.map(async ({ name, from, size }) => {
+          const path = join(root, name);
+          const head = await readRange(path, 0, Math.min(size, CODEX_HEAD_BYTES));
+          const before = from ? await readRange(path, 0, from) : null;
+          const lastTurn = before
+            ?.toString("utf8")
+            .split("\n")
+            // At the start of the line: anywhere else it is a tool output
+            // quoting one.
+            .findLast((l) => /^\{"timestamp":"[^"]*","type":"turn_context"/.test(l)) ?? null;
+          return { head, lastTurn, slice: await readRange(path, from, size) };
+        })
+      );
+    },
+  };
+}
+
+async function readRange(path, from, to) {
+  let fh;
+  try {
+    fh = await open(path);
+    const buf = Buffer.alloc(Math.max(0, to - from));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+    return buf.subarray(0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
+
+/**
+ * One Codex tree into the buckets. `prefix` namespaces its bookmarks — the
+ * provider, and the host for a remote tree — since every tree is keyed by a
+ * relative path into one map.
+ *
+ * **The model is the last `turn_context` before the cursor**, then each one
+ * the new bytes pass. It used to be looked for in the first 64KB only, and in
+ * 208 of 261 metered rollouts the first `turn_context` starts past that: every
+ * pass after the first read of such a file bucketed its turns with no model,
+ * which prices at $0 — a quarter of the metered bill, missing.
+ */
+async function collectCodex(reader, previous, positions, buckets, provider = CODEX, prefix = provider) {
+  let moved = false;
+  const due = [];
+  for (const { name, size } of await reader.list()) {
+    const key = `${prefix}/${name}`;
     const seen = previous.get(key) ?? 0;
     const from = seen > size ? 0 : seen;
     positions.set(key, from);
-    if (from >= size) continue;
+    if (from < size) due.push({ key, name, from, size });
+  }
+  if (!due.length) return false;
+  const fetched = await reader.fetch(due);
 
+  due.forEach(({ key, from }, i) => {
+    const got = fetched?.[i];
+    if (!got?.slice) return;
     let cwd = "";
     let model = "";
-    const head = await newLines(path, 0, Math.min(size, 65536));
-    for (const line of head?.lines ?? []) {
+    for (const line of [...(got.head?.toString("utf8").split("\n") ?? []), got.lastTurn ?? ""]) {
       if (!line.includes('"cwd"') && !line.includes('"model"')) continue;
       try {
         const rec = JSON.parse(line);
-        cwd = rec?.payload?.cwd ?? cwd;
-        model = rec?.payload?.model ?? model;
+        if (rec?.type === "session_meta") cwd = rec.payload?.cwd ?? cwd;
+        if (rec?.type === "turn_context") model = rec.payload?.model ?? model;
       } catch {
         // truncated head — the bucket falls back to an empty cwd or model
       }
     }
 
-    const slice = await newLines(path, from, size);
-    if (!slice) continue;
-    for (const line of slice.lines) {
+    // Only whole lines count, and the cursor advances over exactly those: the
+    // file is being appended to, so the last line is routinely half-written.
+    const text = got.slice.toString("utf8");
+    const complete = text.lastIndexOf("\n");
+    if (complete < 0) return;
+    for (const line of text.slice(0, complete).split("\n")) {
       if (!line.includes('"token_count"') && !line.includes('"model"')) continue;
       let rec;
       try {
@@ -526,10 +613,30 @@ async function collectCodex(codexRoot, previous, positions, buckets, provider = 
       if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
       addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, cwd, model, false, usage, provider);
     }
-    positions.set(key, slice.at);
+    positions.set(key, from + Buffer.byteLength(text.slice(0, complete + 1), "utf8"));
     moved = true;
-  }
+  });
   return moved;
+}
+
+// The bookmark that says the metered rows have been re-priced (collectTokens).
+// A number, since readPositions keeps nothing else.
+const REPRICED = "codex-api-repriced@1";
+
+function dropProvider(root, provider) {
+  try {
+    const kept = readFileSync(logIn(root), "utf8")
+      .split("\n")
+      .filter((line) => {
+        if (!line) return false;
+        try {
+          return JSON.parse(line)?.provider !== provider;
+        } catch {
+          return true;
+        }
+      });
+    writeFileSync(logIn(root), kept.length ? kept.join("\n") + "\n" : "");
+  } catch {} // no log yet
 }
 
 /** Every parseable bucket, in file order. A bad line is skipped, not fatal. */

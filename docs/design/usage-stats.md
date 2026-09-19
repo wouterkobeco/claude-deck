@@ -196,6 +196,19 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   three trees are keyed by a relative path into one map. Codex reports no
   cache-write counter and no ttl split, so
   those stay zero — absent, not zero-because-nothing-was-written.
+  **The model is the last `turn_context` before the cursor**, not whatever the
+  first 64KB holds: in 208 of 261 metered rollouts the first one starts past
+  64KB, so every pass after a file's first bucketed its turns with no model —
+  $0 — and the page showed $158 against $199 actually spent. The rows written
+  that way were dropped and re-read once, inside a pass (`REPRICED` in the
+  bookmark file), since the pass is the only writer of either file.
+  **A remote host's metered home bills the same key** and is read too, over
+  the poll's own ssh connection (`codexTreeReader`): one call lists, one
+  fetches each grown file's head, last model line and new bytes, so after the
+  first backfill only new bytes cross. Bookmarks are `codex-api@<host>/…`; a
+  host that can't answer keeps its cursors. The reader interface is shared
+  with this machine's (`localCodexReader`), so both trees are parsed by one
+  function.
   **The metered rung is the same reader over a second home, priced.**
   `~/.codex-api` exists so an API key can never overwrite the ChatGPT login,
   and that separation is what makes the tree readable as money: everything

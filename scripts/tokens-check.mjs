@@ -7,7 +7,7 @@
 // visible a month later as a number that is wrong by an unknown amount.
 // Run: node scripts/tokens-check.mjs
 import assert from "node:assert/strict";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -296,6 +296,45 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   const u = readTokens(root).at(-1);
   assert.equal(u.out, 90, "its tokens are real and counted");
   assert.equal(u.costUsd, 0, "its price is not invented");
+
+  // The model must survive the cursor passing it. A real rollout's first
+  // turn_context sits past 64KB behind the instructions, and a second pass
+  // used to find no model there and price every later turn at $0.
+  const deep = join(codexApi, "2026", "08", "18", "rollout-2026-08-18T09-30-00-jkl.jsonl");
+  writeFileSync(
+    deep,
+    [
+      JSON.stringify({ type: "session_meta", timestamp: at(30), payload: { cwd: "/Users/me/thing" } }),
+      JSON.stringify({ type: "response_item", timestamp: at(30), payload: { type: "message", text: "x".repeat(70000) } }),
+      // Field order as Codex writes it: the lookup is anchored on it.
+      JSON.stringify({ timestamp: at(30), type: "turn_context", payload: { model: "gpt-5.6-terra" } }),
+      // A tool output quoting another model's line is not a model change.
+      JSON.stringify({ timestamp: at(30), type: "response_item", payload: { output: '{"timestamp":"x","type":"turn_context","payload":{"model":"gpt-9"}}' } }),
+      turn(30, { input: 100, cached: 0, out: 10 }),
+    ].join("\n") + "\n"
+  );
+  await collect();
+  appendFileSync(deep, turn(31, { input: 1000, cached: 0, out: 100 }) + "\n");
+  await collect();
+  const later = readTokens(root).at(-1);
+  assert.equal(later.model, "gpt-5.6-terra", "a later pass still knows the model from before its cursor");
+  assert.ok(Math.abs(later.costUsd - (1000 * 2 + 100 * 12) / 1e6) < 1e-9, "and prices the turn");
+}
+
+// The one-time repair: metered rows written before that fix are dropped and
+// re-read from byte 0, and only once.
+{
+  const posFile = join(root, "streamdeck-tokens.pos");
+  const pos = JSON.parse(readFileSync(posFile, "utf8"));
+  const before = readTokens(root).filter((r) => r.provider === CODEX_API).reduce((n, r) => n + r.calls, 0);
+  delete pos["codex-api-repriced@1"];
+  writeFileSync(posFile, JSON.stringify(pos));
+  await collect();
+  const after = readTokens(root).filter((r) => r.provider === CODEX_API).reduce((n, r) => n + r.calls, 0);
+  assert.equal(after, before, "re-read once: every turn counted, none twice");
+  await collect();
+  assert.equal(readTokens(root).filter((r) => r.provider === CODEX_API).reduce((n, r) => n + r.calls, 0), before, "and never again");
+  assert.equal(readTokens(root).filter((r) => r.provider === CODEX).length > 0, true, "the plan's rows are left alone");
 }
 
 // The bookmark drops transcripts that no longer exist rather than remembering
@@ -307,8 +346,10 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
     [
       "-Users-me-thing/parent-id/subagents/agent-abc.jsonl",
       "-Users-me-thing/session-a.jsonl",
+      "codex-api-repriced@1",
       "codex-api/2026/08/18/rollout-2026-08-18T09-10-00-def.jsonl",
       "codex-api/2026/08/18/rollout-2026-08-18T09-20-00-ghi.jsonl",
+      "codex-api/2026/08/18/rollout-2026-08-18T09-30-00-jkl.jsonl",
       "codex/2026/08/18/rollout-2026-08-18T09-00-00-abc.jsonl",
     ],
     "one bookmark per live file, relative to its own tree and namespaced by which tree that is"
