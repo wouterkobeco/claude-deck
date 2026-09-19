@@ -43,6 +43,14 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   forget, the same shape `getMemory()` uses, because a keychain read is local
   but not guaranteed instant, and trading a stale-for-one-more-poll account
   for a stalled poll every 2s would be the wrong swap.
+  **A remote host's subscription never touches this file's fetch.** Its
+  numbers arrive through that host's status line: the ctx block also writes
+  Claude Code's own `rate_limits`, the ctx file already rides the remote poll,
+  and `remoteUsage` folds a host's sessions into one reading (latest reset
+  wins, then the highest figure, through `expireWindows`). No credential for
+  another machine is ever held. A block from before `rate` is offered a
+  one-line `upgrade` by both prestarts. Each such host takes a usage key
+  beside the local one (`layout` in index.mjs, at most three).
 - `src/stats.mjs` — all-time stats board (favorite model, total tokens,
   sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output; don't

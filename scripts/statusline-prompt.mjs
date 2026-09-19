@@ -16,7 +16,7 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFile
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CTX_BLOCK, MINIMAL, SCRIPT_NAME, decide, insertBlock } from "../src/statusline.mjs";
+import { CTX_BLOCK, MINIMAL, SCRIPT_NAME, decide, insertBlock, upgradeBlock } from "../src/statusline.mjs";
 
 const dir = join(homedir(), ".claude");
 const scriptPath = join(dir, SCRIPT_NAME);
@@ -67,8 +67,10 @@ if (action === "manual") {
 const notice =
   action === "install"
     ? "context gauge: no status line on this machine."
-    : `context gauge: ${scriptPath} has no ctx block.`;
-const verb = action === "install" ? "install one" : "add it";
+    : action === "upgrade"
+      ? `context gauge: ${scriptPath}'s ctx block predates the rate limits (a remote host's usage key needs them).`
+      : `context gauge: ${scriptPath} has no ctx block.`;
+const verb = action === "install" ? "install one" : action === "upgrade" ? "update it" : "add it";
 
 // `--yes` is what `npm run statusline:install` passes: the same decision and
 // the same writes, without the question. It is how the non-TTY line below is
@@ -103,7 +105,7 @@ try {
   // own file, and the edit is the only destructive thing this project does to
   // one it didn't create.
   mkdirSync(dir, { recursive: true });
-  const body = action === "install" ? MINIMAL : insertBlock(script);
+  const body = action === "install" ? MINIMAL : action === "upgrade" ? upgradeBlock(script) : insertBlock(script);
   if (script) copyFileSync(scriptPath, `${scriptPath}.bak`);
   writeFileSync(`${scriptPath}.tmp`, body);
   chmodSync(`${scriptPath}.tmp`, 0o755);
@@ -116,7 +118,7 @@ try {
     settings.statusLine = { type: "command", command: `~/.claude/${SCRIPT_NAME}` };
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
   }
-  console.log(`context gauge: ${action === "install" ? "installed" : "added to"} ${scriptPath}. It appears once each session takes a turn.`);
+  console.log(`context gauge: ${{ install: "installed", upgrade: "updated" }[action] ?? "added to"} ${scriptPath}. It appears once each session takes a turn.`);
 } catch (err) {
   console.log(`context gauge: couldn't write it (${err.message}). Add the block from README.md by hand.`);
 }

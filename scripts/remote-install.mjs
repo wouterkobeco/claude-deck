@@ -22,7 +22,7 @@ import { sshArgs } from "../src/remote-fs.mjs";
 // The block and the whole minimal script live in src/statusline.mjs, shared
 // with the local installer: two copies of a shell block is two things to keep
 // in step, and only one of them would ever be the one you tested.
-import { MINIMAL, SCRIPT_NAME } from "../src/statusline.mjs";
+import { MINIMAL, SCRIPT_NAME, upgradeBlock } from "../src/statusline.mjs";
 // Same reuse for the compaction-detection hooks: `decide`/`withHooksInstalled`
 // are the one copy of that rule, shared with compact-hook-prestart.mjs.
 import { HOOK_SCRIPT, SCRIPT_NAME as COMPACT_SCRIPT_NAME, decide as decideCompactHook, withHooksInstalled } from "../src/compact-hook.mjs";
@@ -213,9 +213,27 @@ export async function probeStatusLine(host, { timeoutMs } = {}) {
   const { stdout } = await ssh(host, STATE_PROBE, undefined, timeoutMs);
   const state = parseState(stdout);
   if (state.jq === "NONE") return { action: "nojq", state };
-  if (state.script === "YES") return { action: "has-script", state };
+  if (state.script === "YES") {
+    // Ours, but from before the block carried the rate limits: the one edit
+    // made to an existing script, and only to our own line of it.
+    const { stdout: script } = await ssh(host, "cat ~/.claude/statusline-command.sh", undefined, timeoutMs);
+    const body = upgradeBlock(script);
+    return body ? { action: "upgrade", body, state } : { action: "has-script", state };
+  }
   if (state.key === "YES") return { action: "has-key", state };
   return { action: "install", state };
+}
+
+const WRITE_SCRIPT =
+  "mkdir -p ~/.claude && cat > ~/.claude/statusline-command.sh.tmp && " +
+  "if [ -s ~/.claude/statusline-command.sh.tmp ]; then " +
+  "chmod +x ~/.claude/statusline-command.sh.tmp && " +
+  "mv ~/.claude/statusline-command.sh.tmp ~/.claude/statusline-command.sh; " +
+  "else rm -f ~/.claude/statusline-command.sh.tmp; exit 1; fi";
+
+/** Writes `probeStatusLine`'s upgraded body back — settings.json already points at it. */
+export async function applyStatusLineUpgrade(host, body, { timeoutMs } = {}) {
+  await ssh(host, WRITE_SCRIPT, body, timeoutMs);
 }
 
 /**
@@ -249,16 +267,7 @@ export async function applyStatusLine(host, { timeoutMs } = {}) {
   // zero-byte status line appeared on a real host, twice, and then blocked the
   // install that would have fixed it. Never leave the tmp behind either: it is
   // the thing the next run would trip over.
-  await ssh(
-    host,
-    "mkdir -p ~/.claude && cat > ~/.claude/statusline-command.sh.tmp && " +
-      "if [ -s ~/.claude/statusline-command.sh.tmp ]; then " +
-      "chmod +x ~/.claude/statusline-command.sh.tmp && " +
-      "mv ~/.claude/statusline-command.sh.tmp ~/.claude/statusline-command.sh; " +
-      "else rm -f ~/.claude/statusline-command.sh.tmp; exit 1; fi",
-    body,
-    timeoutMs
-  );
+  await ssh(host, WRITE_SCRIPT, body, timeoutMs);
 
   // jq rather than a rewrite, so everything else in settings.json survives
   // untouched — that file holds plugins, theme, and whatever else that host
@@ -291,6 +300,11 @@ async function main() {
   if (sl.action === "nojq") {
     console.error(`${cliHost}: no jq. The status line block parses Claude Code's JSON with it; install jq and re-run.`);
     process.exit(1);
+  }
+  if (sl.action === "upgrade") {
+    await applyStatusLineUpgrade(cliHost, sl.body);
+    console.log(`${cliHost}: status line's ctx block now carries the rate limits — its own usage key appears once a session there takes a turn.`);
+    process.exit(0);
   }
   if (sl.action === "has-script") {
     console.error(`${cliHost}: ~/.claude/statusline-command.sh already has content — not overwriting it.`);

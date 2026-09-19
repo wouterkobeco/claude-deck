@@ -11,7 +11,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { CTX_BLOCK, MINIMAL, decide, insertBlock } from "../src/statusline.mjs";
+import { CTX_BLOCK, MINIMAL, decide, insertBlock, upgradeBlock } from "../src/statusline.mjs";
 
 const eq = (a, b, msg) => assert.deepEqual(a, b, msg);
 const withCtx = `#!/usr/bin/env bash\ninput=$(cat)\n${CTX_BLOCK}\n`;
@@ -59,6 +59,13 @@ eq(lines[3], CTX_BLOCK.split("\n")[0], "and the block starts right after it");
 eq(edited.includes("printf 'hi'"), true, "the rest of the status line is untouched");
 eq(insertBlock("#!/bin/sh\necho hi\n"), null, "no anchor, no guess");
 
+// A block from before the rate limits is offered the one-line update, and the
+// update is exactly today's block.
+const oldBlock = withCtx.replace(", rate: .rate_limits", "");
+eq(decide({ jq: true, script: oldBlock, statusLine: "~/.claude/statusline-command.sh" }), "upgrade", "an old block is offered the rate limits");
+eq(upgradeBlock(oldBlock), withCtx, "and upgrading it lands today's block");
+eq(upgradeBlock(withCtx), null, "today's block has nothing to upgrade");
+
 // The two shell strings are shell: run them, rather than trusting that a
 // heredoc-shaped template literal is valid bash. MINIMAL is what a fresh
 // machine gets, and a syntax error in it breaks every turn on that machine.
@@ -69,11 +76,12 @@ await writeFile(script, MINIMAL, { mode: 0o755 });
 const payload = JSON.stringify({
   session_id: "0192abcd-0000-7000-8000-000000000000",
   context_window: { used_percentage: 42 },
+  rate_limits: { five_hour: { used_percentage: 7, resets_at: 1790000000 } },
   workspace: { current_dir: "/projects/x" },
 });
 const { stdout } = await execFileAsync("bash", ["-c", `echo '${payload}' | ${script}`], { env: { ...process.env, HOME: dir } });
 eq(stdout, "/projects/x", "MINIMAL prints the status line it promises");
 const written = await execFileAsync("cat", [join(dir, ".claude/ctx/0192abcd-0000-7000-8000-000000000000.json")]);
-eq(written.stdout.trim(), '{"context":42}', "and writes the ctx file the gauge reads");
+eq(written.stdout.trim(), '{"context":42,"rate":{"five_hour":{"used_percentage":7,"resets_at":1790000000}}}', "and writes the ctx file the gauge and a remote usage key read");
 
 console.log("OK: statusline decision, block placement, and the installed script itself");

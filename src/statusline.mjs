@@ -24,7 +24,7 @@ ctx_dir="$HOME/.claude/ctx"
 sid=$(echo "$input" | jq -r '.session_id // empty')
 if [ -n "$sid" ]; then
   mkdir -p "$ctx_dir"
-  echo "$input" | jq -c '{context: .context_window.used_percentage}' > "$ctx_dir/$sid.json.tmp" &&
+  echo "$input" | jq -c '{context: .context_window.used_percentage, rate: .rate_limits}' > "$ctx_dir/$sid.json.tmp" &&
     mv "$ctx_dir/$sid.json.tmp" "$ctx_dir/$sid.json"
 fi`;
 
@@ -62,6 +62,18 @@ export function insertBlock(script, block = CTX_BLOCK) {
   return lines.join("\n");
 }
 
+// The block's jq filter before it carried the rate limits — the one line an
+// older install differs by. `rate` is how a remote host's subscription reaches
+// its own usage key: the daemon holds only this machine's credential, and the
+// status line is already handed the numbers on every render.
+const OLD_FILTER = "jq -c '{context: .context_window.used_percentage}'";
+const NEW_FILTER = "jq -c '{context: .context_window.used_percentage, rate: .rate_limits}'";
+
+/** An older block with the rate limits added, or null when the old filter isn't there verbatim. */
+export function upgradeBlock(script) {
+  return script.includes(OLD_FILTER) ? script.replace(OLD_FILTER, NEW_FILTER) : null;
+}
+
 /**
  * What this machine needs, from what one probe found.
  *
@@ -76,10 +88,11 @@ export function insertBlock(script, block = CTX_BLOCK) {
  *   nojq    — the block parses JSON with jq and there is none
  *   install — nothing here at all: write MINIMAL and point settings.json at it
  *   append  — a status line of your own, with somewhere to put the block
+ *   upgrade — the block is there but predates `rate` (`upgradeBlock`)
  *   manual  — a status line this can't reason about: print the block, touch nothing
  */
 export function decide({ jq, script, statusLine }) {
-  if (script?.includes("ctx_dir")) return "ok";
+  if (script?.includes("ctx_dir")) return upgradeBlock(script) ? "upgrade" : "ok";
   if (!jq) return "nojq";
   // settings.json pointing somewhere else means the file above is not the one
   // being run, so editing it would change nothing and say it had.

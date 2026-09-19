@@ -158,7 +158,9 @@ on each line. These summaries are reminders, not the rule itself.
   says rather than idle, a stopped daemon greys the web board. (remote.md,
   sessions.md, web.md)
 - **Hardware: MK.2, 15 keys of 72px, macOS only, exclusive HID.** Keys 13/14
-  are reserved (status, usage), leaving 13 session slots; the status key folds
+  are reserved (status, usage), leaving 13 session slots — fewer while a
+  remote subscription holds a usage key of its own, the status key shifting
+  left; the status key folds
   attention/memory/total and walks attention → working → inactive; queue
   boards page rather than truncate. (board.md)
 - **Trust boundaries are not simplified**: the board token gates before

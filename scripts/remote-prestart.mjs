@@ -13,7 +13,7 @@
 // skipped, not warned about.
 import { createInterface } from "node:readline/promises";
 import { readWindowStates } from "../src/window-state.mjs";
-import { applyCompactHook, applyStatusLine, probeCompactHook, probeStatusLine } from "./remote-install.mjs";
+import { applyCompactHook, applyStatusLine, applyStatusLineUpgrade, probeCompactHook, probeStatusLine } from "./remote-install.mjs";
 
 // Short and strict, unlike remote-install.mjs's own 30s default: this probe
 // runs on the critical path of every `npm start`, not a command someone typed
@@ -81,7 +81,21 @@ for (const { host, compactHook, statusLine } of results) {
   // already have a status line" or "that host is asleep" forever is exactly
   // the noise a prestart must not become.
 
-  if (statusLine.action === "nojq") {
+  if (statusLine.action === "upgrade") {
+    if (!interactive) {
+      console.log(`${host}: its status line predates the rate limits, so no usage key for it. run 'npm run remote:install -- ${host}' to update it`);
+    } else {
+      const a = await ask(`${host}: update its status line to report its rate limits, for a usage key of its own? [Y/n] `);
+      if (a !== "n" && a !== "no") {
+        try {
+          await applyStatusLineUpgrade(host, statusLine.body);
+          console.log(`${host}: status line updated.`);
+        } catch (err) {
+          console.log(`${host}: couldn't update its status line (${err.message}).`);
+        }
+      }
+    }
+  } else if (statusLine.action === "nojq") {
     console.log(`${host}: no jq — its status line block needs it. Install jq there, then run 'npm run remote:install -- ${host}' for the context gauge.`);
   } else if (statusLine.action === "install") {
     if (!interactive) {

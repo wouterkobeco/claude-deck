@@ -2,7 +2,7 @@
 // field names above can be confirmed against a real account.
 // Run: node scripts/usage-check.mjs [--live]
 import assert from "node:assert/strict";
-import { parseUsage, fetchUsage, getUsage, minutesUntil, formatReset, subscriptionChange, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
+import { parseUsage, remoteUsage, fetchUsage, getUsage, minutesUntil, formatReset, subscriptionChange, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
 
 assert.deepEqual(
   parseUsage({
@@ -222,6 +222,27 @@ console.log("OK: getUsage forces a refresh when the keychain credential changes"
   assert.equal(lag.session, null);
 }
 console.log("OK: getUsage at a window's reset");
+
+{
+  // A remote host's usage off its sessions' status lines: the newest window
+  // wins over an idle session's stale file, and a passed reset reads unknown.
+  const now = Date.parse("2026-09-19T12:00:00Z");
+  const sec = (iso) => Date.parse(iso) / 1000;
+  const r = remoteUsage(
+    [
+      { five_hour: { used_percentage: 80, resets_at: sec("2026-09-19T10:00:00Z") }, seven_day: { used_percentage: 30, resets_at: sec("2026-09-22T00:00:00Z") } },
+      { five_hour: { used_percentage: 12, resets_at: sec("2026-09-19T15:00:00Z") }, seven_day: { used_percentage: 34, resets_at: sec("2026-09-22T00:00:00Z") } },
+      null,
+    ],
+    now
+  );
+  assert.equal(r.session, 12, "the current window, not an idle session's old one");
+  assert.equal(r.week, 34, "same window: the higher figure is the newer one");
+  assert.equal(r.weekResetsAt, "2026-09-22T00:00:00.000Z");
+  assert.equal(remoteUsage([{ five_hour: { used_percentage: 80, resets_at: sec("2026-09-19T10:00:00Z") } }], now).session, null, "past its reset: unknown");
+  assert.equal(remoteUsage([null, {}], now), null, "no status line reporting: no key");
+}
+console.log("OK: remoteUsage");
 
 if (process.argv.includes("--live")) {
   console.log(JSON.stringify(await fetchUsage(), null, 2));

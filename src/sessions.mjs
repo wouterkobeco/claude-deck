@@ -934,10 +934,10 @@ export function contextPercent(usage, model) {
  */
 async function readContext(sessionId, root = CLAUDE_DIR) {
   try {
-    const { context } = JSON.parse(await readFile(join(root, "ctx", `${sessionId}.json`), "utf8"));
-    return typeof context === "number" ? context : null;
+    const { context, rate } = JSON.parse(await readFile(join(root, "ctx", `${sessionId}.json`), "utf8"));
+    return { context: typeof context === "number" ? context : null, rate: rate ?? null };
   } catch {
-    return null;
+    return { context: null, rate: null };
   }
 }
 
@@ -1250,6 +1250,7 @@ async function sessionsFrom(source) {
       // is the only thing that can catch that case, on a machine that has it
       // installed; without it this falls back to manual-only, same as before.
       const marker = await readCompactMarker(s.session_id, source.root);
+      const ctx = await readContext(s.session_id, source.root);
       const state = s.state ?? liveState(stopReason);
       const compacting = compactingNow({ state, compactRequestedAt, marker });
       const ledgerAt = source.host ? null : ledgerCwds(s, rootOf, matched, nestedAll);
@@ -1283,7 +1284,10 @@ async function sessionsFrom(source) {
         // The ctx file first — it knows the real window size. Without one (no
         // status line installed, here or on a remote host) the transcript's own
         // last usage carries the gauge, for the models whose window is known.
-        context: (await readContext(s.session_id, source.root)) ?? contextEstimate,
+        context: ctx.context ?? contextEstimate,
+        // The status line's `rate_limits`, as it was handed them: a remote
+        // host's usage key reads its subscription off these (usage.mjs).
+        rateLimits: ctx.rate,
       };
     })
   );

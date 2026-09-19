@@ -29,7 +29,10 @@ window.
 The bottom-right two keys leave the rotation, so 13 are session keys:
 
 - **Usage** (bottom-right) — how much of your session and weekly rate limits is
-  spent. Press it for the stats board.
+  spent. Press it for the stats board. A remote host whose sessions report
+  their own subscription (its status line's ctx block passes `rate_limits`
+  along) gets a usage key of its own, titled with the host, just left of this
+  one — the status key moves one left and a session slot gives way for it.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
   one has waited, and pressing it opens that queue, worst first.

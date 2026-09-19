@@ -36,7 +36,7 @@ import {
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS } from "./render.mjs";
-import { getUsage, formatReset, getAccountName } from "./usage.mjs";
+import { getUsage, formatReset, getAccountName, remoteUsage } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
 import { getMemory, pctWithAmount } from "./memory.mjs";
@@ -234,8 +234,20 @@ const liveProjects = new Map();
 // restore command happens on every poll rather than on the polls of whichever
 // board happens to be up. Every branch of the loop reads sessions; only this
 // one writes them out.
+// Each remote host whose live sessions' status lines report a subscription's
+// rate limits: that subscription's usage, for a usage key of its own beside
+// this machine's. Rebuilt on every read, so a host whose sessions all end
+// gives its key back.
+let remoteUsages = [];
+
 async function liveSessions() {
   const sessions = await getLiveSessions(allSources());
+  const rates = new Map();
+  for (const s of sessions) if (s.host && s.rateLimits) rates.set(s.host, [...(rates.get(s.host) ?? []), s.rateLimits]);
+  remoteUsages = [...rates]
+    .map(([host, r]) => ({ host, ...remoteUsage(r) }))
+    .filter((u) => u.session != null || u.week != null)
+    .sort((a, b) => a.host.localeCompare(b.host));
   liveProjects.clear();
   for (const s of sessions) {
     if (s.nested) continue;
@@ -1470,6 +1482,15 @@ async function drawUsage(deck, btn) {
   btn.drawn = drawn;
 }
 
+// A remote subscription's usage key, titled with its host so it reads apart
+// from this machine's untitled one.
+async function drawRemoteUsage(deck, btn, { host, session, week }) {
+  const drawn = `usage ${host} ${session} ${week}`;
+  if (btn.drawn === drawn) return;
+  await deck.fillKeyBuffer(btn.index, await renderUsage({ ...btn, session, week, title: host }), { format: "rgba" });
+  btn.drawn = drawn;
+}
+
 // Stats view: the same 13 session buttons, repurposed as an all-time stats board.
 // Reuses the `drawn`-signature diffing that `refresh` uses for sessions, so
 // switching modes just redraws everything once (the signatures never match
@@ -2622,10 +2643,31 @@ async function run() {
   const statusButton = allButtons.pop();
   // The detail board takes over the entire deck, so it needs the full list —
   // every other board draws only the session keys.
-  const allKeys = [...allButtons, statusButton, usageButton].sort((a, b) => a.index - b.index);
-  const buttons = allButtons;
+  const buttons = [...allButtons];
   const slots = new Array(buttons.length).fill(null);
   const nestedBySlot = new Array(buttons.length).fill(null);
+  // A remote host with a subscription of its own gets a usage key beside this
+  // machine's: each one takes the status key's place, and the status key moves
+  // one left onto the last session slot. Done in place — `buttons`, `slots`
+  // and `statusButton` are held by the press handler and pulse(). Every moved
+  // key is redrawn, since its signature was for what used to be there.
+  // ponytail: at most three, so the board keeps ten session keys.
+  let remoteUsageButtons = [];
+  const layout = (n) => {
+    n = Math.min(n, 3);
+    if (n === remoteUsageButtons.length) return;
+    const base = allButtons.length - n;
+    buttons.splice(0, buttons.length, ...allButtons.slice(0, base));
+    for (const b of allButtons) Object.assign(b, { drawn: null, renderParams: null });
+    slots.length = buttons.length;
+    slots.fill(null);
+    statusButton.index = usageButton.index - 1 - n;
+    statusButton.drawn = null;
+    remoteUsageButtons = Array.from({ length: n }, (_, i) => ({ index: statusButton.index + 1 + i, width: usageButton.width, height: usageButton.height, assigned: null, drawn: null }));
+  };
+  // The detail board takes the whole deck by key position, so it is asked
+  // for what holds each key *now*.
+  const allKeys = () => [...buttons, statusButton, ...remoteUsageButtons, usageButton].sort((a, b) => a.index - b.index);
 
   let disconnected = false;
   // Which board is showing. One value rather than a flag per view: with four
@@ -2772,7 +2814,7 @@ async function run() {
   });
   deck.on("down", (control) => {
     if (control.type !== "button") return;
-    const isUsage = control.index === usageButton.index;
+    const isUsage = control.index === usageButton.index || remoteUsageButtons.some((b) => b.index === control.index);
     const isStatus = control.index === statusButton.index;
     const btn = isUsage || isStatus ? null : buttons[control.index];
     const sessionId = btn?.assigned?.session_id ?? null;
@@ -2907,6 +2949,9 @@ async function run() {
 
   while (!disconnected) {
     try {
+      // Off the previous poll's sessions — one poll late is what every remote
+      // fact here already is. Never under the detail board, which owns the deck.
+      if (view.kind !== "detail") layout(remoteUsages.length);
       if (view.kind === "stats") {
         // Every subscription cswap knows about, active first, two keys each
         // (usage, resets), then the version. Read off cswap's own cache —
@@ -3007,7 +3052,7 @@ async function run() {
           ({ attention: attentionCount, free: freeCount, busy: busyCount = 0, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
         }
       } else if (view.kind === "detail") {
-        const detailSessions = await refreshDetail(deck, allKeys, view);
+        const detailSessions = await refreshDetail(deck, allKeys(), view);
         // Same race guard as the attention branch above: only leave the
         // board this tick was actually drawing.
         if (detailSessions === null && view.kind === "detail") {
@@ -3074,7 +3119,10 @@ async function run() {
           }
         }
       }
-      if (view.kind !== "detail") await drawUsage(deck, usageButton);
+      if (view.kind !== "detail") {
+        await drawUsage(deck, usageButton);
+        await Promise.all(remoteUsageButtons.map((b, i) => remoteUsages[i] && drawRemoteUsage(deck, b, remoteUsages[i])));
+      }
     } catch (err) {
       console.error("refresh failed:", err.message);
     }
@@ -3088,7 +3136,7 @@ async function run() {
       // execve does not return, so nothing after this runs on the happy path.
       // It *does* return false when there is no execve to call, and then this
       // is an ordinary poll that logged a line.
-      if (decided.restart) await restartInto(onDisk, deck, allKeys, boardServer, view);
+      if (decided.restart) await restartInto(onDisk, deck, allKeys(), boardServer, view);
     }
     // Asked of the hardware rather than waited for as an event, for the
     // reasons on `reconnectDecision`. Leaving the loop is all this does: the

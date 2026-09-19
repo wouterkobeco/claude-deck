@@ -103,6 +103,35 @@ export function parseUsage(json) {
 }
 
 /**
+ * A remote host's usage, from what its sessions' status lines were handed
+ * (`rate_limits`: `used_percentage`, `resets_at` in epoch seconds) — the
+ * daemon holds no credential for another machine's subscription. Every
+ * session there reports the same account, but an idle one's file is as old as
+ * its last turn, so per window the latest reset wins, then the highest figure
+ * (usage only climbs inside a window). Null when none reported any.
+ */
+export function remoteUsage(rates, now = Date.now()) {
+  const iso = (t) => (typeof t === "number" ? new Date(t * 1000).toISOString() : typeof t === "string" ? t : null);
+  const pick = (key) => {
+    let best = null;
+    for (const r of rates) {
+      const w = r?.[key];
+      if (typeof w?.used_percentage !== "number") continue;
+      const at = iso(w.resets_at);
+      if (!best || (at ?? "") > (best.at ?? "") || (at === best.at && w.used_percentage > best.pct)) best = { pct: w.used_percentage, at };
+    }
+    return best;
+  };
+  const session = pick("five_hour");
+  const week = pick("seven_day");
+  if (!session && !week) return null;
+  return expireWindows(
+    { session: session?.pct ?? null, week: week?.pct ?? null, sessionResetsAt: session?.at ?? null, weekResetsAt: week?.at ?? null },
+    now
+  );
+}
+
+/**
  * A window past its reset has been emptied server-side, so its cached number
  * is no longer true — the rule cswap.mjs's `window_` applies to the other
  * accounts. Null, not 0: what has been used since is unknown until asked.
