@@ -666,3 +666,18 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   saying nothing twice. An empty side says `none running` rather than
   collapsing, same as Subagents already did.
 
+
+## Silencing a wait
+
+A detail board opened on a block that waits on you (its own state or a
+subagent's, the fold its key's colour takes) offers a **SILENCE** key at
+`DETAIL_SILENCE_INDEX`. Pressing it records each waiting session's
+`state@ts` in `silenced` and goes back to the board. `applySilence`, in
+`liveSessions`, then reads those sessions as idle — on their keys, in the
+queues, on the status key and the web board — for **that occurrence only**:
+the moment the state or its timestamp changes the mark is dropped, so the next
+wait asks again. Nothing to configure or forget to undo. The state log records
+before the silence is applied, so "where the time went" still says waiting,
+and the press reads `lastRawSessions`, since the drawn list has already turned
+what it silenced into idle. In memory only: a restart forgets it, and the
+session asks again.

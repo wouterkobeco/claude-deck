@@ -277,15 +277,20 @@ async function liveSessions() {
   // filesystem that isn't answering.
   void publishSessions(inBoardOrder(sessions)).catch(() => {});
   recordHistory(sessions);
+  lastRawSessions = sessions;
+  const shown = applySilence(sessions, silenced);
   // Held for the board page, which is read by an iPad on its own 2s clock and
   // must not start a second pass over ~/.claude every time it asks. Every
   // board's poll goes through here, so this is at most one tick stale
   // whichever one is up — the same freshness the deck itself is drawing from.
-  lastSessions = sessions;
-  return sessions;
+  lastSessions = shown;
+  return shown;
 }
 
 let lastSessions = [];
+// Before silencing: what the silence key reads, since the list the board
+// draws has already turned what it silenced into idle.
+let lastRawSessions = [];
 
 // State-history capture, hung off the one session read so it happens on every
 // poll rather than on the polls of whichever board is up — the same reasoning
@@ -430,6 +435,21 @@ export function attentionQueue(sessions, nowSeconds) {
         (a.ts || nowSeconds) - (b.ts || nowSeconds) ||
         a.session_id.localeCompare(b.session_id)
     );
+}
+
+// Silenced attention, `session_id -> "state@ts"`: the one occurrence you
+// dismissed from a detail board. Keyed to the state *and* its timestamp, so it
+// lapses the moment the session moves on — the next time it waits on you, it
+// says so again. A silenced session reads idle everywhere the board looks
+// (its key, the queues, the status key) but the state log still records what
+// it really was: that is recorded before this is applied.
+const silenced = new Map();
+const occurrence = (s) => `${s.state}@${s.ts}`;
+
+export function applySilence(sessions, marks) {
+  const live = new Map(sessions.map((s) => [s.session_id, s]));
+  for (const [id, mark] of marks) if (live.get(id) === undefined || occurrence(live.get(id)) !== mark) marks.delete(id);
+  return sessions.map((s) => (marks.has(s.session_id) ? { ...s, state: "idle", silenced: true } : s));
 }
 
 // The mirror of the attention queue, and the other half of what the board is
@@ -1132,6 +1152,10 @@ export function isRepeatPress(previous, press, windows = [], capability = {}) {
   );
 }
 
+// Where the detail board's silence key goes: the end of the top row, beside
+// the header, so it is on the same key every time it is offered.
+export const DETAIL_SILENCE_INDEX = 4;
+
 export function detailLayout({ session, tasks, nested, age, slotCount }) {
   // Literally the session's own key — same label, same caps bar, clearedEmpty
   // rule included, so the key you pressed is the key you land on. It used to
@@ -1160,6 +1184,9 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
       value: [(session.model ?? "").replace(/^claude-/, ""), session.effort ?? ""].filter(Boolean).join(" ") || "—",
     },
   ];
+  // Offered only while this block has something waiting on you — its own
+  // state or a subagent's, the same fold its key's colour takes.
+  if ([session, ...nested].some((s) => ATTENTION_RANK[s.state] !== undefined)) header[DETAIL_SILENCE_INDEX] = { kind: "silence" };
 
   // Subagents pin to the tail, ahead of the tasks: this board and a 3×6px
   // margin marker are the only places they appear at all, where a task list
@@ -1181,7 +1208,7 @@ export function detailLayout({ session, tasks, nested, age, slotCount }) {
 
   const body = new Array(taskRoom).fill(null);
   taskTiles.forEach((tile, i) => (body[i] = tile));
-  const tiles = [...header, ...body, ...tailTiles];
+  const tiles = [...Array.from(header, (t) => t ?? null), ...body, ...tailTiles];
   // Splice the back key into its fixed position rather than reserving it up
   // front, so it lands on the same physical key no matter how the content
   // above it happens to fill.
@@ -1218,6 +1245,9 @@ export function holdTiles(held, fresh, tasks, sessions) {
       return s ? { kind: "nested", session: s } : null;
     }
     const f = fresh[i];
+    // Once silenced there is nothing left to silence: blank, never whatever
+    // the fresh layout put in that slot instead.
+    if (tile?.kind === "silence") return f?.kind === "silence" ? f : null;
     return f?.kind === "nested" && pinned.has(f.session.session_id) ? null : f ?? null;
   });
 }
@@ -2468,6 +2498,8 @@ async function refreshDetail(deck, buttons, view) {
       const params =
         tile.kind === "back"
           ? {}
+          : tile.kind === "silence"
+          ? { glyph: "✓", caps: "SILENCE" }
           : tile.kind === "task"
           ? { number: tile.number, subject: tile.subject, status: tile.status }
           : tile.kind === "stat"
@@ -2485,7 +2517,7 @@ async function refreshDetail(deck, buttons, view) {
       if (btn.drawn === drawn) return;
 
       const render =
-        tile.kind === "back" ? renderBack : tile.kind === "task" ? renderTask : tile.kind === "stat" ? renderStat : renderKey;
+        tile.kind === "back" || tile.kind === "silence" ? renderBack : tile.kind === "task" ? renderTask : tile.kind === "stat" ? renderStat : renderKey;
       await deck.fillKeyBuffer(btn.index, await render({ ...btn, ...params }), { format: "rgba" });
       btn.drawn = drawn;
     })
@@ -2856,6 +2888,17 @@ async function run() {
     // right there saying so.
     if (view.kind === "detail") {
       if (control.index === DETAIL_BACK_INDEX) setView({ kind: "sessions" });
+      // Silence what this block is waiting on you for — the session and any
+      // subagent of its that is — and go back to the board, where the key
+      // you came from no longer asks.
+      if (view.tiles?.[control.index]?.kind === "silence") {
+        const session = lastRawSessions.find((s) => s.session_id === view.session_id);
+        if (session) {
+          const nested = nestedFor(session, lastRawSessions.filter((s) => s.nested), true);
+          for (const s of [session, ...nested]) if (ATTENTION_RANK[s.state] !== undefined) silenced.set(s.session_id, occurrence(s));
+        }
+        setView({ kind: "sessions" });
+      }
       // Nothing here seeds a repeat: the tiles aren't session keys, and the
       // back key may still be sitting on a session whose project matches the
       // one you press next — which would reopen the board you just left.

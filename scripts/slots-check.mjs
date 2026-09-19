@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, reconnectDecision, headlessDeck, resumeView, seedSessionOrder, stillUnread, markSeen, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
+import { assignSlots, accentFor, boardTiles, statusKey, pageOf, restartDecision, reconnectDecision, headlessDeck, resumeView, seedSessionOrder, stillUnread, markSeen, loadAccents, attentionQueue, freeQueue, busyQueue, busyBoardTiles, leavingFraction, BUSY_LEAVE_MS, detailLayout, holdTiles, applySilence, DETAIL_SILENCE_INDEX, mostUrgent, isRepeatPress, DETAIL_BACK_INDEX, folderKeyFor, ACCENTS } from "../src/index.mjs";
 import { readProjects, writeProjects, applyAccentChoice, moveProject } from "../src/accents.mjs";
 import { recentlyIdle, RECENT_IDLE_S, SPLASH_LETTERS, SPLASH_MS } from "../src/render.mjs";
 
@@ -1167,3 +1167,30 @@ console.log("OK: project grouping, board tiles, status key");
   eq(leavingFraction(null, T), null, "and a tile that is not leaving has no bar at all");
 }
 console.log("OK: working-board departures");
+
+// Silence: offered on the detail board only while the block waits on you,
+// reads idle for exactly that occurrence, and lapses once the session moves on.
+{
+  const waiting = { ...dSession, state: "waiting", ts: 100 };
+  const offered = detailLayout({ session: waiting, tasks: [dTask("a")], nested: [], age: "1m", slotCount: DECK });
+  eq(offered[DETAIL_SILENCE_INDEX], { kind: "silence" }, "a waiting session is offered the silence key");
+  eq(offered.length, DECK, "and the board still fills the deck exactly");
+  eq(offered[DETAIL_BACK_INDEX], { kind: "back" }, "with the back key where it always is");
+  const viaChild = detailLayout({ session: dSession, tasks: [], nested: [{ ...dSession, session_id: "c", state: "requires_action" }], age: "1m", slotCount: DECK });
+  eq(viaChild[DETAIL_SILENCE_INDEX], { kind: "silence" }, "a subagent blocked on you counts, like the key's colour");
+  eq(plain[DETAIL_SILENCE_INDEX]?.kind === "silence", false, "a busy session has nothing to silence");
+
+  const marks = new Map([["d1", "waiting@100"]]);
+  const [quiet] = applySilence([waiting], marks);
+  eq([quiet.state, quiet.silenced], ["idle", true], "silenced: idle everywhere the board looks");
+  eq(attentionQueue([quiet], 200).length, 0, "and out of the attention queue");
+  eq(waiting.state, "waiting", "the session read itself is left alone");
+  const [again] = applySilence([{ ...waiting, state: "busy", ts: 150 }], marks);
+  eq(again.state, "busy", "once it moves on it reads what it is");
+  eq(marks.size, 0, "and the silence is gone for good");
+  eq(applySilence([{ ...waiting, ts: 300 }], marks)[0].state, "waiting", "so the next wait asks again");
+
+  const held = holdTiles(offered, detailLayout({ session: quiet, tasks: [dTask("a")], nested: [], age: "1m", slotCount: DECK }), [dTask("a")], [quiet]);
+  eq(held[DETAIL_SILENCE_INDEX], null, "once silenced the key goes blank, never something else");
+}
+console.log("OK: silencing a wait");
