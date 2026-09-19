@@ -353,3 +353,45 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   `renderCompacting` draws a sweeping ring rather than a percentage, because
   no progress figure exists to draw — `pulse()` advances its phase a twelfth
   per tick and, as everywhere, never writes `btn.drawn`.
+
+## Codex (`codex.mjs`)
+
+Codex writes no registry of running sessions, so **the open file is the
+registry**: every running `codex` process — the TUI, a `codex exec` run, the
+VS Code extension's app-server, a thread-spawned subagent — holds its rollout
+open, and `lsof -c codex` lists them with the pid terminal focus needs
+(~0.15s, measured). A closed rollout is a finished session.
+
+**Over ssh it is `/proc/<pid>/fd`**, since a remote host can't be assumed to
+have lsof: one GNU `find -lname` inside `TREE_CMD`, printed as `c <fd dir>
+<path>` lines that the pid parse skips. The tails call reads each open
+rollout's tail every fetch and its header (`H ` lines, `head -c`) only once,
+kept per host while the rollout stays open, plus `session_index.jsonl` for
+titles. The host names these paths, so `isCodexRollout` holds them to a
+rollout's shape before they are sent back, and a remote Codex tail never falls
+back to this machine's disk. A host without /proc or GNU find (a Mac) simply
+shows no Codex. A remote Codex subscription is another login, so its usage key
+is its own (`codex <host>`).
+
+Codex sessions join `matched` in `sessionsFrom` *before* `attachSdkParents`,
+already enriched, and skip everything after that reads Claude's files. That
+order is what nests a ship-review `codex exec` run: it is `nested` with a pid
+and no parent — an SDK session's shape — so the same pid-ancestry walk lands it
+on the Claude key that started it. A Codex thread-spawned subagent names its
+parent thread in `session_meta` and shows only while busy.
+
+State is the last `task_started`/`task_complete` in the tail, parsed per line.
+**Codex writes nothing when it stops for an approval**, so a Codex key reads
+working there, never blocked on you — the rollout cannot say more, and a
+guessed `requires_action` is the dishonesty the board refuses. A partial tail
+with neither marker is a turn that wrote past the tail: busy. `turn_context`
+(model, effort) can be pushed out of the tail by one turn's tool output, so the
+last one seen is kept per rollout, and the header read falls back to the first.
+
+The key's label starts `codex:` — the caps bar stays the project. Its
+`rate_limits` are converted to the status line's shape (`codexRate`, windows
+told apart by `window_minutes`) and take a usage key titled `codex` through the
+same path a remote subscription does — only from a session with a key of its
+own, so a minutes-long review run doesn't reflow the board. The state log and
+the token log need nothing: the first records whatever the session list holds,
+and `tokens.mjs` already read Codex rollouts for the ship-review cost.

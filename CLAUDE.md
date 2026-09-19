@@ -14,6 +14,7 @@ npm run stats-check    # stats board formatting
 npm run cswap-check    # claude-swap accounts: parsing, graceful absence
 npm run title-check    # aiTitle / clearedEmpty / blockedOnDenial / pendingTool / model / effort
 npm run subagents-check # which Agent-tool subagents are still running
+npm run codex-check    # Codex sessions: open rollouts, tail signals, rate limits
 npm run cmux-check     # cmux sessions: the folder join, and which pane a press resolves to
 npm run colors-check   # palette contrast + separation floors
 npm run terminal-focus-check # pid-ancestry walk + newest-press-wins guard
@@ -67,7 +68,7 @@ needs indexing.
 
 | Doc | Covers |
 |---|---|
-| `docs/design/sessions.md` | `sessions.mjs`, `sdd-ledger.mjs` — reading Claude Code's state; transcript signals (`aiTitle`, `/clear`, `lastPrompt`, `blockedOnDenial`, compacting); nested/subagent synthesis |
+| `docs/design/sessions.md` | `sessions.mjs`, `sdd-ledger.mjs`, `codex.mjs` — reading Claude Code's state; transcript signals (`aiTitle`, `/clear`, `lastPrompt`, `blockedOnDenial`, compacting); nested/subagent synthesis |
 | `docs/design/remote.md` | `remote-fs.mjs`, `remote-hosts.mjs` — the ssh fetches, backoff, cached sources, unreachable hosts |
 | `docs/design/board.md` | `index.mjs` — slot assignment and its exceptions, the six boards, the detail view, presses, `pulse()`, the self-restart |
 | `docs/design/render.md` | `render.mjs` — SVG→RGBA, measured text fitting, the three-tier palette and `colors-check`'s floors |

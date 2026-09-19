@@ -81,3 +81,6 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   "pi unreac / hable 4m" on the raster. `renderParams` is nulled on that
   branch, like every other board that isn't the session view, so `pulse()`
   never redraws a key this branch owns from stale data.
+- **Codex rides the same two calls** — `TREE_CMD` lists the open rollouts from
+  `/proc`, `TAILS_CMD` reads their tails and (once) their heads. See
+  sessions.md's Codex section.

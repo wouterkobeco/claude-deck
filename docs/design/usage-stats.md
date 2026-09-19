@@ -50,7 +50,9 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   wins, then the highest figure, through `expireWindows`). No credential for
   another machine is ever held. A block from before `rate` is offered a
   one-line `upgrade` by both prestarts. Each such host takes a usage key
-  beside the local one (`layout` in index.mjs, at most three).
+  beside the local one (`layout` in index.mjs, at most three). Both keys are
+  titled with the account (`getAccountName`, and `fetchAccountName` on the
+  usage TTL for a host, its name standing in until that lands).
 - `src/stats.mjs` — all-time stats board (favorite model, total tokens,
   sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output; don't

@@ -1,6 +1,7 @@
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { codexSessions } from "./codex.mjs";
 import { gitToplevel, readLedgerTasks } from "./sdd-ledger.mjs";
 import { ancestorChain, psTable } from "./terminal-focus.mjs";
 
@@ -1144,6 +1145,26 @@ async function sessionsFrom(source) {
   // superpowers' SDD blinks: the controller runs an Agent-tool subagent for
   // the implementation (which does carry a parent) and an SDK session for the
   // review, so its key found the plan for one phase and lost it for the next.
+  //
+  // Codex sessions join here, before that walk: a `codex exec` run is nested
+  // with a pid and no parent, the same shape as an SDK session, so the same
+  // ancestry finds the Claude session that started it. They arrive already
+  // enriched (codex.mjs) and skip everything below that reads Claude's files.
+  // A remote host brings its own Codex listing (`source.codex`); one that
+  // brought none has nothing to show, rather than this machine's.
+  if (!source.host || source.codex) {
+    const codex = await codexSessions({
+      folders,
+      ideByFolder,
+      matchFolder,
+      tail: source.tail,
+      ...(source.host ? { codex: source.codex, host: source.host, root: source.root } : {}),
+    });
+    // The same chain a remote Claude session carries, for the same reason:
+    // a press can't walk that host's pids at press time.
+    for (const c of codex) if (source.ppids?.size) c.ancestors = ancestorChain(c.pid, source.ppids);
+    matched.push(...codex);
+  }
   await attachSdkParents(matched, source);
 
   // Subagents have no registry entry of their own, so they're synthesised
@@ -1167,7 +1188,7 @@ async function sessionsFrom(source) {
   // apart downstream, not which of the two found them.
   const subagents = (
     await Promise.all(
-      matched.map(async (s) => {
+      matched.filter((s) => s.agent !== "codex").map(async (s) => {
         const [classic, teammates] = await Promise.all([
           readRunningSubagents(
             join(projectDirFor(s.cwd, source.root), s.session_id, "subagents"),
@@ -1232,6 +1253,7 @@ async function sessionsFrom(source) {
 
   const enriched = await Promise.all(
     matched.map(async (s) => {
+      if (s.agent === "codex") return s;
       const { blockedOnDenial, pendingTool, stopReason, compactRequestedAt, contextEstimate, ...signals } =
         await readTranscriptSignals(
           transcriptPathFor({ cwd: s.cwd, sessionId: s.session_id }, source.root),

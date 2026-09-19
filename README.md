@@ -26,13 +26,19 @@ window.
 | green + blue dot | `shell` | turn's over, but a shell it started in the background is still running |
 | gray | `idle` | idle |
 
+Codex sessions get keys too, here and on a remote host: any rollout a
+running `codex` holds open, under a window's folder, labelled `codex: …`. A
+`codex exec` run lands on the Claude key that started it, and Codex's rate
+limits get a usage key titled `codex`. Codex logs nothing when it stops for an
+approval, so a Codex key reads working there, never blocked on you.
+
 The bottom-right two keys leave the rotation, so 13 are session keys:
 
 - **Usage** (bottom-right) — how much of your session and weekly rate limits is
-  spent. Press it for the stats board. A remote host whose sessions report
-  their own subscription (its status line's ctx block passes `rate_limits`
-  along) gets a usage key of its own, titled with the host, just left of this
-  one — the status key moves one left and a session slot gives way for it.
+  spent, titled with the signed-in account. Press it for the stats board. A
+  remote host whose sessions report their own subscription (its status line's
+  ctx block passes `rate_limits` along) gets a usage key of its own, titled
+  with that host's account, just left of this one — the status key moves one left and a session slot gives way for it.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
   one has waited, and pressing it opens that queue, worst first.

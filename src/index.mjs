@@ -36,7 +36,7 @@ import {
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS } from "./render.mjs";
-import { getUsage, formatReset, getAccountName, remoteUsage } from "./usage.mjs";
+import { getUsage, formatReset, getAccountName, remoteUsage, TTL_MS as ACCOUNT_TTL_MS } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
 import { getMemory, pctWithAmount } from "./memory.mjs";
@@ -234,20 +234,26 @@ const liveProjects = new Map();
 // restore command happens on every poll rather than on the polls of whichever
 // board happens to be up. Every branch of the loop reads sessions; only this
 // one writes them out.
-// Each remote host whose live sessions' status lines report a subscription's
-// rate limits: that subscription's usage, for a usage key of its own beside
-// this machine's. Rebuilt on every read, so a host whose sessions all end
-// gives its key back.
+// Every other subscription in use beside this machine's Claude one, for a
+// usage key each: a remote host whose sessions' status lines report rate
+// limits, and Codex, whose rollouts carry its own. Rebuilt on every read, so
+// one whose sessions all end gives its key back. Codex counts only through a
+// session with a key of its own — a ship-review `codex exec` run lasts minutes,
+// and a key that comes and goes with it would reflow the board each time.
 let remoteUsages = [];
 
 async function liveSessions() {
   const sessions = await getLiveSessions(allSources());
   const rates = new Map();
-  for (const s of sessions) if (s.host && s.rateLimits) rates.set(s.host, [...(rates.get(s.host) ?? []), s.rateLimits]);
+  for (const s of sessions) {
+    // Codex on another host is another login, so a key of its own.
+    const id = s.agent === "codex" ? (s.nested ? null : s.host ? `codex ${s.host}` : "codex") : s.host;
+    if (id && s.rateLimits) rates.set(id, [...(rates.get(id) ?? []), s.rateLimits]);
+  }
   remoteUsages = [...rates]
-    .map(([host, r]) => ({ host, ...remoteUsage(r) }))
+    .map(([id, r]) => ({ id, ...remoteUsage(r) }))
     .filter((u) => u.session != null || u.week != null)
-    .sort((a, b) => a.host.localeCompare(b.host));
+    .sort((a, b) => a.id.localeCompare(b.id));
   liveProjects.clear();
   for (const s of sessions) {
     if (s.nested) continue;
@@ -932,6 +938,13 @@ export function nestedFor(session, nested, primary) {
 // two agents in one repo read KOB-TRACE twice and are told apart by their
 // body text, which is the thing that actually differs between them.
 function keyFields(session) {
+  const fields = claudeKeyFields(session);
+  // A Codex key says so where the words are: the caps bar is always the
+  // project, and a Claude and a Codex session can share one.
+  return session.agent === "codex" && fields.label ? { ...fields, label: `codex: ${fields.label}` } : fields;
+}
+
+function claudeKeyFields(session) {
   return {
     // Prefer the AI-generated title (the exact string VS Code's terminal list
     // shows), then the last thing you typed, then Claude Code's short session
@@ -1473,21 +1486,35 @@ async function refreshBusy(deck, buttons, statusButton, page = 0) {
 }
 
 // The bottom-right key is the usage readout rather than a session, so it is
-// left out of `buttons` before slots are assigned.
+// left out of `buttons` before slots are assigned. Titled with the account,
+// like a remote subscription's key beside it: two subscriptions on the deck
+// are told apart by whose they are, not by where they run.
 async function drawUsage(deck, btn) {
   const { session, week } = await getUsage();
-  const drawn = `usage ${session} ${week}`;
-  if (btn.drawn === drawn) return;
-  await deck.fillKeyBuffer(btn.index, await renderUsage({ ...btn, session, week }), { format: "rgba" });
-  btn.drawn = drawn;
+  await drawUsageKey(deck, btn, { title: (await getAccountName()) ?? "this mac", session, week });
 }
 
-// A remote subscription's usage key, titled with its host so it reads apart
-// from this machine's untitled one.
-async function drawRemoteUsage(deck, btn, { host, session, week }) {
-  const drawn = `usage ${host} ${session} ${week}`;
+// A remote host's account name, off its `~/.claude.json` over the poll's own
+// ssh connection. Fire-and-forget on the usage TTL, so a key never waits on
+// ssh: the host's name stands in until the first answer lands.
+// ponytail: re-reads the whole 100KB+ file every 5 min per host; fine for a
+// couple of hosts.
+const remoteAccounts = new Map();
+function remoteAccountName(host) {
+  const known = remoteAccounts.get(host);
+  if (!known || Date.now() - known.at > ACCOUNT_TTL_MS) {
+    remoteAccounts.set(host, { at: Date.now(), name: known?.name ?? null });
+    fetchAccountName(host, join(SCRATCH_ROOT, "cm-%h"))
+      .then((name) => name && remoteAccounts.set(host, { at: Date.now(), name }))
+      .catch(() => {});
+  }
+  return known?.name ?? host;
+}
+
+async function drawUsageKey(deck, btn, { title, session, week }) {
+  const drawn = `usage ${title} ${session} ${week}`;
   if (btn.drawn === drawn) return;
-  await deck.fillKeyBuffer(btn.index, await renderUsage({ ...btn, session, week, title: host }), { format: "rgba" });
+  await deck.fillKeyBuffer(btn.index, await renderUsage({ ...btn, session, week, title }), { format: "rgba" });
   btn.drawn = drawn;
 }
 
@@ -1823,9 +1850,10 @@ export const configDeps = {
               // `subagent`, not `parent`: an SDK session has a parent too now
               // (found in its pid ancestry) but a transcript of its own, in
               // its own project directory.
-              n.subagent
+              n.transcript ??
+              (n.subagent
                 ? subagentTranscriptPath({ cwd: n.cwd, parent: n.parent, agentId: n.session_id }, n.root)
-                : transcriptPathFor({ cwd: n.cwd, sessionId: n.session_id }, n.root)
+                : transcriptPathFor({ cwd: n.cwd, sessionId: n.session_id }, n.root))
             ),
       }))
     );
@@ -1867,7 +1895,7 @@ export const configDeps = {
       // tail does, for the ctx gauge) — null rather than a wrong number.
       tokens: session.host
         ? null
-        : await transcriptTokenTotal(transcriptPathFor({ cwd: session.cwd, sessionId: session.session_id }, session.root)),
+        : await transcriptTokenTotal(session.transcript ?? transcriptPathFor({ cwd: session.cwd, sessionId: session.session_id }, session.root)),
       // Likewise all of them, rather than however many the tail had room for.
       teammates: nestedRows
         .filter((r) => r.teamName)
@@ -3121,7 +3149,7 @@ async function run() {
       }
       if (view.kind !== "detail") {
         await drawUsage(deck, usageButton);
-        await Promise.all(remoteUsageButtons.map((b, i) => remoteUsages[i] && drawRemoteUsage(deck, b, remoteUsages[i])));
+        await Promise.all(remoteUsageButtons.map((b, i) => remoteUsages[i] && drawUsageKey(deck, b, { ...remoteUsages[i], title: remoteUsages[i].id.startsWith("codex") ? remoteUsages[i].id : remoteAccountName(remoteUsages[i].id) })));
       }
     } catch (err) {
       console.error("refresh failed:", err.message);

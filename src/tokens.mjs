@@ -138,16 +138,19 @@ export async function transcriptTokenTotal(path) {
   }
   const totals = { in: 0, out: 0, cacheWrite: 0, cacheRead: 0 };
   for (const line of text.split("\n")) {
-    if (!line.includes('"usage"')) continue;
+    if (!line.includes('usage"')) continue;
     let rec;
     try {
       rec = JSON.parse(line);
     } catch {
       continue;
     }
-    const u = rec?.message?.usage;
-    if (!u || typeof u !== "object") continue;
-    const usage = usageOf(u);
+    // A Codex rollout: `last_token_usage` per turn, summed the same way
+    // collectCodex does it (never the cumulative total — see there).
+    const t = rec?.payload?.type === "token_count" ? rec.payload.info?.last_token_usage : null;
+    const u = t ? null : rec?.message?.usage;
+    if (!t && (!u || typeof u !== "object")) continue;
+    const usage = t ? codexUsage(t) : usageOf(u);
     totals.in += usage.in;
     totals.out += usage.out;
     totals.cacheWrite += usage.cacheWrite5m + usage.cacheWrite1h + usage.cacheWrite;

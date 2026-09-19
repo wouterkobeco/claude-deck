@@ -3,6 +3,7 @@ import { parseMeminfo } from "./memory.mjs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tailLines, transcriptPathFor } from "./sessions.mjs";
+import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
 // because everything before it is digits and newlines.
@@ -63,6 +64,11 @@ export const TREE_CMD =
   // rss and comm ride along for the Claude sessions' own footprint; the
   // `ls /proc` fallback has neither, which costs that host only the chart.
   "{ ps -A -o pid=,ppid=,rss=,comm= 2>/dev/null | grep . || ls /proc 2>/dev/null; } | awk '$1 ~ /^[0-9]+$/ { print $1, $2, $3, $4 }'; " +
+  // Codex's registry is whichever rollouts a process holds open (codex.mjs).
+  // No lsof here: `/proc/<pid>/fd` says the same on Linux, and GNU find reads
+  // it in one pass. `c ` keeps these lines out of the pid parse above; a host
+  // without /proc or GNU find prints none, and simply shows no Codex.
+  "find /proc/[0-9]*/fd -maxdepth 1 -lname '*/.codex/sessions/*rollout-*.jsonl' -printf 'c %h %l\\n' 2>/dev/null; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
@@ -77,7 +83,7 @@ export const TREE_CMD =
  */
 export function splitTreeStream(buffer) {
   const at = buffer.indexOf(SEPARATOR);
-  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, tar: Buffer.alloc(0) };
+  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, codex: [], tar: Buffer.alloc(0) };
   const pids = new Set();
   // The memory block precedes the pid table behind its own fence; a stream
   // from before the fence existed has no block and reads as no memory data.
@@ -94,7 +100,13 @@ export function splitTreeStream(buffer) {
   // host and nothing else, where treating it as an error would drop every
   // session there as dead.
   const ppids = new Map();
+  const codex = [];
   for (const line of head.split("\n")) {
+    const open = /^c \/proc\/(\d+)\/fd (\/.*)$/.exec(line);
+    if (open) {
+      if (isCodexRollout(open[2]) && !codex.some((c) => c.path === open[2])) codex.push({ pid: Number(open[1]), path: open[2] });
+      continue;
+    }
     const [first, second, rss, comm] = line.trim().split(/\s+/);
     const pid = Number(first);
     if (!Number.isInteger(pid) || pid <= 0) continue;
@@ -109,7 +121,17 @@ export function splitTreeStream(buffer) {
     if (Number.isInteger(ppid) && ppid > 0) ppids.set(pid, ppid);
   }
   if (memory) memory.claude.mb = Math.round(memory.claude.mb);
-  return { pids, ppids, memory, tar: buffer.subarray(at + SEPARATOR.length) };
+  return { pids, ppids, memory, codex, tar: buffer.subarray(at + SEPARATOR.length) };
+}
+
+/**
+ * A path the host named as an open Codex rollout, before it is sent back to
+ * that host to be read. The host chose it, so it is held to the shape a
+ * rollout has — absolute, under `.codex/sessions/`, no `..` — and never read
+ * on this machine: its tail comes from the fetch or not at all.
+ */
+export function isCodexRollout(path) {
+  return /^\/[^\n]*\/\.codex\/sessions\/[^\n]*\/rollout-[^/\n]*\.jsonl$/.test(path) && !path.includes("/../") && !path.includes("/./");
 }
 
 /**
@@ -283,9 +305,11 @@ const TAIL_BYTES = 65536;
  * is conservative in the safe direction — a false `whole: false` only withholds
  * `startedEmpty`, while a false `whole: true` makes a busy session read `CLEAR`.
  */
+// An `H ` line asks for a file's *head* instead — a Codex rollout's header,
+// fetched once per rollout (it never changes) rather than every poll.
 export const TAILS_CMD =
   "cd ~/.claude 2>/dev/null || exit 0; " +
-  `while IFS= read -r f; do tail -c ${TAIL_BYTES} "$f" 2>/dev/null; printf '\\0'; done`;
+  `while IFS= read -r f; do case "$f" in "H "*) head -c ${HEAD_BYTES} "\${f#H }" 2>/dev/null ;; *) tail -c ${TAIL_BYTES} "$f" 2>/dev/null ;; esac; printf '\\0'; done`;
 
 /**
  * Read call 2's stream back into one `{ lines, whole }` per requested path, in
@@ -387,6 +411,9 @@ async function readJsonFiles(dir) {
  * asleep, unreachable, or has never run Claude Code is an ordinary state, and
  * the caller drops its keys the way a closed window's are dropped.
  */
+// host -> rollout path -> parsed header, for the rollouts still open there.
+const codexHeaders = new Map();
+
 export async function fetchSource(host, scratchRoot) {
   const controlPath = join(scratchRoot, "cm-%h");
   const finalDir = join(scratchRoot, host);
@@ -408,7 +435,7 @@ export async function fetchSource(host, scratchRoot) {
 
     const stream = await run(["ssh", ...sshArgs(host, controlPath), TREE_CMD]);
     if (!stream) return null;
-    const { pids, ppids, memory, tar } = splitTreeStream(stream);
+    const { pids, ppids, memory, codex: codexOpen, tar } = splitTreeStream(stream);
 
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
@@ -459,8 +486,17 @@ export async function fetchSource(host, scratchRoot) {
     // path list, so adding to it costs no round trip. They are used differently
     // at the far end — a transcript is served to the injected `tail`, a context
     // file is written into the tree — but the wire is the same.
+    // Codex: every open rollout's tail each fetch, its header only the first
+    // time (kept below), and the thread-name index beside the sessions dir.
+    const heads = codexHeaders.get(host) ?? new Map();
+    const codexWanted = codexOpen.map((c) => ({ remote: c.path }));
+    const headWanted = codexOpen.filter((c) => !heads.has(c.path)).map((c) => ({ remote: `H ${c.path}`, path: c.path }));
+    const indexPath = codexOpen.length ? codexOpen[0].path.replace(/\/\.codex\/sessions\/.*$/, "/.codex/session_index.jsonl") : null;
+    const codexTails = new Map();
+    let indexText = "";
+
     let tails = new Map();
-    const all = [...wanted, ...ctx, ...compact];
+    const all = [...wanted, ...ctx, ...compact, ...codexWanted, ...headWanted, ...(indexPath ? [{ remote: indexPath }] : [])];
     if (all.length) {
       const body = await run(["ssh", ...sshArgs(host, controlPath), TAILS_CMD], {
         input: all.map((w) => w.remote).join("\n") + "\n",
@@ -474,8 +510,17 @@ export async function fetchSource(host, scratchRoot) {
         // single short JSON line, so a "tail" of it is the whole thing.
         await writeCtxFiles(ctx, byRemote);
         await writeCompactFiles(compact, byRemote);
+        for (const w of codexWanted) codexTails.set(w.remote, byRemote.get(w.remote));
+        for (const w of headWanted) {
+          const got = byRemote.get(w.remote);
+          if (got?.lines.length) heads.set(w.path, parseHeader(got.lines.join("\n")));
+        }
+        indexText = indexPath ? (byRemote.get(indexPath)?.lines ?? []).join("\n") : "";
       }
     }
+    // Only the rollouts still open: a closed one is a finished session, and
+    // its header would otherwise be held for as long as the daemon runs.
+    codexHeaders.set(host, new Map(codexOpen.filter((c) => heads.has(c.path)).map((c) => [c.path, heads.get(c.path)])));
 
     return {
       host,
@@ -498,6 +543,17 @@ export async function fetchSource(host, scratchRoot) {
       // path the map has never heard of, gets the failure value, and no
       // remote session ever shows a subagent.
       tail: async (path) => tails.get(path) ?? tailLines(path),
+      // This host's Codex, in the shape codexSessions reads (see codex.mjs).
+      // Its tail never falls back to this machine's disk: the path is one the
+      // host chose.
+      codex: codexOpen.length
+        ? {
+            rollouts: async () => codexOpen,
+            header: async (path) => codexHeaders.get(host)?.get(path) ?? null,
+            index: async () => indexText,
+            tail: async (path) => codexTails.get(path) ?? { lines: [], whole: false },
+          }
+        : null,
     };
   } catch {
     // Same failure value as an unreachable host: whatever partial state was
@@ -518,7 +574,8 @@ export async function fetchSource(host, scratchRoot) {
  * project goes out of its way to avoid everywhere else. Reuses the same
  * `controlPath` the poll's own connection to that host uses, so it rides the
  * already-open, multiplexed `ControlPersist` socket rather than a fresh
- * handshake. Best-effort like everything else here: an unreachable host, a
+ * handshake. The one standing exception: a host with a subscription of its
+ * own on the deck asks this on the usage TTL (5 min) to title its usage key. Best-effort like everything else here: an unreachable host, a
  * missing file, or a shape this doesn't recognise all read as unknown.
  */
 export async function fetchAccountName(host, controlPath) {
