@@ -14,7 +14,7 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { codexTreeReader, fetchAccountName, fetchSource } from "./remote-fs.mjs";
+import { codexTreeReader, fetchAccount, fetchSource } from "./remote-fs.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
@@ -36,7 +36,7 @@ import {
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
 import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS } from "./render.mjs";
-import { getUsage, formatReset, getAccountName, remoteUsage, TTL_MS as ACCOUNT_TTL_MS } from "./usage.mjs";
+import { getUsage, formatReset, getAccount, getAccountName, dropSharedAccounts, remoteUsage, TTL_MS as ACCOUNT_TTL_MS } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
 import { getMemory, pctWithAmount } from "./memory.mjs";
@@ -250,10 +250,14 @@ async function liveSessions() {
     const id = s.agent === "codex" ? (s.nested ? null : s.host ? `codex ${s.host}` : "codex") : s.host;
     if (id && s.rateLimits) rates.set(id, [...(rates.get(id) ?? []), s.rateLimits]);
   }
-  remoteUsages = [...rates]
-    .map(([id, r]) => ({ id, ...remoteUsage(r) }))
-    .filter((u) => u.session != null || u.week != null)
-    .sort((a, b) => a.id.localeCompare(b.id));
+  remoteUsages = dropSharedAccounts(
+    [...rates]
+      .map(([id, r]) => ({ id, ...remoteUsage(r) }))
+      .filter((u) => u.session != null || u.week != null)
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    (await getAccount())?.email,
+    (host) => remoteAccount(host)?.email
+  );
   liveProjects.clear();
   for (const s of sessions) {
     if (s.nested) continue;
@@ -1529,21 +1533,22 @@ async function drawUsage(deck, btn) {
   await drawUsageKey(deck, btn, { title: (await getAccountName()) ?? "this mac", session, week });
 }
 
-// A remote host's account name, off its `~/.claude.json` over the poll's own
-// ssh connection. Fire-and-forget on the usage TTL, so a key never waits on
-// ssh: the host's name stands in until the first answer lands.
+// A remote host's account (`{ name, email }`), off its `~/.claude.json` over
+// the poll's own ssh connection. Fire-and-forget on the usage TTL, so a key
+// never waits on ssh: null until the first answer lands, and the caller lets
+// the host's name stand in.
 // ponytail: re-reads the whole 100KB+ file every 5 min per host; fine for a
 // couple of hosts.
 const remoteAccounts = new Map();
-function remoteAccountName(host) {
+function remoteAccount(host) {
   const known = remoteAccounts.get(host);
   if (!known || Date.now() - known.at > ACCOUNT_TTL_MS) {
-    remoteAccounts.set(host, { at: Date.now(), name: known?.name ?? null });
-    fetchAccountName(host, join(SCRATCH_ROOT, "cm-%h"))
-      .then((name) => name && remoteAccounts.set(host, { at: Date.now(), name }))
+    remoteAccounts.set(host, { at: Date.now(), account: known?.account ?? null });
+    fetchAccount(host, join(SCRATCH_ROOT, "cm-%h"))
+      .then((account) => account && remoteAccounts.set(host, { at: Date.now(), account }))
       .catch(() => {});
   }
-  return known?.name ?? host;
+  return known?.account ?? null;
 }
 
 async function drawUsageKey(deck, btn, { title, session, week }) {
@@ -1914,7 +1919,7 @@ export const configDeps = {
       // not. Reuses that host's own poll connection's controlPath, so it
       // rides the already-open ControlPersist socket.
       account: session.host
-        ? await fetchAccountName(session.host, join(SCRATCH_ROOT, "cm-%h"))
+        ? (await fetchAccount(session.host, join(SCRATCH_ROOT, "cm-%h")))?.name ?? null
         : await getAccountName(),
       // The VS Code terminal's own live name, if this session's terminal has
       // ever been revealed — a rename you typed by hand, the way "Account"
@@ -3197,7 +3202,7 @@ async function run() {
       }
       if (view.kind !== "detail") {
         await drawUsage(deck, usageButton);
-        await Promise.all(remoteUsageButtons.map((b, i) => remoteUsages[i] && drawUsageKey(deck, b, { ...remoteUsages[i], title: remoteUsages[i].id.startsWith("codex") ? remoteUsages[i].id : remoteAccountName(remoteUsages[i].id) })));
+        await Promise.all(remoteUsageButtons.map((b, i) => remoteUsages[i] && drawUsageKey(deck, b, { ...remoteUsages[i], title: remoteUsages[i].id.startsWith("codex") ? remoteUsages[i].id : remoteAccount(remoteUsages[i].id)?.name ?? remoteUsages[i].id })));
       }
     } catch (err) {
       console.error("refresh failed:", err.message);

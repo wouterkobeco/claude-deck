@@ -415,14 +415,14 @@ assert.deepEqual(
 );
 assert.deepEqual(compactTargets(hostile, "/scratch/host"), [], "a hostile session id is refused here too");
 
-assert.equal(
-  parseAccountJson(JSON.stringify({ oauthAccount: { displayName: "Jeroen", emailAddress: "claude2@denayer.com" } })),
-  "Jeroen",
+assert.deepEqual(
+  parseAccountJson(JSON.stringify({ oauthAccount: { displayName: "Jeroen", emailAddress: "Claude2@denayer.com" } })),
+  { name: "Jeroen", email: "claude2@denayer.com" },
   "displayName wins when both are present, matching getAccountName's own preference"
 );
-assert.equal(
+assert.deepEqual(
   parseAccountJson(JSON.stringify({ oauthAccount: { emailAddress: "wouter@kobeco.be" } })),
-  "wouter@kobeco.be",
+  { name: "wouter@kobeco.be", email: "wouter@kobeco.be" },
   "falls back to the email when there's no display name"
 );
 assert.equal(parseAccountJson(JSON.stringify({})), null, "no oauthAccount at all is unknown, not an error");

@@ -2,7 +2,7 @@
 // field names above can be confirmed against a real account.
 // Run: node scripts/usage-check.mjs [--live]
 import assert from "node:assert/strict";
-import { parseUsage, remoteUsage, fetchUsage, getUsage, minutesUntil, formatReset, subscriptionChange, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
+import { parseUsage, remoteUsage, fetchUsage, getUsage, minutesUntil, formatReset, subscriptionChange, dropSharedAccounts, TTL_MS, _resetIdentityWatchForTests } from "../src/usage.mjs";
 
 assert.deepEqual(
   parseUsage({
@@ -246,4 +246,16 @@ console.log("OK: remoteUsage");
 
 if (process.argv.includes("--live")) {
   console.log(JSON.stringify(await fetchUsage(), null, 2));
+}
+
+// A remote host on this Mac's account (BEAST, 2026-09-19) is the same
+// subscription: no second key. Nor is a second host on one account; an
+// unknown account keeps its key, and Codex is another provider.
+{
+  const emails = { beast: "claude2@denayer.com", pi: "wouter@kobeco.be", pi2: "wouter@kobeco.be" };
+  const ids = (us) => us.map((u) => u.id);
+  const usages = ["beast", "codex", "new", "pi", "pi2"].map((id) => ({ id }));
+  assert.deepEqual(ids(dropSharedAccounts(usages, "claude2@denayer.com", (h) => emails[h])), ["codex", "new", "pi"]);
+  assert.deepEqual(ids(dropSharedAccounts(usages, null, (h) => emails[h])), ["beast", "codex", "new", "pi"], "unknown local account drops nothing on its behalf");
+  console.log("usage-check: shared-account dedupe OK");
 }

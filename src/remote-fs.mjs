@@ -579,16 +579,21 @@ export async function fetchSource(host, scratchRoot) {
  * own on the deck asks this on the usage TTL (5 min) to title its usage key. Best-effort like everything else here: an unreachable host, a
  * missing file, or a shape this doesn't recognise all read as unknown.
  */
-export async function fetchAccountName(host, controlPath) {
+export async function fetchAccount(host, controlPath) {
   const buf = await run(["ssh", ...sshArgs(host, controlPath), "cat ~/.claude.json 2>/dev/null"], { timeoutMs: 6000 });
   return buf ? parseAccountJson(buf.toString("utf8")) : null;
 }
 
-/** The one field this reaches into `~/.claude.json` for — same preference order `getAccountName` uses locally. */
+/**
+ * The one field this reaches into `~/.claude.json` for, as `{ name, email }` —
+ * name in the same preference order `getAccountName` uses locally, email as
+ * the account's identity (two accounts can share a display name).
+ */
 export function parseAccountJson(text) {
   try {
     const acct = JSON.parse(text)?.oauthAccount ?? {};
-    return acct.displayName || acct.emailAddress || null;
+    const name = acct.displayName || acct.emailAddress || null;
+    return name && { name, email: acct.emailAddress?.toLowerCase() ?? null };
   } catch {
     return null;
   }

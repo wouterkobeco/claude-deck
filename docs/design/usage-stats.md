@@ -51,8 +51,11 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   another machine is ever held. A block from before `rate` is offered a
   one-line `upgrade` by both prestarts. Each such host takes a usage key
   beside the local one (`layout` in index.mjs, at most three). Both keys are
-  titled with the account (`getAccountName`, and `fetchAccountName` on the
-  usage TTL for a host, its name standing in until that lands).
+  titled with the account (`getAccount`, and `fetchAccount` on the
+  usage TTL for a host, its name standing in until that lands). A key is per
+  *subscription*, not per host: `dropSharedAccounts` drops a host signed into
+  an account already on the deck (by email — display names collide), since
+  BEAST on this Mac's login drew a second key repeating the first.
 - `src/stats.mjs` — all-time stats board (favorite model, total tokens,
   sessions, ...), read from `~/.claude/stats-cache.json`, cached 30s. Values are
   validated against a real screenshot of the source tool's own output; don't

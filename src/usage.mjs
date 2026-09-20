@@ -79,16 +79,38 @@ export function subscriptionChange(prev, subscriptionType, rateLimitTier) {
 const ACCOUNT_PATH = join(homedir(), ".claude.json");
 let accountCache = { at: 0, value: null };
 
-/** The signed-in account's display name (falling back to its email), or null — best-effort, like every other file read here. */
-export async function getAccountName(now = Date.now()) {
+/** The signed-in account as `{ name, email }` (name falling back to email), or null — best-effort, like every other file read here. */
+export async function getAccount(now = Date.now()) {
   if (now - accountCache.at < TTL_MS) return accountCache.value;
   try {
     const acct = JSON.parse(await readFile(ACCOUNT_PATH, "utf8"))?.oauthAccount ?? {};
-    accountCache = { at: now, value: acct.displayName || acct.emailAddress || null };
+    const name = acct.displayName || acct.emailAddress || null;
+    accountCache = { at: now, value: name && { name, email: acct.emailAddress?.toLowerCase() ?? null } };
   } catch {
     accountCache = { ...accountCache, at: now };
   }
   return accountCache.value;
+}
+
+export const getAccountName = async (now) => (await getAccount(now))?.name ?? null;
+
+/**
+ * A remote host signed into an account already on the deck (this Mac's, or an
+ * earlier host's) is the same subscription, not another one — its key would
+ * repeat numbers the deck already shows. Dropped by email, the account's
+ * identity; a host whose account isn't known yet keeps its key until it is.
+ * Codex entries are another provider and pass through.
+ */
+export function dropSharedAccounts(usages, localEmail, emailOf) {
+  const seen = new Set(localEmail ? [localEmail] : []);
+  return usages.filter((u) => {
+    if (u.id.startsWith("codex")) return true;
+    const email = emailOf(u.id);
+    if (!email) return true;
+    if (seen.has(email)) return false;
+    seen.add(email);
+    return true;
+  });
 }
 
 /** Raw response → the two percentages the key shows, plus when each window turns over. */

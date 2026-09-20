@@ -125,7 +125,7 @@ const METRICS = ["calls", "in", "out", "think", "cacheWrite5m", "cacheWrite1h", 
  * file rather than the hourly log below — `keyOf` throws per-agent identity
  * away by design (a bucket is per hour/cwd/model, not per session), so
  * answering "how much did this one agent cost" means reading its own
- * transcript instead. On demand only, the same trade `fetchAccountName`
+ * transcript instead. On demand only, the same trade `fetchAccount`
  * makes: a subagent's transcript is a few tens of KB, and this is read once
  * per detail-panel open, never on a poll. Null for a path nothing can read —
  * a remote session's, or one that ended and was swept.
