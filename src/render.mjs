@@ -497,17 +497,28 @@ export async function renderKey({ width, height, state, label, accent, project, 
     .toBuffer();
 }
 
-// Nearly spent: the level where the gauge goes red, gets its extra 2px, and
-// starts breathing. One constant so those three can't drift apart.
-export const CONTEXT_CRITICAL = 85;
+// Nearly spent: the level where the context gauge goes red and starts
+// breathing. One constant so those can't drift apart.
+export const CONTEXT_CRITICAL = 60;
+const CONTEXT_AMBER = 40;
 
 /**
  * Green under half, amber past that, red once a window is nearly spent. Bright
  * enough to read as a few pixels sitting on a light accent colour.
+ *
+ * The cut points are arguments because context and a rate-limit window are not
+ * the same statement at the same number: a context window wants warning early
+ * (a compaction is worth steering around before it lands), while 60% of a
+ * *weekly* quota on a Tuesday is simply Tuesday, and a meter that is red all
+ * week is a meter nobody reads. Same three colours either way, so the board
+ * still speaks one vocabulary — `contextColor` is the context reading of it.
  */
-export function usageColor(pct) {
-  return pct >= CONTEXT_CRITICAL ? "#ff5252" : pct >= 50 ? "#ffc107" : "#69f0ae";
+export function usageColor(pct, amber = 50, red = 85) {
+  return pct >= red ? "#ff5252" : pct >= amber ? "#ffc107" : "#69f0ae";
 }
+
+/** The same three colours on the context gauge's own thresholds. */
+export const contextColor = (pct) => usageColor(pct, CONTEXT_AMBER, CONTEXT_CRITICAL);
 
 // The other half of the red gauge's flash. A pale pink sat here first, then
 // white on a cosine, and neither could be seen on the deck: 2px of line fading
@@ -518,7 +529,7 @@ const CONTEXT_FLASH = "#ffffff";
 
 /**
  * The gauge's colour at `phase` (0–1 of one flash). Below the red threshold,
- * and at phase 0 anywhere, this is exactly `usageColor` — so the steady frame
+ * and at phase 0 anywhere, this is exactly `contextColor` — so the steady frame
  * every non-pulsing board draws looks as it always did.
  *
  * A square wave, not a fade: the second half of the cycle is white, full stop.
@@ -529,7 +540,7 @@ const CONTEXT_FLASH = "#ffffff";
  * vanishing rather than one that flashes.
  */
 export function gaugeColor(pct, phase = 0) {
-  const base = usageColor(pct);
+  const base = contextColor(pct);
   if (pct < CONTEXT_CRITICAL) return base;
   return phase < 0.5 ? base : CONTEXT_FLASH;
 }

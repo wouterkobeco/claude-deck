@@ -29,6 +29,13 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   enough to clear the others converges on the white idle square) and the gauge,
   which is checked against the dark track it's inset onto rather than the
   accent it would otherwise vanish into.
+  **Context and a rate-limit window share the three colours, not the
+  thresholds** (`usageColor`'s `amber`/`red` arguments; `contextColor` is the
+  context reading). Context goes amber at 40 and red at 60, because a
+  compaction is worth steering around well before it lands. A rate-limit meter
+  keeps 50/85: 60% of a *weekly* quota on a Tuesday is simply Tuesday, and a
+  meter that is red all week is one nobody reads. `colors-check` pins both
+  sets, so tuning one can't silently move the other.
   **`idle_recent` is a fifth background and it is a colour, not a state.**
   A session idle for under `RECENT_IDLE_S` (5 min) draws deep purple rather
   than the idle grey: the first has something to read, the second is

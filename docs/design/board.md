@@ -77,7 +77,7 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   `gaugeColor` flashes red *brighter*, never dimmer: the gauge is 3px on a
   near-black track held to a contrast floor, and dropping below that floor for
   half of every cycle is a gauge that keeps vanishing. Phase 0 is exactly
-  `usageColor`, so every board that doesn't pulse draws what it always did.
+  `contextColor`, so every board that doesn't pulse draws what it always did.
   **Two gradual versions shipped before this one and neither was visible on
   the deck** — a pink cosine over 14s, then a white one over 7s, both passing
   `colors-check`. 3px of line is too little to carry a gradient: most of a fade

@@ -14,7 +14,7 @@ layout you can set, no fifteen-key limit, and the same press-to-focus. See
 Every key is one live session: the project name in caps along the top in that
 project's colour, the session's own title under it, a `done/total` counter when
 it's working through a task list, and a thin gauge along the bottom for how full
-its context window is (green, amber past 50%, red past 85%, and once it's red
+its context window is (green, amber past 40%, red past 60%, and once it's red
 it flashes red/white about once a second). Press a key to focus that
 window.
 

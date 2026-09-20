@@ -12,7 +12,7 @@
 // import or run. What is left in SCRIPT is what only a browser can answer:
 // where the pointer is, how many lines of text fit at this size, and which
 // tiles actually changed since the last poll.
-import { STATE_COLORS, MARKER_COLORS, usageColor, CONTEXT_CRITICAL } from "./render.mjs";
+import { STATE_COLORS, MARKER_COLORS, usageColor, contextColor, CONTEXT_CRITICAL } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
 import { fmt } from "./stats.mjs";
 
@@ -492,7 +492,7 @@ const gauge = (pct) =>
     : `<div class="gauge"><i class="${pct >= CONTEXT_CRITICAL ? "crit" : ""}" style="width:${Math.min(
         100,
         Math.max(0, pct)
-      )}%;background:${usageColor(pct)}"></i></div>`;
+      )}%;background:${contextColor(pct)}"></i></div>`;
 
 const bar = (k) =>
   `<div class="bar" style="background:${colour(k.accent)}"><div class="caps">${esc(k.project)}</div>${gauge(
@@ -653,7 +653,7 @@ export function detailPanel(d) {
               ? `<span class="ctx"><span class="track"><i style="width:${Math.min(
                   100,
                   Math.max(0, d.context)
-                )}%;background:${usageColor(d.context)}"></i></span>${d.context}%</span>`
+                )}%;background:${contextColor(d.context)}"></i></span>${d.context}%</span>`
               : "—"
           }</dd>
           <dt>Model</dt><dd>${esc(d.model)}</dd>

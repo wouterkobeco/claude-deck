@@ -9,7 +9,7 @@
 // from the palette as it stands, then rounded down — they're the current
 // design's own guarantees, not aspirations.
 
-import { STATE_COLORS, MARKER_COLORS, usageColor, gaugeColor, CONTEXT_CRITICAL } from "../src/render.mjs";
+import { STATE_COLORS, MARKER_COLORS, usageColor, contextColor, gaugeColor, CONTEXT_CRITICAL } from "../src/render.mjs";
 import { ACCENTS } from "../src/index.mjs";
 
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
@@ -121,8 +121,22 @@ ACCENTS.forEach((accent, i) => {
 // track instead of letting it butt onto the accent. So: check it against the
 // track it actually sits on.
 const track = over("#000000", 0.8, "#ffffff"); // #000000cc over any accent ≈ this or darker
-for (const pct of [0, 49, 50, 84, 85, 100]) {
-  check(`gauge at ${pct}% on its track`, contrast(usageColor(pct), track), 3.0);
+for (const pct of [0, 39, 40, 59, 60, 100]) {
+  check(`gauge at ${pct}% on its track`, contrast(contextColor(pct), track), 3.0);
+}
+// Context warns earlier than a rate-limit window does, and the two readings
+// must not quietly become one: same colours, its own cut points.
+for (const [pct, colour] of [[39, "#69f0ae"], [40, "#ffc107"], [59, "#ffc107"], [60, "#ff5252"]]) {
+  if (contextColor(pct) !== colour) {
+    console.error(`FAILED: contextColor(${pct}) is ${contextColor(pct)}, expected ${colour}`);
+    failed = true;
+  }
+}
+for (const [pct, colour] of [[49, "#69f0ae"], [50, "#ffc107"], [84, "#ffc107"], [85, "#ff5252"]]) {
+  if (usageColor(pct) !== colour) {
+    console.error(`FAILED: usageColor(${pct}) is ${usageColor(pct)}, expected ${colour} — a rate-limit meter keeps its own thresholds`);
+    failed = true;
+  }
 }
 
 // Past CONTEXT_CRITICAL the gauge flashes, so both frames have to clear the
@@ -152,7 +166,7 @@ if (gaugeColor(100, 0) !== usageColor(100)) {
 // drift. Red is deliberately NOT shared: the marker had to go pale to survive
 // a mid-dark key, while the gauge sits on a near-black track where the
 // saturated alarm red both reads and alarms. Same meaning, different substrate.
-for (const [pct, state] of [[10, "busy"], [60, "waiting"]]) {
+for (const [pct, state] of [[10, "busy"], [50, "waiting"]]) {
   if (usageColor(pct) !== MARKER_COLORS[state]) {
     console.error(`FAILED: usageColor(${pct}) is ${usageColor(pct)}, expected MARKER_COLORS.${state} ${MARKER_COLORS[state]}`);
     failed = true;
