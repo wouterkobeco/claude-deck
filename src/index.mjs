@@ -1838,7 +1838,9 @@ export const configDeps = {
       // This machine first, then every reachable host, under its name.
       memory: [{ name: "This Mac", ...getMemory() }, ...Object.entries(hostMemories()).map(([name, m]) => ({ name, ...m }))],
       accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }).map((a) => ({
-        name: a.email,
+        // The local part, not the whole email: the same string the usage keys
+        // and the stats board title themselves with.
+        name: a.name,
         active: a.active,
         usage: {
           session: a.session,

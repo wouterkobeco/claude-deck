@@ -79,13 +79,26 @@ export function subscriptionChange(prev, subscriptionType, rateLimitTier) {
 const ACCOUNT_PATH = join(homedir(), ".claude.json");
 let accountCache = { at: 0, value: null };
 
-/** The signed-in account as `{ name, email }` (name falling back to email), or null — best-effort, like every other file read here. */
+/**
+ * `oauthAccount` -> `{ name, email }`, the one naming rule for a subscription.
+ * The name is the email's local part, never `displayName`: cswap already
+ * titles its accounts that way (`cswap.mjs`, the stats board, the config
+ * page's account list), and two names for one subscription on one deck is
+ * how "claude3" and "WD3" ended up on neighbouring keys. `displayName` only
+ * stands in for an account with no email at all.
+ */
+export function accountFrom(acct) {
+  const email = typeof acct?.emailAddress === "string" ? acct.emailAddress.toLowerCase() : null;
+  const name = email?.split("@")[0] || acct?.displayName || null;
+  return name && { name, email };
+}
+
+/** The signed-in account as `{ name, email }`, or null — best-effort, like every other file read here. */
 export async function getAccount(now = Date.now()) {
   if (now - accountCache.at < TTL_MS) return accountCache.value;
   try {
     const acct = JSON.parse(await readFile(ACCOUNT_PATH, "utf8"))?.oauthAccount ?? {};
-    const name = acct.displayName || acct.emailAddress || null;
-    accountCache = { at: now, value: name && { name, email: acct.emailAddress?.toLowerCase() ?? null } };
+    accountCache = { at: now, value: accountFrom(acct) };
   } catch {
     accountCache = { ...accountCache, at: now };
   }

@@ -417,13 +417,18 @@ assert.deepEqual(compactTargets(hostile, "/scratch/host"), [], "a hostile sessio
 
 assert.deepEqual(
   parseAccountJson(JSON.stringify({ oauthAccount: { displayName: "Jeroen", emailAddress: "Claude2@denayer.com" } })),
-  { name: "Jeroen", email: "claude2@denayer.com" },
-  "displayName wins when both are present, matching getAccountName's own preference"
+  { name: "claude2", email: "claude2@denayer.com" },
+  "the email's local part is the name, not displayName — one name per subscription across keys, board and page"
+);
+assert.deepEqual(
+  parseAccountJson(JSON.stringify({ oauthAccount: { displayName: "Jeroen" } })),
+  { name: "Jeroen", email: null },
+  "displayName only stands in for an account with no email"
 );
 assert.deepEqual(
   parseAccountJson(JSON.stringify({ oauthAccount: { emailAddress: "wouter@kobeco.be" } })),
-  { name: "wouter@kobeco.be", email: "wouter@kobeco.be" },
-  "falls back to the email when there's no display name"
+  { name: "wouter", email: "wouter@kobeco.be" },
+  "no display name: still the local part"
 );
 assert.equal(parseAccountJson(JSON.stringify({})), null, "no oauthAccount at all is unknown, not an error");
 assert.equal(parseAccountJson("not json"), null, "unparseable content is unknown too — never thrown");

@@ -52,7 +52,12 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   one-line `upgrade` by both prestarts. Each such host takes a usage key
   beside the local one (`layout` in index.mjs, at most three). Both keys are
   titled with the account (`getAccount`, and `fetchAccount` on the
-  usage TTL for a host, its name standing in until that lands). A key is per
+  usage TTL for a host, its name standing in until that lands). **A
+  subscription has one name everywhere**: `accountFrom` in usage.mjs, the
+  email's local part, which is what cswap already titled its own accounts
+  with — `displayName` only stands in for an account with no email. The two
+  rules ran side by side long enough for the stats board to say "claude3" and
+  the key beside it "WD3". A key is per
   *subscription*, not per host: `dropSharedAccounts` drops a host signed into
   an account already on the deck (by email — display names collide), since
   BEAST on this Mac's login drew a second key repeating the first.

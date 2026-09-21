@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tailLines, transcriptPathFor } from "./sessions.mjs";
 import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
+import { accountFrom } from "./usage.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
 // because everything before it is digits and newlines.
@@ -586,14 +587,12 @@ export async function fetchAccount(host, controlPath) {
 
 /**
  * The one field this reaches into `~/.claude.json` for, as `{ name, email }` —
- * name in the same preference order `getAccountName` uses locally, email as
- * the account's identity (two accounts can share a display name).
+ * named by `accountFrom`, the same rule the local account uses, email as the
+ * account's identity (two accounts can share a display name).
  */
 export function parseAccountJson(text) {
   try {
-    const acct = JSON.parse(text)?.oauthAccount ?? {};
-    const name = acct.displayName || acct.emailAddress || null;
-    return name && { name, email: acct.emailAddress?.toLowerCase() ?? null };
+    return accountFrom(JSON.parse(text)?.oauthAccount);
   } catch {
     return null;
   }
