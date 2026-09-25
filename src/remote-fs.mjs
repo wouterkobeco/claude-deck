@@ -73,7 +73,11 @@ export const TREE_CMD =
   "find /proc/[0-9]*/fd -maxdepth 1 -lname '*/.codex/sessions/*rollout-*.jsonl' -printf 'c %h %l\\n' 2>/dev/null; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
-  '  find projects -type f 2>/dev/null | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
+  // A subagent idle past SUBAGENT_IDLE_MAX_S (600s) is skipped by the reader
+  // anyway, and nothing reads tool-results/ — shipping them every poll grew a
+  // busy host's stream to 199MB and timed it out into "offline". +11 is margin.
+  "  find projects -type f ! -path '*/tool-results/*' ! \\( -path '*/subagents/*.jsonl' -mmin +11 \\) 2>/dev/null" +
+  ' | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
   "} | tar -cf - -T - 2>/dev/null";
 
 /**
