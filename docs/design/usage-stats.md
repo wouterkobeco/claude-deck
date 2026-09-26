@@ -104,9 +104,13 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   `recordStates` writes **only on change**, so a session busy for an hour is
   one record rather than 1,800, and it emits a `gone` record when a session
   disappears — without that, the final state of every session that ever ran
-  counts up to `now` forever. Nested sessions are skipped: a subagent's time
-  already reaches its project through its parent's own state, and counting both
-  double-counts every minute a parent spent waiting on one.
+  counts up to `now` forever. Nested sessions are recorded with `nested: true`
+  but `summarise` skips them: a subagent's time already reaches its project
+  through its parent's own state, and counting both double-counts every minute
+  a parent spent waiting on one. `concurrency` keeps them out of `any`/`states`
+  and gives them their own peak (`agents`/`agentStates`), which the activity
+  page draws as "Subagents in parallel". Logs before this change hold no nested
+  records, so that chart starts empty.
   `summarise` takes `now` as an argument rather than reading the clock, because
   the last record of a live session is an **open interval** that runs to now —
   the one place this would silently start lying (get it wrong and every current

@@ -2183,6 +2183,24 @@ export const configDeps = {
       })),
     };
 
+    // Subagents in parallel: the same sweep's own peak for nested sessions,
+    // which the chart above leaves out. Empty (and not drawn) until one runs.
+    const peakAgents = scale(peaks.map((r) => r.agents));
+    const agents = {
+      peak: `max ${peakAgents}`,
+      cols: peaks.some((r) => r.agents)
+        ? peaks.map((r, i) => ({
+            label: title(new Date(r.hour)),
+            tick: tickAt(i),
+            unseen: r.samples === 0,
+            bars: ["busy", "shell", "requires_action", "waiting", "idle"]
+              .filter((state) => r.agentStates[state])
+              .map((state) => ({ state, pct: (r.agentStates[state] / peakAgents) * 100 })),
+            value: r.samples === 0 ? "not watched" : `${r.agents} running`,
+          }))
+        : [],
+    };
+
     // Memory, one pair of charts per machine — this one first, then every
     // host any tick in the window reported for (a host that has gone away
     // still has its history). Pressure is against a fixed 100 rather than
@@ -2224,7 +2242,7 @@ export const configDeps = {
     };
     const memory = [memoryCharts("This Mac", null), ...memoryHosts(records).map((h) => memoryCharts(h, h))];
 
-    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, spend, input, models, sessions, memory };
+    return { period: p, periods: PERIOD_LINKS, rows, pie, tokens, spend, input, models, sessions, agents, memory };
   },
 };
 

@@ -31,22 +31,29 @@ eq(recordStates([s("a", A, "busy")], prev, 1000, dir), 1, "a new session writes 
 eq(recordStates([s("a", A, "busy")], prev, 2000, dir), 0, "an unchanged state writes nothing");
 eq(recordStates([s("a", A, "waiting")], prev, 3000, dir), 1, "a change writes one");
 
-// A subagent's time belongs to its parent's project through the parent's own
-// state; counting it as well would double-count every minute a parent spent
-// waiting on one.
-eq(recordStates([s("a", A, "waiting"), s("sub", A, "busy", { nested: true })], prev, 4000, dir), 0, "nested sessions are not recorded");
+// A subagent is recorded, marked nested, so concurrency can count agents in
+// parallel — summarise skips it (below).
+eq(recordStates([s("a", A, "waiting"), s("sub", A, "busy", { nested: true })], prev, 4000, dir), 1, "a nested session is recorded");
 
 // Without a closing record the final state of every session that ever ran
 // counts up to now, forever.
-eq(recordStates([], prev, 5000, dir), 1, "a session that disappears writes a closing record");
+eq(recordStates([], prev, 5000, dir), 2, "a session that disappears writes a closing record");
 eq(recordStates([], prev, 6000, dir), 0, "and only once");
 
 const written = readHistory(dir);
 eq(written.map((r) => [r.ts, r.id, r.state]), [
   [1000, "a", "busy"],
   [3000, "a", "waiting"],
+  [4000, "sub", "busy"],
   [5000, "a", GONE],
+  [5000, "sub", GONE],
 ], "the log is what happened, in order");
+eq(written[2].nested, true, "a subagent's record says it is nested");
+eq(written[0].nested, undefined, "a top-level one doesn't carry the flag");
+// A subagent's time belongs to its parent's project through the parent's own
+// state; counting it as well would double-count every minute a parent spent
+// waiting on one.
+eq(summarise(written, 9000, 0), { [A]: { busy: 2000, waiting: 2000 } }, "summarise leaves nested time out");
 eq(written[0].folder, A, "records carry the folder they are attributed to");
 
 // --- durations -------------------------------------------------------------
@@ -151,6 +158,26 @@ eq(startOfDay(midnight), midnight, "and midnight is already the start of its own
     rows[0].any,
     "the segments sum to the total exactly, so a stacked bar cannot overflow"
   );
+}
+
+// Subagents are their own series: never in `any`, peaked at their own
+// busiest sample.
+{
+  const H = Date.parse("2026-08-18T09:00:00.000Z");
+  const ticks = Array.from({ length: 12 }, (_, i) => ({ ts: H + i * TICK_MS, kind: TICK }));
+  const recs = [
+    ...ticks,
+    { ts: H + 60000, id: "a", folder: A, state: "busy" },
+    { ts: H + 120000, id: "x", folder: A, state: "busy", nested: true },
+    { ts: H + 180000, id: "y", folder: A, state: "busy", nested: true },
+    { ts: H + 180000, id: "z", folder: A, state: "waiting", nested: true },
+    { ts: H + 20 * 60000, id: "y", state: GONE },
+    { ts: H + 20 * 60000, id: "z", state: GONE },
+  ];
+  const [row] = concurrency(recs, H, H + 3600000, H + 55 * 60000);
+  eq(row.any, 1, "subagents don't count as sessions");
+  eq(row.agents, 3, "three subagents at once is a peak of three");
+  eq(row.agentStates, { busy: 2, waiting: 1 }, "with the split at that instant");
 }
 
 // The failure this exists to prevent: the log only records what a *running*

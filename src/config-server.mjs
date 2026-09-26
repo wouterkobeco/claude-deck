@@ -383,7 +383,7 @@ const facts = (blocked, stats) =>
     .map((t) => `<div class="fact"><span class="fl">${esc(t.label)}</span><span class="fv">${esc(t.value)}</span></div>`)
     .join("")}</div>`;
 
-function activityPage(token, { period, periods, rows, pie, tokens, spend, input, sessions, models, memory: memCharts = [] }, status) {
+function activityPage(token, { period, periods, rows, pie, tokens, spend, input, sessions, agents, models, memory: memCharts = [] }, status) {
   const table = () => `
     <table>
       <tr><th>Project</th><th>Busy</th><th>Waiting</th><th>Blocked on you</th><th>Total</th><th>Tokens</th><th>Out of pocket</th></tr>
@@ -456,6 +456,11 @@ function activityPage(token, { period, periods, rows, pie, tokens, spend, input,
         sessions.cols.length === 0
           ? ""
           : `<h2>Sessions in parallel<span class="peak">${esc(sessions.peak)}</span></h2>${columns(sessions)}${legend(["busy", "requires_action", "waiting", "idle"])}`
+      }
+      ${
+        !agents || agents.cols.length === 0
+          ? ""
+          : `<h2>Subagents in parallel<span class="peak">${esc(agents.peak)}</span></h2>${columns(agents)}${legend(["busy", "requires_action", "waiting", "idle"])}`
       }
       ${memCharts
         .map((m) => {

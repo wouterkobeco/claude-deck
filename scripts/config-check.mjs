@@ -292,6 +292,7 @@ const activity = {
       { label: "10:00", tick: "", unseen: true, bars: [], value: "not watched" },
     ],
   },
+  agents: { peak: "max 4", cols: [{ label: "09:00", tick: "9h", unseen: false, bars: [{ state: "busy", pct: 100 }], value: "4 running" }] },
 };
 let askedFor = null;
 const withHistory = await createConfigServer({
@@ -341,6 +342,7 @@ eq(hHtml.includes('class="lcap lonly">Session reset time is unknown<'), true, "a
 eq(hHtml.includes("<h2>Input tokens<span") && hHtml.includes("cache-read 36M"), true, "input gets its own stacked chart");
 eq(hHtml.includes("Memory held by Claude sessions · This Mac<span") && hHtml.includes("17 sessions"), true, "the sessions' own footprint has a chart, named once there are two machines");
 eq(hHtml.includes("<h2>Memory pressure · pi<span"), true, "and the host gets its own");
+eq(hHtml.includes("Subagents in parallel<span") && hHtml.includes("4 running"), true, "subagents in parallel get their own chart");
 eq(hHtml.includes("Memory held by Claude sessions · pi<span"), false, "but no footprint chart when it never ran a session");
 eq(hHtml.includes("<h2>Memory pressure · This Mac<span") && hHtml.includes("swap 90%"), true, "memory pressure over time has its own chart");
 eq(hHtml.includes("26.2 GB of 64.0 GB"), true, "the meter says the percentage as an amount");
@@ -380,8 +382,9 @@ eq(hHtml.includes("height:40%"), true, "and a shorter one is scaled against it")
 eq(hHtml.includes("width:100%"), true, "while the by-model list is still a row per name");
 // Three token segments, two spend bars, one model bar, two session segments,
 // two token-legend swatches, four state-legend swatches — and the two
-// rate-limit meters that moved onto the top of this page, one fill each.
-eq(hHtml.split("<i style=").length - 1, 28, "one element per bar segment, plus the legend swatches and the eight meters");
+// rate-limit meters that moved onto the top of this page, one fill each; plus
+// one subagent segment and its four legend swatches.
+eq(hHtml.split("<i style=").length - 1, 33, "one element per bar segment, plus the legend swatches and the eight meters");
 eq(hHtml.split('class="col unseen"').length - 1, 3, "an unwatched hour is striped rather than empty — in the sessions and both memory charts");
 // Only some hours carry a label, and every column keeps a slot so the ones
 // that do stay under their own column.
@@ -433,7 +436,7 @@ const oneVendor = await createConfigServer({
   }),
 });
 const solo = await (await fetch(oneVendor.url.replace("/?", "/activity?"))).text();
-eq(solo.split('class="legend"').length - 1, 2, "one vendor earns no legend of its own — only the input and states charts keep theirs");
+eq(solo.split('class="legend"').length - 1, 3, "one vendor earns no legend of its own — only the input, states and subagent charts keep theirs");
 oneVendor.server.close();
 
 // The window picker. Links rather than a select, because a select needs a

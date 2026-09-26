@@ -92,14 +92,14 @@ export function recordStates(sessions, previous, now = Date.now(), root = CLAUDE
   const lines = [];
   const seen = new Set();
   for (const s of sessions) {
-    // A subagent's state belongs to its parent's key, not to a project's time:
-    // counting both would double-count every minute the parent spent waiting
-    // on it.
-    if (s.nested) continue;
     seen.add(s.session_id);
     if (previous.get(s.session_id) === s.state) continue;
     previous.set(s.session_id, s.state);
-    lines.push({ ts: now, id: s.session_id, folder: s.folder, host: s.host ?? null, state: s.state });
+    // A subagent is recorded, marked, so `concurrency` can count agents in
+    // parallel — but `summarise` skips it: its time already reaches the
+    // project through the parent's own state, and counting both would
+    // double-count every minute the parent spent waiting on it.
+    lines.push({ ts: now, id: s.session_id, folder: s.folder, host: s.host ?? null, state: s.state, ...(s.nested ? { nested: true } : {}) });
   }
   for (const [id, state] of previous) {
     if (seen.has(id) || state === GONE) continue;
@@ -155,6 +155,7 @@ export function summarise(records, now, from) {
   const byId = new Map();
   for (const rec of records) {
     if (rec.kind === TICK) continue; // coverage, not a session
+    if (rec.nested) continue; // a subagent's time is its parent's — see recordStates
     if (!byId.has(rec.id)) byId.set(rec.id, []);
     byId.get(rec.id).push(rec);
   }
@@ -236,7 +237,8 @@ const samplesFor = (step) => Math.max(SAMPLE_MS, Math.round(step / 12));
  * `summarise` answers "how long", which says nothing about overlap: eight hours
  * of busy is one session all day or eight at once, and those are different
  * machines. This walks the same intervals with a sampling clock instead and
- * reports the high-water mark per hour.
+ * reports the high-water mark per hour. Subagents (nested records) never count
+ * toward `any`/`states`; they get their own `agents`/`agentStates` peak.
  *
  * **Unobserved time is reported as unobserved, never as duration.** The log
  * records changes a *running* daemon saw, so a sleep or a restart leaves one
@@ -271,7 +273,7 @@ export function concurrency(records, from, to, now, step = 3600000) {
     list.sort((a, b) => a.ts - b.ts);
     for (let i = 0; i < list.length; i++) {
       if (list[i].state === GONE) continue;
-      intervals.push({ start: list[i].ts, end: list[i + 1] ? list[i + 1].ts : now, state: list[i].state });
+      intervals.push({ start: list[i].ts, end: list[i + 1] ? list[i + 1].ts : now, state: list[i].state, nested: !!list[i].nested });
     }
   }
 
@@ -291,7 +293,7 @@ export function concurrency(records, from, to, now, step = 3600000) {
   const rows = new Map();
   const start = Math.floor(from / step) * step;
   for (let h = start; h < to; h += step) {
-    rows.set(h, { hour: h, samples: 0, any: 0, states: {} });
+    rows.set(h, { hour: h, samples: 0, any: 0, states: {}, agents: 0, agentStates: {} });
   }
   const sample = samplesFor(step);
   for (let t = start; t < to; t += sample) {
@@ -299,15 +301,28 @@ export function concurrency(records, from, to, now, step = 3600000) {
     if (!row || unobserved(t)) continue;
     row.samples++;
     const counts = {};
+    const agentCounts = {};
     let any = 0;
+    let agents = 0;
     for (const iv of intervals) {
       if (iv.start > t || iv.end <= t) continue;
+      if (iv.nested) {
+        agentCounts[iv.state] = (agentCounts[iv.state] ?? 0) + 1;
+        agents++;
+        continue;
+      }
       counts[iv.state] = (counts[iv.state] ?? 0) + 1;
       any++;
     }
     if (any > row.any) {
       row.any = any;
       row.states = counts;
+    }
+    // Its own high-water mark, at its own busiest sample: the subagents' peak
+    // and the sessions' peak are different minutes.
+    if (agents > row.agents) {
+      row.agents = agents;
+      row.agentStates = agentCounts;
     }
   }
   return [...rows.values()];
