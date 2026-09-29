@@ -2,7 +2,7 @@
 // another machine wrote), the busy/idle fold that makes the key appear only
 // while the box works, the key's face, and the board's tiles.
 // Run: node scripts/runlock-check.mjs
-import { parseRunlockStatus, queueSummary, queueKey, queueTiles, STUCK_AFTER_S } from "../src/runlock.mjs";
+import { parseRunlockStatus, queueSummary, queueKey, queueTiles, runsBySession, STUCK_AFTER_S } from "../src/runlock.mjs";
 import { renderQueue } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
@@ -57,6 +57,21 @@ const tiles = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0, [holder("c
 eq(tiles.map((t) => [t.tone, t.title, t.big, t.age]), [["running", "kob-trace", "16c", "3m"], ["queued", "a", "16c", "4m"], ["queued", "b", "2c", "20s"]], "holders first, then the queue in order");
 // kills: dropping the requestor's kind when the name moves to the title
 eq(tiles[0].line, "ci · ci:kob-trace run", "the kind leads the small line");
+
+// --- a session's own run: the pill on its key ------------------------------------
+const sid = (n) => `0b51fb79-4ecd-4627-9fa8-798ff8b09ad${n}`;
+const withSessions = parseRunlockStatus(doc([lane(0,
+  [{ ...holder("ci:x", 16, 200), session: sid(1) }],
+  [{ ...waiter(5, "a", 2, 250), session: sid(2) }, { ...waiter(6, "b", 2, 20), session: "bad; id" }])]));
+// kills: trusting a session id that is not one (it becomes a Map key and a lookup)
+eq(withSessions.lanes[0].waiters[1].session, null, "a malformed session id is dropped");
+const runs = runsBySession([{ summary: queueSummary(withSessions) }]);
+// kills: no pill for a holding session, or the wrong face for either state
+eq([...runs], [[sid(1), { kind: "running", text: "16c" }], [sid(2), { kind: "queued", text: "Q 4m" }]], "running and queued pills");
+// kills: a later holder hiding the wait, which is the one worth knowing about
+const both = runsBySession([{ summary: queueSummary(parseRunlockStatus(doc([lane(0,
+  [{ ...holder("ci:x", 8, 200), session: sid(3) }], [{ ...waiter(7, "c", 8, 90), session: sid(3) }])]))) }]);
+eq(both.get(sid(3)), { kind: "queued", text: "Q 1m" }, "a session waiting and holding shows the wait");
 
 // --- it draws ----------------------------------------------------------------
 const buf = await renderQueue({ width: 72, height: 72, ...queued });

@@ -310,6 +310,10 @@ const STYLE = `
   .foot i { flex: 1; height: 5cqh; min-height: 3px; border-radius: 1px; background: #ffffff33 }
   .foot i.done { background: #ffffffdd }
   .foot i.active { background: #ffffff99 }
+  /* This session's run on a remote test queue (runlock.mjs): the deck key's
+     foot-row pill, gold while it waits for cores, green while it holds them. */
+  .foot .qpill { flex: none; margin-left: auto; padding: 0 3cqw; border-radius: 3px; color: #000;
+                 font-weight: 700; font-size: calc(var(--fs) * .6cqh); line-height: 1.4; align-self: center }
 
   /* The three reserved keys. Dark and quiet, like their tiles on the deck.
      Padding in %, not cqh: this rule is on .key itself, and an element is
@@ -604,13 +608,19 @@ function tile(k, token) {
         : ""
     }
     ${
-      k.squares?.length
-        ? `<div class="foot">${k.squares
+      // One foot row, as on the deck: the task squares, and the test-run pill
+      // at its right end, the squares giving way.
+      k.squares?.length || k.queue
+        ? `<div class="foot">${(k.squares ?? [])
             .map((s) => {
               const { state, title } = typeof s === "string" ? { state: s, title: "" } : s;
               return `<i class="${state === "todo" ? "" : esc(state)}"${title ? ` title="${esc(title)}"` : ""}></i>`;
             })
-            .join("")}</div>`
+            .join("")}${
+            k.queue
+              ? `<b class="qpill" style="background:${k.queue.kind === "queued" ? MARKER_COLORS.waiting : MARKER_COLORS.busy}">${esc(k.queue.text)}</b>`
+              : ""
+          }</div>`
         : ""
     }
   </div>`;

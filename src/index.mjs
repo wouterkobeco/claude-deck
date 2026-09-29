@@ -15,7 +15,7 @@ import {
   transcriptPathFor,
 } from "./sessions.mjs";
 import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource } from "./remote-fs.mjs";
-import { queueKey, queueSummary, queueTiles } from "./runlock.mjs";
+import { queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
@@ -255,6 +255,8 @@ const RUNLOCK_ABSENT_MS = 5 * 60 * 1000;
 const runlocks = new Map();
 let remoteHosts = [];
 let queues = [];
+// session id -> its test run's pill, from the busy queues (runsBySession).
+let queueRuns = new Map();
 // The keys beside this machine's usage key, in slot order: remote usage keys
 // first (they come and go with sessions, rarely), then busy queues (they come
 // and go with test runs, often) — so a queue appearing never moves a usage key.
@@ -295,6 +297,7 @@ async function liveSessions() {
     (host) => remoteAccount(host)?.email
   );
   queues = remoteHosts.map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
+  queueRuns = runsBySession(queues);
   liveProjects.clear();
   for (const s of sessions) {
     if (s.nested) continue;
@@ -1476,7 +1479,7 @@ async function drawQueueTiles(deck, buttons, entries, kind) {
       // One object drives both the render call and the drawn signature, so a
       // field drawn but not signed can't happen — that's what left a tile's
       // gauge frozen once already, and dropped its task counter a second time.
-      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: stillUnread(session) };
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: stillUnread(session), queue: queueRuns.get(session.session_id) ?? null };
       if (entry.leavingUntil) btn.leavingParams = { ...params, leavingUntil: entry.leavingUntil };
       // The drain is signed at whole percent: at 400ms a 5s bar moves 8% a
       // tick, so a raw float would make every poll a fresh signature and
@@ -1847,7 +1850,7 @@ async function boardKeys() {
   // either way, so the page's poll sees that tile *change* rather than one
   // tile being removed and another appearing in its place.
   return [
-    ...keys,
+    ...keys.map((k) => (k.kind === "session" && queueRuns.has(k.id) ? { ...k, queue: queueRuns.get(k.id) } : k)),
     // A busy remote test queue, the same face as its deck key. Inert here:
     // the web board has no sub-boards.
     ...queues.map((q) => ({ id: `__queue:${q.host}`, kind: "queue", ...queueKey(q.summary) })),
@@ -2506,7 +2509,8 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // subagent's work onto the key because a subagent has no key of its
       // own, but "did this just stop" is a question about the session you are
       // looking at. When the fold lands on idle they are all idle anyway.
-      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: stillUnread(session) };
+      // `queue` is this session's own test run on a remote queue, if any.
+      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: stillUnread(session), queue: state === "compacting" ? null : queueRuns.get(session.session_id) ?? null };
       btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are

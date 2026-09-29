@@ -288,7 +288,7 @@ function fitCaps(project, width, fontSize) {
 // advanced by pulse(). Every other caller leaves it at 0 — the steady frame is
 // the brightest one, so a board that never pulses looks the same as it always
 // did.
-export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell, recent = false, leaving = null }) {
+export async function renderKey({ width, height, state, label, accent, project, progress, context, pulse, contextPhase = 0, nestedStates, shell, recent = false, leaving = null, queue = null }) {
   // requires_action is the one state worth flashing — it's the only one
   // that's actually blocked on you, so it's the only one that should chase
   // your eye across the room. It never actually sits on its own red
@@ -331,8 +331,13 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const fontSize = Math.round(height * 0.19);
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
-  const footHeight = progress ? 10 : 0;
-  const maxLines = progress ? 3 : 4;
+  // The foot row also carries a test-run pill (runlock.mjs): this session's
+  // run on a remote test queue — gold `Q 4m` while it waits for cores, green
+  // `16c` while it holds them. Right-aligned; the task squares give way.
+  const footHeight = progress || queue ? 10 : 0;
+  const maxLines = footHeight ? 3 : 4;
+  const pillSize = 8;
+  const pillWidth = queue ? Math.ceil(measureText(queue.text, pillSize)) + 6 : 0;
 
   // Left-margin indicator column: a blue square when a background shell is
   // still running, then one white square per nested (worktree) session
@@ -473,7 +478,7 @@ export async function renderKey({ width, height, state, label, accent, project, 
           ? `<rect x="3" y="${height - 9}" width="${width - 6}" height="6" fill="#ffffff26" />
              <rect x="3" y="${height - 9}" width="${(width - 6) * Math.min(1, Math.max(0, leaving))}" height="6" fill="#ffffffcc" />`
           : progress
-          ? taskSquares(progress, width)
+          ? taskSquares(progress, queue ? width - pillWidth - 3 : width)
               .map(
                 (s) =>
                   // Done green, ongoing bright white, still-to-do the same
@@ -486,6 +491,14 @@ export async function renderKey({ width, height, state, label, accent, project, 
                   }" />`
               )
               .join("")
+          : ""
+      }
+      ${
+        queue && typeof leaving !== "number"
+          ? `<rect x="${width - pillWidth - 2}" y="${height - 11}" width="${pillWidth}" height="10" rx="2"
+                   fill="${queue.kind === "queued" ? MARKER_COLORS.waiting : MARKER_COLORS.busy}" />
+             <text x="${width - 2 - pillWidth / 2}" y="${height - 6}" font-family="sans-serif" font-size="${pillSize}"
+                   font-weight="bold" fill="#000000" text-anchor="middle" dominant-baseline="middle">${escapeXml(queue.text)}</text>`
           : ""
       }
     </svg>`;
