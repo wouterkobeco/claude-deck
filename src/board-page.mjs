@@ -532,6 +532,16 @@ function tile(k, token) {
       k.session
     )}${usageHalf("Week", k.week)}</div></a>`;
   }
+  // A busy remote test queue (runlock.mjs): green while its runs fit, gold
+  // once something waits for cores, red once the head has waited too long.
+  if (k.kind === "queue") {
+    const tone = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, stuck: STATE_COLORS.requires_action }[k.tone] ?? STATE_COLORS.idle;
+    return `<div class="key dark tile"${id} style="background:${tone}">
+      <div class="lbl">${esc(k.title)}</div>
+      <div class="val">${esc(k.big)}</div>
+      <div class="sub">${esc(k.line)}</div>
+    </div>`;
+  }
   if (k.kind === "memory") {
     return `<a class="key dark tile alert" href="/activity?t=${esc(token)}"${id}>
       <div class="val">${esc(k.pct)}%</div>

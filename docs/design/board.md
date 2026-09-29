@@ -681,3 +681,24 @@ before the silence is applied, so "where the time went" still says waiting,
 and the press reads `lastRawSessions`, since the drawn list has already turned
 what it silenced into idle. In memory only: a restart forgets it, and the
 session asks again.
+
+## The queue key and the queue board
+
+A busy remote test queue (`runlock.mjs`, remote.md) takes a slot beside the
+usage keys the same way a remote subscription's usage key does: `extraKeys()`
+lists remote usage keys first, then busy queues, and `layout()` sizes the row
+from that one list (still at most three). Usage keys first so a queue coming
+and going — it does, with every test run — never moves a usage key. The face
+is green while every run fits (`12/16` cores, bar = cores taken), gold once
+something waits (the count, and how long the head has), red once the head has
+waited `STUCK_AFTER_S` (10 min), which usually means a wedged holder rather
+than a busy box.
+
+A press opens `{ kind: "queue", host }`: one tile per run, holders then the
+queue in order, paged over the session keys, the status key saying how many
+runs on which box. The status key pages; any other key, including the queue
+key again, goes back. Tiles carry no session, so nothing is focused on the way
+out. The board leaves by itself when the box goes idle, like the other queue
+boards, and is not in `resumeView`'s closed set — a restart lands on sessions.
+The web board shows the same face as an inert tile.
+

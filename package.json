@@ -1,6 +1,6 @@
 {
   "name": "claude-deck",
-  "version": "1.6.41",
+  "version": "1.6.42",
   "description": "Shows active local Claude Code sessions on a Stream Deck MK.2, colored by state; pressing a button focuses that session's VS Code window.",
   "main": "src/index.mjs",
   "directories": {
@@ -21,6 +21,7 @@
     "colors-check": "node scripts/colors-check.mjs",
     "terminal-focus-check": "node scripts/terminal-focus-check.mjs",
     "remote-check": "node scripts/remote-check.mjs",
+    "runlock-check": "node scripts/runlock-check.mjs",
     "ext:install": "node scripts/ext-prompt.mjs --yes",
     "postinstall": "npm run ext:install",
     "board-shot": "node scripts/board-shot.mjs",

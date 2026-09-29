@@ -34,6 +34,7 @@ npm run sessions:save  # bundle live sessions' full history for another machine
 npm run sessions:restore      # list bundles; -- <file> shows the plan, --write lands it
 npm run session-transfer-check # slug/remap/rewrite/plan arithmetic for the above
 npm run remote-check   # remote source: host validation, tar/tail framing, matches a local source's output
+npm run runlock-check  # remote test-queue key: parsing runlock's JSON, busy/idle, the key face, the board tiles
 npm run ext:install    # copy extension/ into ~/.vscode/extensions (reload windows after)
 ```
 
@@ -69,7 +70,7 @@ needs indexing.
 | Doc | Covers |
 |---|---|
 | `docs/design/sessions.md` | `sessions.mjs`, `sdd-ledger.mjs`, `codex.mjs` — reading Claude Code's state; transcript signals (`aiTitle`, `/clear`, `lastPrompt`, `blockedOnDenial`, compacting); nested/subagent synthesis |
-| `docs/design/remote.md` | `remote-fs.mjs`, `remote-hosts.mjs` — the ssh fetches, backoff, cached sources, unreachable hosts |
+| `docs/design/remote.md` | `remote-fs.mjs`, `remote-hosts.mjs`, `runlock.mjs` — the ssh fetches, backoff, cached sources, unreachable hosts, a remote test queue |
 | `docs/design/board.md` | `index.mjs` — slot assignment and its exceptions, the six boards, the detail view, presses, `pulse()`, the self-restart |
 | `docs/design/render.md` | `render.mjs` — SVG→RGBA, measured text fitting, the three-tier palette and `colors-check`'s floors |
 | `docs/design/usage-stats.md` | `usage.mjs`, `stats.mjs`, `cswap.mjs`, `history.mjs`, `tokens.mjs` — the meters, the state log, the token log |
@@ -160,8 +161,8 @@ on each line. These summaries are reminders, not the rule itself.
   sessions.md, web.md)
 - **Hardware: MK.2, 15 keys of 72px, macOS only, exclusive HID.** Keys 13/14
   are reserved (status, usage), leaving 13 session slots — fewer while a
-  remote subscription holds a usage key of its own, the status key shifting
-  left; the status key folds
+  remote subscription holds a usage key of its own, or a remote test queue is
+  busy (runlock.mjs), the status key shifting left; the status key folds
   attention/memory/total and walks attention → working → inactive; queue
   boards page rather than truncate. (board.md)
 - **Trust boundaries are not simplified**: the board token gates before
