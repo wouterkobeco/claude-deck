@@ -39,6 +39,12 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
   remote host whose sessions report their own subscription (its status line's
   ctx block passes `rate_limits` along) gets a usage key of its own, titled
   with that host's account, just left of this one — the status key moves one left and a session slot gives way for it.
+- **Test queue** (only while a remote box is busy) — a host running
+  kob-backend's `runlock` gets a key of its own, beside the usage keys, while
+  its test queue has anything on it: green with the cores in use (`12/16`),
+  gold once runs wait for cores (how many, and how long the first has), red
+  once that wait passes ten minutes. Press it for one key per run, holders
+  then the queue; any key goes back.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
   one has waited, and pressing it opens that queue, worst first.

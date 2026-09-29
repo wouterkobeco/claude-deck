@@ -84,3 +84,19 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
 - **Codex rides the same two calls** — `TREE_CMD` lists the open rollouts from
   `/proc`, `TAILS_CMD` reads their tails and (once) their heads. See
   sessions.md's Codex section.
+
+## A remote test queue (`runlock.mjs`)
+
+A host running kob-backend's `runlock` (a machine-wide test queue whose lane is
+a budget of core slots) gets a key while that queue is busy. `fetchRunlock`
+runs `~/.local/bin/runlock status --json` over the poll's own `cm-%h` socket —
+the path spelled out because a non-interactive ssh shell lacks `~/.local/bin`,
+and `--json` never runs runlock's recovery, so a poll takes no lock over there.
+Every remote host the windows name is asked, fire-and-forget like
+`remoteAccount`: every 6s, or every 5 min once a host has answered nothing (no
+runlock, or down), so a Pi with no queue costs one call per five minutes.
+The output is another machine's text: `parseRunlockStatus` refuses any schema
+but 1, blanks control characters, bounds lengths and reads a non-number or a
+negative age as unknown. An idle box folds to no key at all (`queueSummary`
+returns null), which is what makes the key appear only while it is busy.
+

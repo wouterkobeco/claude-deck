@@ -6,6 +6,7 @@ import { tailLines, transcriptPathFor } from "./sessions.mjs";
 import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
 import { accountFrom } from "./usage.mjs";
+import { parseRunlockStatus } from "./runlock.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
 // because everything before it is digits and newlines.
@@ -587,6 +588,19 @@ export async function fetchSource(host, scratchRoot) {
 export async function fetchAccount(host, controlPath) {
   const buf = await run(["ssh", ...sshArgs(host, controlPath), "cat ~/.claude.json 2>/dev/null"], { timeoutMs: 6000 });
   return buf ? parseAccountJson(buf.toString("utf8")) : null;
+}
+
+/**
+ * A remote host's test queue, as `runlock status --json` reports it (see
+ * runlock.mjs), or null: no runlock there, host unreachable, or output this
+ * does not recognise. Rides the poll's own multiplexed ssh socket like
+ * fetchAccount. `~/.local/bin` spelled out because a non-interactive ssh shell
+ * does not have it on PATH; `--json` never runs runlock's recovery, so a poll
+ * takes no lock on the other machine.
+ */
+export async function fetchRunlock(host, controlPath) {
+  const buf = await run(["ssh", ...sshArgs(host, controlPath), "~/.local/bin/runlock status --json 2>/dev/null"], { timeoutMs: 6000 });
+  return buf ? parseRunlockStatus(buf.toString("utf8")) : null;
 }
 
 /**

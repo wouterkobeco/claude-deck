@@ -14,7 +14,8 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { codexTreeReader, fetchAccount, fetchSource } from "./remote-fs.mjs";
+import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource } from "./remote-fs.mjs";
+import { queueKey, queueSummary, queueTiles } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
@@ -35,7 +36,7 @@ import {
 } from "./tokens.mjs";
 import { ACCENTS, applyAccentChoice, applyRename, moveProject, readProjects, writeProjects } from "./accents.mjs";
 import { countVsCodeWindows, readWindowStates, staleWindows } from "./window-state.mjs";
-import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS } from "./render.mjs";
+import { renderKey, renderBlank, renderUsage, renderStat, renderAttention, renderFree, renderTask, renderBack, renderCompacting, formatAge, taskSquares, CONTEXT_CRITICAL, recentlyIdle, renderSplashKey, SPLASH_LETTERS, SPLASH_MS, renderQueue } from "./render.mjs";
 import { getUsage, formatReset, getAccount, getAccountName, dropSharedAccounts, remoteUsage, TTL_MS as ACCOUNT_TTL_MS } from "./usage.mjs";
 import { getStats } from "./stats.mjs";
 import { getCswapAccounts, withLiveUsage } from "./cswap.mjs";
@@ -207,6 +208,7 @@ const SCRATCH_ROOT = `/tmp/streamdeck-remote-${process.pid}`;
 // remote key until that fetch lands. Freshness, not frames.
 function allSources() {
   const windows = readWindowStates();
+  remoteHosts = [...new Set(windows.map((w) => w.host).filter(Boolean))];
   // remoteSources() cannot reject on its own (every host's fetch is caught
   // individually), but this call is unwatched — nothing here is in a position
   // to catch a rejection, so an uncaught one would take the whole daemon down
@@ -242,6 +244,40 @@ const liveProjects = new Map();
 // and a key that comes and goes with it would reflow the board each time.
 let remoteUsages = [];
 
+// A remote host's test queue (runlock.mjs), polled on the remote cadence over
+// the same held ssh socket, fire-and-forget like remoteAccount: a key never
+// waits on ssh. A host that answers nothing — no runlock there, or down — is
+// asked again only every five minutes, so a Pi with no queue costs one ssh
+// call per five minutes, not one per poll. `queues` holds only the busy ones,
+// which is what makes a queue key appear only while its box is working.
+const RUNLOCK_POLL_MS = 6000;
+const RUNLOCK_ABSENT_MS = 5 * 60 * 1000;
+const runlocks = new Map();
+let remoteHosts = [];
+let queues = [];
+// The keys beside this machine's usage key, in slot order: remote usage keys
+// first (they come and go with sessions, rarely), then busy queues (they come
+// and go with test runs, often) — so a queue appearing never moves a usage key.
+// At most three (layout's cap), and a busy queue outranks a third usage key:
+// a queue is the one of these that says something is happening right now.
+const EXTRA_KEYS = 3;
+const extraKeys = () => {
+  const q = queues.slice(0, EXTRA_KEYS);
+  const u = remoteUsages.slice(0, EXTRA_KEYS - q.length);
+  return [...u.map((usage) => ({ usage })), ...q.map((queue) => ({ queue }))];
+};
+function runlockSummary(host) {
+  const known = runlocks.get(host);
+  const ttl = known && known.doc === null ? RUNLOCK_ABSENT_MS : RUNLOCK_POLL_MS;
+  if (process.env.STREAMDECK_NO_REMOTE !== "1" && (!known || (!known.inFlight && Date.now() - known.at > ttl))) {
+    runlocks.set(host, { ...(known ?? { doc: undefined }), at: Date.now(), inFlight: true });
+    fetchRunlock(host, join(SCRATCH_ROOT, "cm-%h"))
+      .then((doc) => runlocks.set(host, { at: Date.now(), doc, inFlight: false }))
+      .catch(() => runlocks.set(host, { at: Date.now(), doc: null, inFlight: false }));
+  }
+  return queueSummary(known?.doc ?? null);
+}
+
 async function liveSessions() {
   const sessions = await getLiveSessions(allSources());
   const rates = new Map();
@@ -258,6 +294,7 @@ async function liveSessions() {
     (await getAccount())?.email,
     (host) => remoteAccount(host)?.email
   );
+  queues = remoteHosts.map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
   liveProjects.clear();
   for (const s of sessions) {
     if (s.nested) continue;
@@ -1551,6 +1588,47 @@ function remoteAccount(host) {
   return known?.account ?? null;
 }
 
+async function drawQueueKey(deck, btn, summary) {
+  const face = queueKey(summary);
+  const drawn = `queue ${JSON.stringify(face)}`;
+  if (btn.drawn === drawn) return;
+  await deck.fillKeyBuffer(btn.index, await renderQueue({ ...btn, ...face }), { format: "rgba" });
+  btn.drawn = drawn;
+}
+
+// The queue board: one tile per run on the box, holders then the queue, paged
+// over the session keys like the other boards. Returns null once the box has
+// gone idle, which is the poll loop's cue to leave. Tiles carry no session, so
+// a press on one only leaves the board.
+async function refreshQueue(deck, buttons, statusButton, host, page = 0) {
+  const summary = queues.find((q) => q.host === host)?.summary ?? null;
+  if (!summary) return null;
+  const tiles = queueTiles(summary);
+  const paging = pageOf(tiles, page, buttons.length);
+  await Promise.all(
+    buttons.map(async (btn, i) => {
+      const tile = paging.entries[i] ?? null;
+      btn.assigned = null;
+      btn.renderParams = null;
+      btn.leavingParams = null;
+      const drawn = tile ? `queue-tile ${JSON.stringify(tile)}` : null;
+      if (btn.drawn === drawn) return;
+      await deck.fillKeyBuffer(btn.index, await (tile ? renderQueue({ ...btn, ...tile }) : renderBlank(btn)), { format: "rgba" });
+      btn.drawn = drawn;
+    })
+  );
+  // The status key names the board: how many runs, on which box.
+  const line = pageLine(paging.page, paging.pages, summary.host);
+  const drawn = `queue-status ${tiles.length} ${line}`;
+  if (statusButton.drawn !== drawn) {
+    statusButton.lastCount = 0;
+    statusButton.renderParams = null;
+    await deck.fillKeyBuffer(statusButton.index, await renderFree({ ...statusButton, count: tiles.length, longest: line, label: "RUNS" }), { format: "rgba" });
+    statusButton.drawn = drawn;
+  }
+  return { pages: paging.pages, page: paging.page };
+}
+
 async function drawUsageKey(deck, btn, { title, session, week }) {
   const drawn = `usage ${title} ${session} ${week}`;
   if (btn.drawn === drawn) return;
@@ -1770,6 +1848,9 @@ async function boardKeys() {
   // tile being removed and another appearing in its place.
   return [
     ...keys,
+    // A busy remote test queue, the same face as its deck key. Inert here:
+    // the web board has no sub-boards.
+    ...queues.map((q) => ({ id: `__queue:${q.host}`, kind: "queue", ...queueKey(q.summary) })),
     { id: "__usage", kind: "usage", session, week },
     { id: "__status", ...statusKey(attention, total, now, allPressures()) },
   ];
@@ -2887,6 +2968,9 @@ async function run() {
     statusButton.drawn = null;
     lastPress = null;
     queuePage = 0;
+    // The last board's page count, not this one's: until the new board's
+    // first poll, a status press must not page past a first page.
+    queuePages = 1;
   };
 
   // The status key's cycle, in one place because five presses now enter it:
@@ -2946,6 +3030,28 @@ async function run() {
     // Every *other* key still exits and focuses, which is what the boards are
     // for and is unchanged. That is also the way out at any point: the cycle
     // is the status key's, not the deck's.
+    // On the queue board the status key pages and any other key leaves —
+    // its own queue key included, which makes that key a toggle. Tiles carry
+    // no session, so there is nothing to focus on the way out.
+    if (view.kind === "queue") {
+      if (isStatus && queuePage + 1 < queuePages) {
+        queuePage++;
+        return;
+      }
+      setView({ kind: "sessions" });
+      lastPress = null;
+      return;
+    }
+    // A queue key opens its board from any other board: ahead of the queue
+    // boards' own handling below, which would otherwise take it as "any other
+    // key" and just leave.
+    // What the key SHOWS, bound when it was drawn: the extras list can have
+    // moved since (a queue drained), and a press means the face under it.
+    const queueHost = remoteUsageButtons.find((b) => b.index === control.index)?.shows?.queue?.host;
+    if (queueHost) {
+      setView({ kind: "queue", host: queueHost });
+      return;
+    }
     if (view.kind === "attention" || view.kind === "busy" || view.kind === "free") {
       if (isStatus) {
         // `queuePages` is what the last poll actually drew, so this can't
@@ -3052,7 +3158,7 @@ async function run() {
     try {
       // Off the previous poll's sessions — one poll late is what every remote
       // fact here already is. Never under the detail board, which owns the deck.
-      if (view.kind !== "detail") layout(remoteUsages.length);
+      if (view.kind !== "detail") layout(extraKeys().length);
       if (view.kind === "stats") {
         // Every subscription cswap knows about, active first, two keys each
         // (usage, resets), then the version. Read off cswap's own cache —
@@ -3116,6 +3222,17 @@ async function run() {
         // refreshFree just awaited a live read, and a press during that await
         // can already have moved elsewhere.
         if (freeCount === 0 && view.kind === "free") {
+          setView({ kind: "sessions" });
+          const sessions = await refresh(deck, buttons, slots, nestedBySlot);
+          ({ attention: attentionCount, free: freeCount, busy: busyCount = 0, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
+        }
+      } else if (view.kind === "queue") {
+        await liveSessions(); // refreshes `queues`
+        const drawn = await refreshQueue(deck, buttons, statusButton, view.host, queuePage);
+        if (drawn) ({ pages: queuePages, page: queuePage } = drawn);
+        // The box went idle (or stopped answering): the board is empty, and
+        // its key is gone from the deck, so leave the way the other boards do.
+        else if (view.kind === "queue") {
           setView({ kind: "sessions" });
           const sessions = await refresh(deck, buttons, slots, nestedBySlot);
           ({ attention: attentionCount, free: freeCount, busy: busyCount = 0, memory: memoryAlert = false } = await drawStatus(deck, statusButton, sessions, false));
@@ -3222,7 +3339,23 @@ async function run() {
       }
       if (view.kind !== "detail") {
         await drawUsage(deck, usageButton);
-        await Promise.all(remoteUsageButtons.map((b, i) => remoteUsages[i] && drawUsageKey(deck, b, { ...remoteUsages[i], title: remoteUsages[i].id.startsWith("codex") ? remoteUsages[i].id : remoteAccount(remoteUsages[i].id)?.name ?? remoteUsages[i].id })));
+        const extras = extraKeys();
+        await Promise.all(
+          remoteUsageButtons.map((b, i) => {
+            const e = extras[i];
+            // Layout ran off the previous poll's count; a queue that emptied
+            // since has no entry here. Blank its key now rather than leave a
+            // busy face up for another poll.
+            if (!e) {
+              b.shows = null;
+              return b.drawn === "blank" ? null : renderBlank(b).then((buf) => deck.fillKeyBuffer(b.index, buf, { format: "rgba" })).then(() => (b.drawn = "blank"));
+            }
+            if (e.queue) return drawQueueKey(deck, b, e.queue.summary).then(() => (b.shows = e));
+            b.shows = e;
+            const u = e.usage;
+            return drawUsageKey(deck, b, { ...u, title: u.id.startsWith("codex") ? u.id : remoteAccount(u.id)?.name ?? u.id });
+          })
+        );
       }
     } catch (err) {
       console.error("refresh failed:", err.message);
