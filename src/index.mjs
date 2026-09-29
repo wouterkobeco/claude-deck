@@ -2968,6 +2968,9 @@ async function run() {
     statusButton.drawn = null;
     lastPress = null;
     queuePage = 0;
+    // The last board's page count, not this one's: until the new board's
+    // first poll, a status press must not page past a first page.
+    queuePages = 1;
   };
 
   // The status key's cycle, in one place because five presses now enter it:
@@ -3042,8 +3045,9 @@ async function run() {
     // A queue key opens its board from any other board: ahead of the queue
     // boards' own handling below, which would otherwise take it as "any other
     // key" and just leave.
-    const extraAt = remoteUsageButtons.findIndex((b) => b.index === control.index);
-    const queueHost = extraAt >= 0 ? extraKeys()[extraAt]?.queue?.host : undefined;
+    // What the key SHOWS, bound when it was drawn: the extras list can have
+    // moved since (a queue drained), and a press means the face under it.
+    const queueHost = remoteUsageButtons.find((b) => b.index === control.index)?.shows?.queue?.host;
     if (queueHost) {
       setView({ kind: "queue", host: queueHost });
       return;
@@ -3342,8 +3346,12 @@ async function run() {
             // Layout ran off the previous poll's count; a queue that emptied
             // since has no entry here. Blank its key now rather than leave a
             // busy face up for another poll.
-            if (!e) return b.drawn === "blank" ? null : renderBlank(b).then((buf) => deck.fillKeyBuffer(b.index, buf, { format: "rgba" })).then(() => (b.drawn = "blank"));
-            if (e.queue) return drawQueueKey(deck, b, e.queue.summary);
+            if (!e) {
+              b.shows = null;
+              return b.drawn === "blank" ? null : renderBlank(b).then((buf) => deck.fillKeyBuffer(b.index, buf, { format: "rgba" })).then(() => (b.drawn = "blank"));
+            }
+            if (e.queue) return drawQueueKey(deck, b, e.queue.summary).then(() => (b.shows = e));
+            b.shows = e;
             const u = e.usage;
             return drawUsageKey(deck, b, { ...u, title: u.id.startsWith("codex") ? u.id : remoteAccount(u.id)?.name ?? u.id });
           })

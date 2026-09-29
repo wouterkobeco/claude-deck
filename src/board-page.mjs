@@ -540,6 +540,7 @@ function tile(k, token) {
       <div class="lbl">${esc(k.title)}</div>
       <div class="val">${esc(k.big)}</div>
       <div class="sub">${esc(k.line)}</div>
+      ${typeof k.pct === "number" ? `<div class="gauge"><i style="width:${Math.min(100, Math.max(0, k.pct))}%;background:#ffffff"></i></div>` : ""}
     </div>`;
   }
   if (k.kind === "memory") {
