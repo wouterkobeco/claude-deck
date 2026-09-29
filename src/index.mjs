@@ -1479,7 +1479,7 @@ async function drawQueueTiles(deck, buttons, entries, kind) {
       // One object drives both the render call and the drawn signature, so a
       // field drawn but not signed can't happen — that's what left a tile's
       // gauge frozen once already, and dropped its task counter a second time.
-      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: stillUnread(session) };
+      const params = { state: session.state, label, accent, project, context: session.context, progress: session.progress, leaving, recent: stillUnread(session), queue: queueRuns.get(session.session_id) ?? null };
       if (entry.leavingUntil) btn.leavingParams = { ...params, leavingUntil: entry.leavingUntil };
       // The drain is signed at whole percent: at 400ms a 5s bar moves 8% a
       // tick, so a raw float would make every poll a fresh signature and
@@ -2510,7 +2510,7 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
       // own, but "did this just stop" is a question about the session you are
       // looking at. When the fold lands on idle they are all idle anyway.
       // `queue` is this session's own test run on a remote queue, if any.
-      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: stillUnread(session), queue: queueRuns.get(session.session_id) ?? null };
+      const params = { state, shell: session.state === "shell", label, accent, project, progress: session.progress, context: session.context, nestedStates, recent: stillUnread(session), queue: state === "compacting" ? null : queueRuns.get(session.session_id) ?? null };
       btn.renderParams = params;
 
       // Skip the re-encode when nothing visible changed — most polls are
