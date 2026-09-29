@@ -33,6 +33,9 @@ export function parseRunlockStatus(text) {
     label: str(r?.label, 80),
     cores: num(r?.cores),
     age: num(r?.[age]),
+    // The Claude Code session that started it, when runlock recorded one
+    // (kob-backend #1849): what lets its session's key carry a pill.
+    session: typeof r?.session === "string" && /^[0-9A-Za-z-]{8,64}$/.test(r.session) ? r.session : null,
   });
   return {
     host: str(doc.host, 30),
@@ -114,3 +117,23 @@ export function queueTiles(summary) {
   };
   return [...summary.holders.map((h) => tile(h, "running")), ...summary.waiters.map((w) => tile(w, "queued"))];
 }
+
+/**
+ * Which sessions have a run on a busy queue, as the pill renderKey draws in a
+ * key's foot row: `{ kind: "queued", text: "Q 4m" }` while it waits for cores,
+ * `{ kind: "running", text: "16c" }` while it holds them. A session with runs
+ * in both states shows the wait: that is the one worth knowing about.
+ */
+export function runsBySession(queues) {
+  const out = new Map();
+  for (const { summary } of queues) {
+    for (const h of summary.holders) {
+      if (h.session && !out.has(h.session)) out.set(h.session, { kind: "running", text: h.cores != null ? `${h.cores}c` : "RUN" });
+    }
+    for (const w of summary.waiters) {
+      if (w.session) out.set(w.session, { kind: "queued", text: `Q ${formatAge(w.age ?? NaN) || "…"}` });
+    }
+  }
+  return out;
+}
+

@@ -705,3 +705,12 @@ out. The board leaves by itself when the box goes idle, like the other queue
 boards, and is not in `resumeView`'s closed set — a restart lands on sessions.
 The web board shows the same face as an inert tile.
 
+**A session's own run.** runlock records the Claude Code session that started
+each run (`CLAUDE_CODE_SESSION_ID`, forwarded over ssh by kob-trace's
+test-remote.sh), so `runsBySession` maps a session id to a pill in its key's
+foot row: gold `Q 4m` while that run waits for cores, green `16c` while it
+holds them, the wait winning when a session has both. It takes the foot row
+the task squares use (they shrink to make room; a key without tasks gives up
+its fourth label line), and rides in `params`, so it is in the drawn signature
+like everything else on the key. The web board draws the same pill.
+
