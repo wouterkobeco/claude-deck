@@ -687,17 +687,20 @@ session asks again.
 A busy remote test queue (`runlock.mjs`, remote.md) takes a slot beside the
 usage keys the same way a remote subscription's usage key does: `extraKeys()`
 lists remote usage keys first, then busy queues, and `layout()` sizes the row
-from that one list (still at most three). Usage keys first so a queue coming
-and going — it does, with every test run — never moves a usage key. The face
+from that one list (still at most three, and a busy queue outranks a third
+usage key). Usage keys first so a queue coming and going — it does, with every
+test run — never moves a usage key. Layout runs off the previous poll, so a
+queue that empties since leaves a surplus key, which the draw blanks at once. The face
 is green while every run fits (`12/16` cores, bar = cores taken), gold once
 something waits (the count, and how long the head has), red once the head has
 waited `STUCK_AFTER_S` (10 min), which usually means a wedged holder rather
 than a busy box.
 
-A press opens `{ kind: "queue", host }`: one tile per run, holders then the
-queue in order, paged over the session keys, the status key saying how many
-runs on which box. The status key pages; any other key, including the queue
-key again, goes back. Tiles carry no session, so nothing is focused on the way
+A press opens `{ kind: "queue", host }` from any board but detail — handled
+ahead of the attention/working/inactive boards' "any other key leaves" rule.
+One tile per run, holders then the queue in order, paged over the session
+keys, the status key saying how many runs on which box. The status key pages;
+any other key, including the queue key again, goes back. Tiles carry no session, so nothing is focused on the way
 out. The board leaves by itself when the box goes idle, like the other queue
 boards, and is not in `resumeView`'s closed set — a restart lands on sessions.
 The web board shows the same face as an inert tile.

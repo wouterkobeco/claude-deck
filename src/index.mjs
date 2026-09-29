@@ -258,7 +258,14 @@ let queues = [];
 // The keys beside this machine's usage key, in slot order: remote usage keys
 // first (they come and go with sessions, rarely), then busy queues (they come
 // and go with test runs, often) — so a queue appearing never moves a usage key.
-const extraKeys = () => [...remoteUsages.map((usage) => ({ usage })), ...queues.map((queue) => ({ queue }))];
+// At most three (layout's cap), and a busy queue outranks a third usage key:
+// a queue is the one of these that says something is happening right now.
+const EXTRA_KEYS = 3;
+const extraKeys = () => {
+  const q = queues.slice(0, EXTRA_KEYS);
+  const u = remoteUsages.slice(0, EXTRA_KEYS - q.length);
+  return [...u.map((usage) => ({ usage })), ...q.map((queue) => ({ queue }))];
+};
 function runlockSummary(host) {
   const known = runlocks.get(host);
   const ttl = known && known.doc === null ? RUNLOCK_ABSENT_MS : RUNLOCK_POLL_MS;
@@ -3020,6 +3027,27 @@ async function run() {
     // Every *other* key still exits and focuses, which is what the boards are
     // for and is unchanged. That is also the way out at any point: the cycle
     // is the status key's, not the deck's.
+    // On the queue board the status key pages and any other key leaves —
+    // its own queue key included, which makes that key a toggle. Tiles carry
+    // no session, so there is nothing to focus on the way out.
+    if (view.kind === "queue") {
+      if (isStatus && queuePage + 1 < queuePages) {
+        queuePage++;
+        return;
+      }
+      setView({ kind: "sessions" });
+      lastPress = null;
+      return;
+    }
+    // A queue key opens its board from any other board: ahead of the queue
+    // boards' own handling below, which would otherwise take it as "any other
+    // key" and just leave.
+    const extraAt = remoteUsageButtons.findIndex((b) => b.index === control.index);
+    const queueHost = extraAt >= 0 ? extraKeys()[extraAt]?.queue?.host : undefined;
+    if (queueHost) {
+      setView({ kind: "queue", host: queueHost });
+      return;
+    }
     if (view.kind === "attention" || view.kind === "busy" || view.kind === "free") {
       if (isStatus) {
         // `queuePages` is what the last poll actually drew, so this can't
@@ -3044,24 +3072,6 @@ async function run() {
         focusWindow(btn.assigned, requestedAt);
       }
       lastPress = press;
-      return;
-    }
-    // A queue key opens its board, and closes it again.
-    const extraAt = remoteUsageButtons.findIndex((b) => b.index === control.index);
-    const queueHost = extraAt >= 0 ? extraKeys()[extraAt]?.queue?.host : undefined;
-    if (queueHost) {
-      setView(view.kind === "queue" && view.host === queueHost ? { kind: "sessions" } : { kind: "queue", host: queueHost });
-      return;
-    }
-    // On the queue board the status key pages; any other key leaves. Tiles
-    // carry no session, so there is nothing to focus on the way out.
-    if (view.kind === "queue") {
-      if (isStatus && queuePage + 1 < queuePages) {
-        queuePage++;
-        return;
-      }
-      setView({ kind: "sessions" });
-      lastPress = null;
       return;
     }
     if (isUsage) {
@@ -3329,7 +3339,10 @@ async function run() {
         await Promise.all(
           remoteUsageButtons.map((b, i) => {
             const e = extras[i];
-            if (!e) return null;
+            // Layout ran off the previous poll's count; a queue that emptied
+            // since has no entry here. Blank its key now rather than leave a
+            // busy face up for another poll.
+            if (!e) return b.drawn === "blank" ? null : renderBlank(b).then((buf) => deck.fillKeyBuffer(b.index, buf, { format: "rgba" })).then(() => (b.drawn = "blank"));
             if (e.queue) return drawQueueKey(deck, b, e.queue.summary);
             const u = e.usage;
             return drawUsageKey(deck, b, { ...u, title: u.id.startsWith("codex") ? u.id : remoteAccount(u.id)?.name ?? u.id });
