@@ -285,9 +285,10 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   and columns its width, and those two numbers are nothing like each other on a
   real device: a portrait phone makes a key three times taller than it is wide,
   and rotating the same phone makes it a letterbox. `--key` is the `min()` of
-  the two and is used *twice* — as `grid-auto-rows` and as a `max-width` on the
-  tile, so a column wider than the key leaves space beside it rather than
-  stretching it. Capping only the height was the first attempt and fixed
+  the two and is used *twice* — as `grid-auto-rows` and as the column width, so
+  the gap is `--gap` both ways and spare width sits outside the centred block
+  rather than between columns (`1fr` columns with a capped tile gave wide
+  horizontal gaps over tight vertical ones — not a grid). Capping only the height was the first attempt and fixed
   exactly half the problem, which is the half that happens to be portrait.
   **The layout is remembered per orientation**, and a first sight of each fits
   itself: rows come from the height against a target key size (~120px on a

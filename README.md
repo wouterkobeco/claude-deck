@@ -45,8 +45,9 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
   gold once runs wait for cores (how many, and how long the first has), red
   once that wait passes ten minutes. Press it for one key per run, holders
   then the queue; any key goes back. A session whose own test run is on that
-  queue carries a pill in its key's bottom-right corner: gold `Q 4m` while it
-  waits for cores, green `16c` while it holds them.
+  queue carries a marker in its key's bottom-right corner: a gold `Q 4m` block
+  covering that quarter of the key while it waits for cores, a green `RUN 3m`
+  block once it holds them, counting how long it has run.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
   one has waited, and pressing it opens that queue, worst first.

@@ -700,7 +700,10 @@ A press opens `{ kind: "queue", host }` from any board but detail — handled
 ahead of the attention/working/inactive boards' "any other key leaves" rule.
 One tile per run, holders then the queue in order, paged over the session
 keys, the status key saying how many runs on which box. The status key pages;
-any other key, including the queue key again, goes back. Tiles carry no session, so nothing is focused on the way
+any other key, including the queue key again, goes back — and the bottom-left
+key draws the detail board's `← BACK` face to say so (`DETAIL_BACK_INDEX`,
+carved out of the paged keys; absent only when three extra keys push the
+status key onto that slot). Tiles carry no session, so nothing is focused on the way
 out. The board leaves by itself when the box goes idle, like the other queue
 boards, and is not in `resumeView`'s closed set — a restart lands on sessions.
 The web board shows the same face as an inert tile.
@@ -708,9 +711,12 @@ The web board shows the same face as an inert tile.
 **A session's own run.** runlock records the Claude Code session that started
 each run (`CLAUDE_CODE_SESSION_ID`, forwarded over ssh by kob-trace's
 test-remote.sh), so `runsBySession` maps a session id to a pill in its key's
-foot row: gold `Q 4m` while that run waits for cores, green `16c` while it
-holds them, the wait winning when a session has both. It takes the foot row
+foot row: gold `Q 4m` while that run waits for cores, green `RUN 3m` (time
+running) while it holds them, the wait winning when a session has both. It takes the foot row
 the task squares use (they shrink to make room; a key without tasks gives up
 its fourth label line), and rides in `params`, so it is in the drawn signature
 like everything else on the key. The web board draws the same pill.
+On the deck it is drawn large — the bottom-right quarter of the key, over the
+body text rather than reflowing it — in both states, so leaving the queue is
+as visible as joining it.
 
