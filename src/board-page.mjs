@@ -226,16 +226,16 @@ const STYLE = `
      two numbers are nothing like each other: three columns of a 390px phone
      against a fifth of its height is a tall key in portrait and a letterbox in
      landscape. So a key is the *smaller* of the two, in both directions —
-     --key is that size, it is the row height, and it also caps the width so a
-     wide column leaves space beside the key rather than stretching it. Square
-     on any screen, in any orientation; the board scrolls for the rest. */
+     --key is that size, and it is both the row height and the column width, so
+     the gap between keys is --gap in both directions and any spare width
+     goes outside the block, not between its columns. Square on any screen,
+     in any orientation; the board scrolls for the rest. */
   .grid { --key: min(
             (100cqh - (var(--rows) - 1) * var(--gap)) / var(--rows),
             (100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols));
-          display: grid; grid-template-columns: repeat(var(--cols), 1fr);
+          display: grid; grid-template-columns: repeat(var(--cols), var(--key));
           grid-auto-rows: var(--key);
-          gap: var(--gap); align-content: start; min-height: 100% }
-  .grid > * { justify-self: center; width: min(100%, var(--key)) }
+          gap: var(--gap); align-content: start; justify-content: center; min-height: 100% }
 
   /* Every dimension inside a key is in cqh/cqw against the key itself, so rows
      and --fs scale the caps, body, markers and task squares together. */
