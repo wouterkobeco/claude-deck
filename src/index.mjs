@@ -1607,9 +1607,23 @@ async function refreshQueue(deck, buttons, statusButton, host, page = 0) {
   const summary = queues.find((q) => q.host === host)?.summary ?? null;
   if (!summary) return null;
   const tiles = queueTiles(summary);
-  const paging = pageOf(tiles, page, buttons.length);
+  // The detail board's back key, in the detail board's slot. Any key but the
+  // status key already leaves, so this only has to be drawn. With three extra
+  // keys the status key sits on that slot itself, and there is none.
+  const backBtn = buttons.find((b) => b.index === DETAIL_BACK_INDEX) ?? null;
+  const tileButtons = buttons.filter((b) => b !== backBtn);
+  const paging = pageOf(tiles, page, tileButtons.length);
+  if (backBtn) {
+    backBtn.assigned = null;
+    backBtn.renderParams = null;
+    backBtn.leavingParams = null;
+    if (backBtn.drawn !== "queue-back") {
+      await deck.fillKeyBuffer(backBtn.index, await renderBack(backBtn), { format: "rgba" });
+      backBtn.drawn = "queue-back";
+    }
+  }
   await Promise.all(
-    buttons.map(async (btn, i) => {
+    tileButtons.map(async (btn, i) => {
       const tile = paging.entries[i] ?? null;
       btn.assigned = null;
       btn.renderParams = null;

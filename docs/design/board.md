@@ -700,7 +700,10 @@ A press opens `{ kind: "queue", host }` from any board but detail — handled
 ahead of the attention/working/inactive boards' "any other key leaves" rule.
 One tile per run, holders then the queue in order, paged over the session
 keys, the status key saying how many runs on which box. The status key pages;
-any other key, including the queue key again, goes back. Tiles carry no session, so nothing is focused on the way
+any other key, including the queue key again, goes back — and the bottom-left
+key draws the detail board's `← BACK` face to say so (`DETAIL_BACK_INDEX`,
+carved out of the paged keys; absent only when three extra keys push the
+status key onto that slot). Tiles carry no session, so nothing is focused on the way
 out. The board leaves by itself when the box goes idle, like the other queue
 boards, and is not in `resumeView`'s closed set — a restart lands on sessions.
 The web board shows the same face as an inert tile.
