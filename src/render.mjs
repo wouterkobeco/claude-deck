@@ -331,13 +331,13 @@ export async function renderKey({ width, height, state, label, accent, project, 
   const fontSize = Math.round(height * 0.19);
   // Tighter than typographic ideal so four lines still fit under the bar.
   const lineHeight = fontSize * 1.05;
-  // The foot row also carries a test-run pill (runlock.mjs): this session's
-  // run on a remote test queue — gold `Q 4m` while it waits for cores, green
-  // `16c` while it holds them. Right-aligned; the task squares give way.
+  // A test-run block (runlock.mjs): this session's run on a remote test queue
+  // — gold `Q 4m` while it waits for cores, green `RUN 2m` while it holds
+  // them. It takes the whole bottom-right quarter, drawn over the body rather
+  // than reflowing it; the task squares give way.
   const footHeight = progress || queue ? 10 : 0;
   const maxLines = footHeight ? 3 : 4;
-  const pillSize = 8;
-  const pillWidth = queue ? Math.ceil(measureText(queue.text, pillSize)) + 6 : 0;
+  const pillWidth = queue ? width / 2 : 0;
 
   // Left-margin indicator column: a blue square when a background shell is
   // still running, then one white square per nested (worktree) session
@@ -495,10 +495,13 @@ export async function renderKey({ width, height, state, label, accent, project, 
       }
       ${
         queue && typeof leaving !== "number"
-          ? `<rect x="${width - pillWidth - 2}" y="${height - 11}" width="${pillWidth}" height="10" rx="2"
+          ? `<rect x="${width / 2}" y="${height / 2}" width="${width / 2 - 2}" height="${height / 2 - 2}" rx="4"
                    fill="${queue.kind === "queued" ? MARKER_COLORS.waiting : MARKER_COLORS.busy}" />
-             <text x="${width - 2 - pillWidth / 2}" y="${height - 6}" font-family="sans-serif" font-size="${pillSize}"
-                   font-weight="bold" fill="#000000" text-anchor="middle" dominant-baseline="middle">${escapeXml(queue.text)}</text>`
+             <text font-family="sans-serif" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle"
+                   dominant-baseline="middle">${queue.text
+                     .split(" ")
+                     .map((t, i, all) => `<tspan x="${width * 0.75 - 1}" y="${height * 0.75 - 1 + (i - (all.length - 1) / 2) * 15}">${escapeXml(t)}</tspan>`)
+                     .join("")}</text>`
           : ""
       }
     </svg>`;

@@ -67,7 +67,7 @@ const withSessions = parseRunlockStatus(doc([lane(0,
 eq(withSessions.lanes[0].waiters[1].session, null, "a malformed session id is dropped");
 const runs = runsBySession([{ summary: queueSummary(withSessions) }]);
 // kills: no pill for a holding session, or the wrong face for either state
-eq([...runs], [[sid(1), { kind: "running", text: "16c" }], [sid(2), { kind: "queued", text: "Q 4m" }]], "running and queued pills");
+eq([...runs], [[sid(1), { kind: "running", text: "RUN 3m" }], [sid(2), { kind: "queued", text: "Q 4m" }]], "running and queued pills");
 // kills: a later holder hiding the wait, which is the one worth knowing about
 const both = runsBySession([{ summary: queueSummary(parseRunlockStatus(doc([lane(0,
   [{ ...holder("ci:x", 8, 200), session: sid(3) }], [{ ...waiter(7, "c", 8, 90), session: sid(3) }])]))) }]);
