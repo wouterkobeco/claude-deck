@@ -497,10 +497,12 @@ export async function renderKey({ width, height, state, label, accent, project, 
         queue && typeof leaving !== "number"
           ? `<rect x="${width / 2}" y="${height / 2}" width="${width / 2 - 2}" height="${height / 2 - 2}" rx="4"
                    fill="${queue.kind === "queued" ? MARKER_COLORS.waiting : MARKER_COLORS.busy}" />
-             <text font-family="sans-serif" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle"
+             <text font-family="sans-serif" font-weight="bold" fill="#000000" text-anchor="middle"
                    dominant-baseline="middle">${queue.text
                      .split(" ")
-                     .map((t, i, all) => `<tspan x="${width * 0.75 - 1}" y="${height * 0.75 - 1 + (i - (all.length - 1) / 2) * 15}">${escapeXml(t)}</tspan>`)
+                     // Each line shrinks to the block: past an hour the age is
+                     // `1h00m`, half again as wide as the block at full size.
+                     .map((t, i, all) => `<tspan x="${width * 0.75 - 1}" y="${height * 0.75 - 1 + (i - (all.length - 1) / 2) * 15}" font-size="${Math.min(15, (15 * (width / 2 - 4)) / measureText(t, 15)).toFixed(1)}">${escapeXml(t)}</tspan>`)
                      .join("")}</text>`
           : ""
       }
