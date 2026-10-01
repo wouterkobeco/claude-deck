@@ -65,11 +65,27 @@ export function memoryFields(memory) {
   return rec;
 }
 
+// This machine's subscription utilisation rides on the tick too, so it can be
+// set against the token log: neither the API nor anything published says how
+// many tokens 100% of a 5h or 7d window is, and this is the half of that
+// sum nothing else keeps. `uat` is when the reading was fetched — getUsage
+// keeps serving its last good value through an outage — and `acct` is whose
+// window it was, since a cswap switch changes which one the percentages mean.
+export function usageFields(usage) {
+  const rec = {};
+  if (typeof usage?.session === "number") rec.u5 = usage.session;
+  if (typeof usage?.week === "number") rec.u7 = usage.week;
+  if (!("u5" in rec || "u7" in rec)) return rec;
+  if (usage.fetchedAt) rec.uat = usage.fetchedAt;
+  if (usage.account) rec.acct = usage.account;
+  return rec;
+}
+
 // `hosts` is the same fields per remote host, keyed by name, for the hosts
 // that reported this tick — a host whose fetch is failing simply isn't in it.
-export function recordTick(now = Date.now(), root = CLAUDE_DIR, memory = null, hosts = {}) {
+export function recordTick(now = Date.now(), root = CLAUDE_DIR, memory = null, hosts = {}, usage = null) {
   try {
-    const rec = { ts: now, kind: TICK, ...memoryFields(memory) };
+    const rec = { ts: now, kind: TICK, ...memoryFields(memory), ...usageFields(usage) };
     const h = Object.fromEntries(Object.entries(hosts).map(([k, v]) => [k, memoryFields(v)]).filter(([, v]) => "mem" in v));
     if (Object.keys(h).length) rec.hosts = h;
     appendFileSync(fileIn(root), JSON.stringify(rec) + "\n");

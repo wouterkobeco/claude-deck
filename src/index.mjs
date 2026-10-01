@@ -352,7 +352,13 @@ function recordHistory(sessions) {
   // overnight as a working night. See history.mjs's TICK.
   if (now - lastTick >= TICK_MS) {
     lastTick = now;
-    recordTick(now, undefined, getMemory(), hostMemories());
+    const memory = getMemory();
+    const hosts = hostMemories();
+    // getUsage is cached on the usage key's own TTL, so this is not a second
+    // fetch; a failure still writes the tick, just without the percentages.
+    Promise.all([getUsage(), getAccountName()])
+      .then(([usage, account]) => ({ ...usage, account }), () => null)
+      .then((usage) => recordTick(now, undefined, memory, hosts, usage));
     collectTokensInBackground();
   }
   // Trimming is a whole-file rewrite, so it runs at startup (historyDay starts

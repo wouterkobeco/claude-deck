@@ -164,6 +164,12 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   footprint is a chart of its own under "Sessions in parallel", scaled to
   its busiest column like the token charts (an amount, not a share), and the
   count shown beside a bucket's high-water mark is the count *at* that sample.
+  The tick also carries this machine's 5h/7d utilisation (`u5`, `u7`), when
+  that reading was fetched (`uat`) and whose account it was (`acct`) — logged,
+  not yet charted, so the token log can be set against it: nobody publishes
+  how many tokens 100% of a window is. `uat` exists because `getUsage` serves
+  its last good value through an outage; a stale percentage under a fresh
+  `ts` would read as tokens spent for nothing.
 - `src/tokens.mjs` — what the tokens went on: hourly totals lifted out of
   Claude Code's transcripts, into a log that outlives them. Every assistant
   message carries `message.usage` beside an ISO timestamp, so the history is

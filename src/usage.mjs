@@ -352,7 +352,10 @@ export async function getUsage(now = Date.now(), fetcher = fetchUsage, credentia
   inflight = (async () => {
     try {
       const value = parseUsage(await fetcher());
-      cache = { at: Date.now(), value: expireWindows(value, Date.now()) };
+      // `fetchedAt` because a failure keeps serving this value: the history
+      // tick logs it, and a stale reading under a fresh timestamp would read
+      // as tokens spent for no percentage at all.
+      cache = { at: Date.now(), value: expireWindows({ ...value, fetchedAt: Date.now() }, Date.now()) };
       lastError = null;
       backoffMs = 0;
     } catch (err) {

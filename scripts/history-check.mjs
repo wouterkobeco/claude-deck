@@ -230,6 +230,16 @@ eq(startOfDay(midnight), midnight, "and midnight is already the start of its own
   eq(kinds.includes(TICK), true, "a tick written to the log reads back as one");
 }
 
+// Utilisation rides on the tick for setting against the token log; a reading
+// with no percentages adds nothing, not an orphaned account name.
+{
+  recordTick(now + 1, dir, null, {}, { session: 37, week: 12.5, fetchedAt: now - 1000, account: "wouter" });
+  recordTick(now + 2, dir, null, {}, { session: null, week: null, account: "wouter" });
+  const [withU, without] = readHistory(dir).filter((r) => r.ts === now + 1 || r.ts === now + 2);
+  eq([withU.u5, withU.u7, withU.uat, withU.acct], [37, 12.5, now - 1000, "wouter"], "a tick carries the 5h/7d utilisation, its fetch time and account");
+  eq(["u5", "u7", "uat", "acct"].some((k) => k in without), false, "a tick without a reading carries no usage fields");
+}
+
 // An empty log is a window nobody watched, not a window in which nothing ran.
 eq(concurrency([], 0, 3600000, 3600000)[0].samples, 0, "no records means no observations");
 
