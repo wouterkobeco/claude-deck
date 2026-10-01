@@ -1103,6 +1103,12 @@ async function sessionsFrom(source) {
     // lock's folder even when one exists: `focusWindow` routes on `ide`, and a
     // cmux session that borrowed a VS Code folder would be sent to the editor.
     const match = cmux ? { folder: s.cwd, nested: false } : matchFolder(s.cwd, folders);
+    // A plain tmux pane keeps the lock rule, but its session name rides along
+    // for restore (reattach it, or resume back into tmux), and its attached
+    // clients stand in for the ancestry the tmux server cuts off. Session names
+    // can't hold ':', so the pane suffix splits off cleanly.
+    const tmux = !cmux && typeof s.tmux === "string" ? s.tmux.split(":")[0] || null : null;
+    const clients = tmux && source.tmuxClients ? (source.tmuxClients.get(tmux) ?? []) : null;
     if (!match) continue; // no live local VS Code window for this session
     matched.push({
       session_id: s.sessionId,
@@ -1113,6 +1119,9 @@ async function sessionsFrom(source) {
       // Already read just above for the liveness check.
       pid: s.pid,
       cmux,
+      tmux,
+      // null when the host's clients weren't listed — unknown, not detached.
+      tmuxAttached: clients ? clients.length > 0 : null,
       ide: cmux ? null : (ideByFolder.get(match.folder) ?? null),
       nested: isNested,
       name: s.name ?? null,
@@ -1134,7 +1143,9 @@ async function sessionsFrom(source) {
       // table: "no ancestry available" and "an ancestry with nothing in it" are
       // the same outcome for the reveal, but only the first reads as a fact
       // about the host rather than about the session.
-      ...(source.ppids?.size ? { ancestors: ancestorChain(s.pid, source.ppids) } : {}),
+      ...(source.ppids?.size
+        ? { ancestors: [s.pid, ...(clients ?? [])].flatMap((p) => ancestorChain(p, source.ppids)) }
+        : {}),
     });
   }
 

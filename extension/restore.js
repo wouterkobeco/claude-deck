@@ -14,6 +14,11 @@
 // contains any is not a session id that needs rescuing.
 const SESSION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+// A tmux session name reaches the same shell (`tmux attach -t <name>`), and is
+// whatever the other machine's user typed after `tmux new -s`. Ordinary names
+// only; anything else is treated as not in tmux rather than quoted.
+const TMUX_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
 /**
  * The rows in `~/.claude/streamdeck-sessions.json` that belong to this window.
  *
@@ -43,6 +48,8 @@ function sessionsForWindow(rows, folders, host) {
       id: r.id,
       cwd: r.cwd,
       title: typeof r.title === "string" && r.title ? r.title : null,
+      tmux: typeof r.tmux === "string" && TMUX_NAME_RE.test(r.tmux) ? r.tmux : null,
+      attached: typeof r.attached === "boolean" ? r.attached : null,
     }));
 }
 
@@ -58,7 +65,11 @@ function sessionsForWindow(rows, folders, host) {
  */
 function toRestore(saved, live) {
   const running = new Set(live.map((s) => s.id));
-  return saved.filter((s) => !running.has(s.id));
+  // A session still running in a tmux nobody is attached to outlived its
+  // terminal: offered as a reattach, not a resume. `attached: null` is
+  // "couldn't ask", which must not offer a second view of a session on screen.
+  const detached = live.filter((s) => s.tmux && s.attached === false).map((s) => ({ ...s, reattach: true }));
+  return [...saved.filter((s) => !running.has(s.id)), ...detached];
 }
 
 /**
@@ -72,4 +83,21 @@ function resumeCommand(id) {
   return `claude --resume ${id}`;
 }
 
-module.exports = { sessionsForWindow, toRestore, resumeCommand, SESSION_ID_RE };
+/**
+ * The whole line for one restore row: reattach a detached tmux session, resume
+ * a session that was in tmux back into a fresh one, or plain resume.
+ *
+ * The fresh tmux one types the resume into the new session's own shell rather
+ * than handing it to `tmux new-session` as a command: that runs under `sh -c`,
+ * which never reads the rc file that puts `claude` on PATH. Started detached
+ * so `send-keys` has a target, then attached.
+ */
+function restoreCommand(s) {
+  if (s.tmux && !TMUX_NAME_RE.test(s.tmux)) throw new Error(`not a tmux session name: ${s.tmux}`);
+  if (s.reattach) return `tmux attach -t ${s.tmux}`;
+  const resume = resumeCommand(s.id);
+  if (!s.tmux) return resume;
+  return `t=$(tmux new-session -dP -F '#{session_name}') && tmux send-keys -t "$t" '${resume}' Enter && tmux attach -t "$t"`;
+}
+
+module.exports = { sessionsForWindow, toRestore, resumeCommand, restoreCommand, SESSION_ID_RE };

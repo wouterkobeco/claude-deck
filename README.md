@@ -441,6 +441,11 @@ Claude sessions in this window**, from the command palette. It offers the
 sessions this window had open, all ticked; each one you keep gets a terminal in
 its own working directory running `claude --resume <id>`.
 
+Sessions run inside tmux are handled too. One still running in a tmux session
+nothing is attached to (the terminal went, tmux didn't) is offered as a
+**reattach** (`tmux attach -t <name>`); one that was in tmux and has exited is
+resumed back into a fresh tmux session rather than a bare shell.
+
 The list is remembered while the daemon is running — Claude Code deletes a
 session's registry entry the moment it exits, so after the restart there is
 nothing left to read. Remote-SSH windows are included, because the daemon

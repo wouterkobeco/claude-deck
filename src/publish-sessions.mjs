@@ -55,6 +55,10 @@ export function sessionRows(sessions) {
       // wants a name for a session that has never been typed into just as much
       // as for one that has, and falls back to the cwd's basename itself.
       title: s.aiTitle ?? s.name ?? null,
+      // The tmux session it runs in, and whether anyone is looking at it: a
+      // detached one survived the window and is reattached, not resumed.
+      tmux: s.tmux ?? null,
+      attached: s.tmuxAttached ?? null,
     }));
 }
 

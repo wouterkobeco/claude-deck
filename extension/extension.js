@@ -14,7 +14,7 @@ const vscode = require("vscode");
 // sees to that — and that routing is the part worth checking. See
 // scripts/extension-check.mjs.
 const { sshHost, requestIsOurs } = require("./routing.js");
-const { sessionsForWindow, toRestore, resumeCommand } = require("./restore.js");
+const { sessionsForWindow, toRestore, restoreCommand } = require("./restore.js");
 const { bundleList, canRunHere, machineChoices, restorePlanCommand, restoreTargets, saveCommand } = require("./transfer.js");
 
 const FOCUS_FILE = join(homedir(), ".claude", "streamdeck-focus.json");
@@ -240,7 +240,7 @@ async function restoreSessions(context) {
 
   const items = candidates.map((s) => ({
     label: s.title ?? s.cwd.split("/").filter(Boolean).pop() ?? s.cwd,
-    description: s.cwd,
+    description: s.reattach ? `still running — reattach tmux ${s.tmux}` : s.cwd,
     session: s,
     picked: true,
   }));
@@ -256,7 +256,7 @@ async function restoreSessions(context) {
 
   for (const { session } of picks) {
     const terminal = vscode.window.createTerminal({ name: "claude", cwd: session.cwd });
-    terminal.sendText(resumeCommand(session.id));
+    terminal.sendText(restoreCommand(session));
     terminal.show();
   }
 }

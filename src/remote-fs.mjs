@@ -72,6 +72,13 @@ export const TREE_CMD =
   // it in one pass. `c ` keeps these lines out of the pid parse above; a host
   // without /proc or GNU find prints none, and simply shows no Codex.
   "find /proc/[0-9]*/fd -maxdepth 1 -lname '*/.codex/sessions/*rollout-*.jsonl' -printf 'c %h %l\\n' 2>/dev/null; " +
+  // Which tmux session each attached client is showing. A Claude session in
+  // tmux is parented by the tmux *server*, so its own chain never reaches the
+  // editor's terminal — the client's does. The bare `t` after it says the
+  // listing ran at all: without it "no tmux here" and "every session
+  // detached" would read the same, and restore would offer to reattach
+  // sessions that are on screen.
+  "tmux list-clients -F 't #{client_pid} #{session_name}' 2>/dev/null && echo t; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
   // A subagent idle past SUBAGENT_IDLE_MAX_S (600s) is skipped by the reader
@@ -90,7 +97,7 @@ export const TREE_CMD =
  */
 export function splitTreeStream(buffer) {
   const at = buffer.indexOf(SEPARATOR);
-  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, codex: [], tar: Buffer.alloc(0) };
+  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, codex: [], tmuxClients: null, tar: Buffer.alloc(0) };
   const pids = new Set();
   // The memory block precedes the pid table behind its own fence; a stream
   // from before the fence existed has no block and reads as no memory data.
@@ -108,7 +115,19 @@ export function splitTreeStream(buffer) {
   // session there as dead.
   const ppids = new Map();
   const codex = [];
+  // tmux session name -> attached client pids; null when tmux couldn't be asked.
+  let tmuxClients = null;
+  const clientLines = [];
   for (const line of head.split("\n")) {
+    if (line === "t") {
+      tmuxClients = new Map();
+      continue;
+    }
+    const client = /^t (\d+) (.+)$/.exec(line);
+    if (client) {
+      clientLines.push([client[2], Number(client[1])]);
+      continue;
+    }
     const open = /^c \/proc\/(\d+)\/fd (\/.*)$/.exec(line);
     if (open) {
       if (isCodexRollout(open[2]) && !codex.some((c) => c.path === open[2])) codex.push({ pid: Number(open[1]), path: open[2] });
@@ -128,7 +147,8 @@ export function splitTreeStream(buffer) {
     if (Number.isInteger(ppid) && ppid > 0) ppids.set(pid, ppid);
   }
   if (memory) memory.claude.mb = Math.round(memory.claude.mb);
-  return { pids, ppids, memory, codex, tar: buffer.subarray(at + SEPARATOR.length) };
+  for (const [name, pid] of tmuxClients ? clientLines : []) tmuxClients.set(name, [...(tmuxClients.get(name) ?? []), pid]);
+  return { pids, ppids, memory, codex, tmuxClients, tar: buffer.subarray(at + SEPARATOR.length) };
 }
 
 /**
@@ -442,7 +462,7 @@ export async function fetchSource(host, scratchRoot) {
 
     const stream = await run(["ssh", ...sshArgs(host, controlPath), TREE_CMD]);
     if (!stream) return null;
-    const { pids, ppids, memory, codex: codexOpen, tar } = splitTreeStream(stream);
+    const { pids, ppids, memory, codex: codexOpen, tmuxClients, tar } = splitTreeStream(stream);
 
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
@@ -538,6 +558,8 @@ export async function fetchSource(host, scratchRoot) {
       // synchronous key handler and cannot afford an ssh round trip; empty on a
       // host whose `ps` gave no second column, which costs only the reveal.
       ppids,
+      // tmux session -> client pids, or null; see TREE_CMD.
+      tmuxClients,
       // This host's RAM pressure, swap and the Claude sessions' footprint, or
       // null where it had no /proc/meminfo. Read off the source by index.mjs
       // the same way `ppids` is.

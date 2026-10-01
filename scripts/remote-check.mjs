@@ -86,6 +86,14 @@ assert.equal(splitTreeStream(Buffer.from("===\n5 1\n---\ntar")).memory, null, "a
 assert.equal(splitTreeStream(Buffer.alloc(0)).tar.length, 0, "an empty stream has no tar");
 assert.equal(splitTreeStream(Buffer.alloc(0)).ppids.size, 0, "an empty stream has no ancestry");
 
+// tmux clients: `t <pid> <session>` per client, then a bare `t` if the listing
+// ran. Without the marker the host couldn't be asked — null, not "all detached".
+const withTmux = splitTreeStream(Buffer.from("50 1\nt 60 kob\nt 61 kob\nt 62 3\nt\n---\ntar"));
+assert.deepEqual([...withTmux.tmuxClients], [["kob", [60, 61]], ["3", [62]]], "tmux clients group by session");
+assert.deepEqual([...withTmux.pids], [50], "and stay out of the pid set");
+assert.equal(splitTreeStream(Buffer.from("50 1\n---\ntar")).tmuxClients, null, "no marker, no tmux knowledge");
+assert.equal(splitTreeStream(Buffer.from("50 1\nt\n---\ntar")).tmuxClients.size, 0, "a marker alone: tmux ran, nothing attached");
+
 // --- ssh argv -------------------------------------------------------------
 const argv = sshArgs("192.168.2.6", "/tmp/cm/%r@%h:%p");
 assert.equal(argv.at(-1), "192.168.2.6", "the host is the last argument");

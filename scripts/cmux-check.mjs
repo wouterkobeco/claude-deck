@@ -127,6 +127,11 @@ assert.equal(alsoOpenInVsCode.ide, null, "and does not claim the press");
 // whose press does nothing.
 await writeFile(join(fx, "sessions", "16863.json"), entry({ tmux: "main:@1.%2" }));
 assert.equal((await only()).cmux, null, "a plain tmux session is not treated as cmux");
+// It does keep its session name, for restore to reattach or resume into; and
+// a local source lists no tmux clients, so "attached" is unknown, not false.
+const plainTmux = await only();
+assert.equal(plainTmux.tmux, "main", "the tmux session name is the part before the pane");
+assert.equal(plainTmux.tmuxAttached, null, "with no client listing, attachment is unknown");
 
 // A remote cmux session too: the app socket and the capability are on this
 // machine, so its key would raise a pane on the wrong computer. Put the real

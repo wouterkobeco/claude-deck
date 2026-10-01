@@ -145,7 +145,18 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   kills the terminals before it deactivates extensions, so a snapshot taken then
   would honestly record nothing running and erase the only copy of what to
   restore. `deactivate()` deliberately does *not* take a final snapshot for that
-  reason; the last timer tick before the quit is the one that matters. It also does the two things
+  reason; the last timer tick before the quit is the one that matters. **A tmux
+  session is detected through its clients**: Claude in tmux is parented by the
+  tmux server, so its own pid chain never reaches the editor's terminal.
+  `TREE_CMD` lists `tmux list-clients` (pid + session) beside the ps table, and a
+  session's `ancestors` append each attached client's chain — that is what lets
+  a press reveal, and `terminalNames` name, a tmux terminal. The same listing
+  gives `attached`: a live session in a detached tmux is offered by restore as
+  `tmux attach -t`, a dead one that was in tmux resumes into a fresh tmux
+  (`send-keys` into its shell, since `new-session <cmd>` runs `sh -c` without
+  the rc that puts `claude` on PATH). Unknown attachment (`null`, a local source
+  or a host where tmux couldn't be asked) offers nothing — a second view of a
+  session already on screen is worse than none. Remote hosts only for now. It also does the two things
   `window-state.mjs` reads: publishes this window's folders/focus/active-terminal
   to `~/.claude/streamdeck-windows/<pid>.json` on every tick (and immediately
   after a reveal, so a fast second press doesn't read a stale one), and sweeps

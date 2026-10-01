@@ -113,7 +113,7 @@ assert.equal(requestIsOurs({ pids: [1] }, LOCAL), false, "a request with no ts i
 // The other half of the same problem — routing.js decides whose *request* this
 // is, restore.js decides whose *sessions* these are. Both get it wrong in the
 // same invisible way: by acting on another window's data.
-const { sessionsForWindow, toRestore, resumeCommand } = require("../extension/restore.js");
+const { sessionsForWindow, toRestore, resumeCommand, restoreCommand } = require("../extension/restore.js");
 
 const ID = "ac185680-913f-4c24-ace4-2ee9edea6405";
 const ID2 = "62f1c5d8-b1d2-40be-a260-1a817f7f0983";
@@ -121,7 +121,7 @@ const row = (over = {}) => ({ id: ID, cwd: "/Users/w/p", folder: "/Users/w/p", h
 
 assert.deepEqual(
   sessionsForWindow([row()], ["/Users/w/p"], null),
-  [{ id: ID, cwd: "/Users/w/p", title: "T" }],
+  [{ id: ID, cwd: "/Users/w/p", title: "T", tmux: null, attached: null }],
   "a local window keeps its own folder's session"
 );
 assert.deepEqual(sessionsForWindow([row()], ["/Users/w/other"], null), [], "and drops another folder's");
@@ -158,17 +158,45 @@ assert.deepEqual(toRestore(savedTwo, savedTwo), [], "a reload that kept its term
 assert.deepEqual(toRestore(savedTwo, []), savedTwo, "a restart that lost them offers both");
 assert.deepEqual(toRestore(savedTwo, [{ id: ID }]), [savedTwo[1]], "and a second run offers only what the first didn't restore");
 
+const { sessionRows } = await import("../src/publish-sessions.mjs");
+
+// tmux: a session still running in a detached tmux outlived its terminal and is
+// offered as a reattach; one that was in tmux and died resumes back into tmux.
+// Attached, or unknown (null), is never offered — that would be a second view.
+{
+  const live = [
+    { id: ID, cwd: "/a", tmux: "3", attached: false },
+    { id: ID2, cwd: "/b", tmux: "4", attached: true },
+    { id: "11111111-2222-3333-4444-555555555555", cwd: "/c", tmux: "5", attached: null },
+  ];
+  assert.deepEqual(toRestore([], live), [{ ...live[0], reattach: true }], "only the detached tmux session is offered");
+  assert.equal(restoreCommand({ ...live[0], reattach: true }), "tmux attach -t 3", "and it reattaches");
+  assert.equal(
+    restoreCommand({ id: ID, tmux: "kob" }),
+    `t=$(tmux new-session -dP -F '#{session_name}') && tmux send-keys -t "$t" 'claude --resume ${ID}' Enter && tmux attach -t "$t"`,
+    "a dead tmux session resumes inside a fresh tmux"
+  );
+  assert.equal(restoreCommand({ id: ID, tmux: null }), `claude --resume ${ID}`, "a plain one resumes plainly");
+  assert.equal(sessionsForWindow([row({ tmux: "x;rm -rf ~", attached: false })], ["/Users/w/p"], null)[0].tmux, null,
+    "a tmux name with shell in it is not a tmux name");
+  assert.throws(() => restoreCommand({ id: ID, tmux: "$(whoami)", reattach: true }), "and restoreCommand refuses it too");
+  assert.deepEqual(
+    sessionsForWindow(sessionRows([{ session_id: ID, cwd: "/p", folder: "/p", host: "h", tmux: "7", tmuxAttached: false }]), ["/p"], "h"),
+    [{ id: ID, cwd: "/p", title: null, tmux: "7", attached: false }],
+    "the daemon's tmux fields reach the window"
+  );
+}
+
 // The two sides meet here: what the daemon publishes has to be what the window
 // can read. A field renamed on one side and not the other is invisible until a
 // restore silently offers nothing.
-const { sessionRows } = await import("../src/publish-sessions.mjs");
 const published = sessionRows([
   { session_id: ID, cwd: "/Users/w/p/worktree", folder: "/Users/w/p", host: null, aiTitle: "Fix the thing", nested: false },
   { session_id: ID2, cwd: "/Users/w/p", folder: "/Users/w/p", host: null, name: "p-0d", nested: true },
 ]);
 assert.deepEqual(
   sessionsForWindow(published, ["/Users/w/p"], null),
-  [{ id: ID, cwd: "/Users/w/p/worktree", title: "Fix the thing" }],
+  [{ id: ID, cwd: "/Users/w/p/worktree", title: "Fix the thing", tmux: null, attached: null }],
   "a worktree session lands on its window's folder, and a nested one is never published at all"
 );
 
