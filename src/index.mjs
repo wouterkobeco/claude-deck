@@ -2107,13 +2107,30 @@ export const configDeps = {
     // (which is why the rows are sorted before they are mapped rather than
     // after): two folders of one repo would otherwise both show it and the
     // column would sum past the section below.
+    //
+    // A cwd repoOf can't name — a remote host's, or a worktree since removed —
+    // is folded onto its checkout by the worktree spellings in use here
+    // (`.worktrees/x`, `.claude/worktrees/x`), and every project is keyed by
+    // its last segment, so a remote `/home/…/kob-backend` and the local
+    // `owner/kob-backend` are one row.
+    // ponytail: two repos sharing a name under different owners merge; key on
+    // the remote URL fetched over ssh if that ever happens.
+    const projectOf = (cwd) => {
+      const base = cwd.replace(/\/(\.claude\/)?\.?worktrees\/[^/]+.*$/, "");
+      const repo = repoOf(cwd) ?? repoOf(base);
+      const name = base.split(/[/:]/).filter(Boolean).pop() ?? base;
+      return { key: (repo?.split("/").pop() ?? name).toLowerCase(), label: repo ?? name, named: !!repo };
+    };
     const owed = new Map();
     for (const r of byCwd) {
       if (!((r.costUsd ?? 0) > 0)) continue;
-      const label = repoOf(r.cwd) ?? r.cwd;
-      const at = owed.get(label.toLowerCase());
-      if (at) at.costUsd += r.costUsd;
-      else owed.set(label.toLowerCase(), { label, costUsd: r.costUsd });
+      const { key, label, named } = projectOf(r.cwd);
+      const at = owed.get(key);
+      if (!at) owed.set(key, { label, named, costUsd: r.costUsd });
+      else {
+        at.costUsd += r.costUsd;
+        if (named && !at.named) Object.assign(at, { label, named });
+      }
     }
     // Claimed rather than deleted, because the section below renders the same
     // map and must stay complete — it is the one that shows a repo with no
@@ -2127,9 +2144,8 @@ export const configDeps = {
       .sort(([, a], [, b]) => spent(b) - spent(a))
       .map(([key, st]) => {
         const t = byProjectTokens.get(key);
-        const repo = repoOf(key);
-        const at = repo?.toLowerCase();
-        const billed = at && !claimed.has(at) ? owed.get(at) : undefined;
+        const at = projectOf(key).key;
+        const billed = !claimed.has(at) ? owed.get(at) : undefined;
         if (billed) claimed.add(at);
         return {
           key,
@@ -2148,7 +2164,7 @@ export const configDeps = {
           // The repo the money was billed to, named in the cell's own tooltip:
           // it is what the ledger recorded, and a folder is not obviously one.
           cost: billed ? money(billed.costUsd) : "—",
-          repo: billed ? repo : null,
+          repo: billed ? billed.label : null,
           pct: tracked ? (spent(st) / tracked) * 100 : 0,
           spentMs: spent(st),
         };

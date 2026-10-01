@@ -357,7 +357,7 @@ export async function collectTokens({
   // and a repair from outside could interleave with one.
   if (!previous.has(REPRICED)) {
     dropProvider(root, CODEX_API);
-    for (const k of [...previous.keys()]) if (k.startsWith(`${CODEX_API}/`)) previous.delete(k);
+    for (const k of [...previous.keys()]) if (k.startsWith(`${CODEX_API}/`) || k.startsWith(`${CODEX_API}@`)) previous.delete(k);
   }
   // Rebuilt from the paths that exist *now* rather than mutated in place: Claude
   // Code deletes transcripts past its cleanup period, and a map that only ever
@@ -413,7 +413,14 @@ export async function collectTokens({
   if (await collectCodex(localCodexReader(codexRoot), previous, positions, buckets, CODEX)) moved = true;
   if (await collectCodex(localCodexReader(codexApiRoot), previous, positions, buckets, CODEX_API)) moved = true;
   // Another machine's metered home bills the same key. Its bookmarks carry the
-  // host, and a host that can't answer this pass simply keeps its cursor.
+  // host, and a host that can't answer this pass simply keeps its cursor — so
+  // does one that wasn't asked at all (no open session there). Dropping those
+  // re-read the host's whole history from byte 0 every time it came back, and
+  // a month read $1300 against a fraction of that actually spent.
+  for (const [k, v] of previous) {
+    const host = k.startsWith(`${CODEX_API}@`) ? k.slice(CODEX_API.length + 1, k.indexOf("/")) : null;
+    if (host && !(host in remoteApiReaders)) positions.set(k, v);
+  }
   for (const [host, reader] of Object.entries(remoteApiReaders)) {
     try {
       if (await collectCodex(reader, previous, positions, buckets, CODEX_API, `${CODEX_API}@${host}`)) moved = true;
@@ -621,7 +628,8 @@ async function collectCodex(reader, previous, positions, buckets, provider = COD
 
 // The bookmark that says the metered rows have been re-priced (collectTokens).
 // A number, since readPositions keeps nothing else.
-const REPRICED = "codex-api-repriced@1";
+// @2: the remote rows re-counted every time a host came back (collectTokens).
+const REPRICED = "codex-api-repriced@2";
 
 function dropProvider(root, provider) {
   try {

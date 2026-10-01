@@ -11,7 +11,7 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CLAUDE, CODEX, CODEX_API, collectTokens, compactTokens, groupTokens, readTokens, repoOf, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
+import { CLAUDE, CODEX, CODEX_API, collectTokens, compactTokens, groupTokens, localCodexReader, readTokens, repoOf, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "streamdeck-tokens-check-"));
 const projects = join(root, "projects");
@@ -327,7 +327,7 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   const posFile = join(root, "streamdeck-tokens.pos");
   const pos = JSON.parse(readFileSync(posFile, "utf8"));
   const before = readTokens(root).filter((r) => r.provider === CODEX_API).reduce((n, r) => n + r.calls, 0);
-  delete pos["codex-api-repriced@1"];
+  delete pos["codex-api-repriced@2"];
   writeFileSync(posFile, JSON.stringify(pos));
   await collect();
   const after = readTokens(root).filter((r) => r.provider === CODEX_API).reduce((n, r) => n + r.calls, 0);
@@ -335,6 +335,40 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   await collect();
   assert.equal(readTokens(root).filter((r) => r.provider === CODEX_API).reduce((n, r) => n + r.calls, 0), before, "and never again");
   assert.equal(readTokens(root).filter((r) => r.provider === CODEX).length > 0, true, "the plan's rows are left alone");
+}
+
+// A remote host's bookmarks outlive a pass that didn't ask it. They used to be
+// dropped whenever no session was open there, and the host's whole metered
+// history was appended again on its next answer — $1300 for a month.
+{
+  const at = (minute) => new Date(HOUR + minute * 60000).toISOString();
+  const remote = join(root, "remote-codex-api");
+  await mkdir(join(remote, "2026", "08", "18"), { recursive: true });
+  writeFileSync(
+    join(remote, "2026", "08", "18", "rollout-2026-08-18T09-40-00-rmt.jsonl"),
+    [
+      JSON.stringify({ type: "session_meta", timestamp: at(40), payload: { cwd: "/home/me/thing" } }),
+      JSON.stringify({ type: "turn_context", timestamp: at(40), payload: { model: "gpt-5.6-terra" } }),
+      JSON.stringify({
+        type: "event_msg",
+        timestamp: at(40),
+        payload: { type: "token_count", info: { last_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } } },
+      }),
+    ].join("\n") + "\n"
+  );
+  const remoteCalls = () => readTokens(root).filter((r) => r.cwd === "/home/me/thing").reduce((n, r) => n + r.calls, 0);
+  const withHost = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, codexApiRoot: codexApi, remoteApiReaders: { box: localCodexReader(remote) } });
+  await withHost();
+  assert.equal(remoteCalls(), 1, "a remote host's turn is counted");
+  // The host has no open session this pass, while something local moves —
+  // a pass that moves nothing writes no bookmark at all and would hide this.
+  appendFileSync(transcript, msg(59, usage(1)) + "\n");
+  assert.ok((await collect()) > 0, "a pass that writes its bookmark");
+  await withHost();
+  assert.equal(remoteCalls(), 1, "and not again when the host comes back");
+  const pos = JSON.parse(readFileSync(join(root, "streamdeck-tokens.pos"), "utf8"));
+  for (const k of Object.keys(pos)) if (k.startsWith("codex-api@")) delete pos[k];
+  writeFileSync(join(root, "streamdeck-tokens.pos"), JSON.stringify(pos));
 }
 
 // The bookmark drops transcripts that no longer exist rather than remembering
@@ -346,7 +380,7 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
     [
       "-Users-me-thing/parent-id/subagents/agent-abc.jsonl",
       "-Users-me-thing/session-a.jsonl",
-      "codex-api-repriced@1",
+      "codex-api-repriced@2",
       "codex-api/2026/08/18/rollout-2026-08-18T09-10-00-def.jsonl",
       "codex-api/2026/08/18/rollout-2026-08-18T09-20-00-ghi.jsonl",
       "codex-api/2026/08/18/rollout-2026-08-18T09-30-00-jkl.jsonl",
