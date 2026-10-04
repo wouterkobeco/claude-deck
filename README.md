@@ -45,9 +45,10 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
   gold once runs wait for cores (how many, and how long the first has), red
   once that wait passes ten minutes. Press it for one key per run, holders
   then the queue; any key goes back. A session whose own test run is on that
-  queue carries a marker in its key's bottom-right corner: a gold `Q 4m` block
-  covering that quarter of the key while it waits for cores, a green `RUN 3m`
-  block once it holds them, counting how long it has run.
+  queue carries a marker in its key's bottom-right corner: a gold `Q2 4m` block
+  covering that quarter of the key while it waits for cores (the number is its
+  place in the queue, `Q1` being next), a green `RUN 3m` block once it holds
+  them, counting how long it has run.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
   one has waited, and pressing it opens that queue, worst first.
@@ -72,6 +73,11 @@ Run more than 13 sessions and the extras get no key — but nothing you can act
 on disappears with them. Both queues are built from every session, not just the
 ones on the board, so a session that's blocked or inactive still reaches the status
 key. What a full board loses is the glance, not the reach.
+
+What it never loses is a project: every project with a live session keeps at
+least one key. When a late-arriving project would land entirely past the cap,
+the project holding the most keys gives up its oldest one (never down to its
+last). Only with more projects than session keys does one go without.
 
 Each project gets a colour bar naming it, and keeps that colour — across the
 session and across restarts. It's remembered in
@@ -214,7 +220,9 @@ depends on the extension — see Known limits.
 
 ![The detail board](docs/img/board-detail.png)
 
-**Stats** — the usage key's second press. With
+**Stats** — the usage key's second press. The bottom row is just `BACK`,
+`CONFIG` and the status key here: the usage keys give way (the account keys
+already say it), as does a busy test-queue key until you leave. With
 [claude-swap](https://github.com/realiti4/claude-swap) installed, every
 subscription it manages gets two keys, active account first with a green border:
 session / week usage, and the time until each resets. Then this machine's
@@ -308,6 +316,16 @@ the name **Claude Deck**.
   at once, and a page can put them side by side. Under that, everything the
   window picker governs: tokens per hour, the same split by model, sessions in
   parallel, and where the time went.
+- **The terminal icon is the Tmux page**, for the remote hosts you have open.
+  Resuming a session into a second tmux window leaves the old process running,
+  and the board only follows the newer one, so the older copy is invisible while
+  it keeps the conversation open twice. The page sorts every tmux session on a
+  host into *hidden copies* (ticked), *not Claude* (listed, unticked) and *in
+  use* (no box), and **Close selected** ends the ticked ones after a
+  confirmation. Each is re-checked at the moment of closing: one attached or
+  working since the page drew is skipped, and the only live copy of a session
+  is never offered. The conversation stays on disk and resumes later. It is the
+  one place the daemon acts on another machine, and only from that click.
 - **It says when it can't see the daemon.** Three missed polls and the board
   greys out rather than leaving a plausible frozen picture up.
 
@@ -476,6 +494,7 @@ All read-only, all maintained by Claude Code itself:
 | `~/.claude-swap-backup/{sequence.json,cache/usage.json}` | every claude-swap account's 5h / 7d usage and resets, if cswap is installed — nothing is fetched |
 | `~/.claude/streamdeck-board.json` | *written*, not read from Claude Code: the port and token the web board answers on, so a bookmark survives a restart. Owner-only; delete it to mint a new URL |
 | `ssh <host> ~/.claude/{sessions,ide,tasks,projects}` | a Remote-SSH window's own sessions — name, state, title, tasks, subagents and the estimated context gauge; `ssh <host> ~/.claude/ctx/<id>.json` is fetched too, and wins when that host has the status line block |
+| `ssh <host> tmux list-panes -a` | the Tmux page's listing, fetched when you open that page; `tmux kill-session -t =<name>` runs only from its confirmed Close button |
 | `ssh <host> ~/.claude.json` | that host's signed-in account, for a remote session's detail panel — fetched only when you open that panel, not on the regular poll |
 | `~/.claude-deck-sessions/*.tgz` | *written and read* by the two session-transfer commands only — never by the daemon, never on a poll. Owner-only: a bundle is a verbatim copy of everything a session saw |
 
@@ -531,6 +550,12 @@ mismatch.
 ```
 npm run render-check    # SVG -> key image pipeline, text fitting, sample PNGs
 npm run slots-check     # project grouping / slot assignment / detail layout
+npm run tmux-check      # tmux cleanup: which sessions are hidden copies, and the re-checked close
+npm run runlock-check   # remote test queue: parsing, the key face, the Q-position pill
+npm run codex-check     # Codex sessions: open rollouts, tail signals, rate limits
+npm run cmux-check      # cmux sessions: the folder join, and which pane a press resolves to
+npm run history-check   # state log: change-only records, durations, retention
+npm run tokens-check    # token extraction: incremental reads, grouping, compaction
 npm run tasks-check     # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check     # rate-limit parse (--live prints the raw API response)
 npm run stats-check     # stats board formatting (--live prints the real tiles)
