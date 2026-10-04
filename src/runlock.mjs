@@ -120,7 +120,7 @@ export function queueTiles(summary) {
 
 /**
  * Which sessions have a run on a busy queue, as the pill renderKey draws in a
- * key's foot row: `{ kind: "queued", text: "Q 4m" }` while it waits for cores,
+ * key's foot row: `{ kind: "queued", text: "Q2 4m" }` (second in line) while it waits for cores,
  * `{ kind: "running", text: "RUN 3m" }` while it holds them. A session with runs
  * in both states shows the wait: that is the one worth knowing about.
  */
@@ -130,9 +130,12 @@ export function runsBySession(queues) {
     for (const h of summary.holders) {
       if (h.session && !out.has(h.session)) out.set(h.session, { kind: "running", text: `RUN ${formatAge(h.age ?? NaN)}`.trim() });
     }
-    for (const w of summary.waiters) {
-      if (w.session) out.set(w.session, { kind: "queued", text: `Q ${formatAge(w.age ?? NaN) || "…"}` });
-    }
+    // Q1 is next in line. The position is within this host's queue as
+    // runlock lists it (head first), so a session waiting twice shows the
+    // later entry's — the same last-wins the age already had.
+    summary.waiters.forEach((w, i) => {
+      if (w.session) out.set(w.session, { kind: "queued", text: `Q${i + 1} ${formatAge(w.age ?? NaN) || "…"}` });
+    });
   }
   return out;
 }
