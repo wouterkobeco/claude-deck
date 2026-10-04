@@ -720,3 +720,5 @@ On the deck it is drawn large — the bottom-right quarter of the key, over the
 body text rather than reflowing it — in both states, so leaving the queue is
 as visible as joining it.
 
+
+**The stats board takes the remote usage keys back.** `layout(0)` runs while it is up, and its bottom-right key is blank. Two reasons, both seen: with two remote subscriptions the status key shifts left onto key 11 and the remote keys onto 12–13, which covered the config key (and with three, the back key); and those keys, like the bottom-right one, draw usage the board already shows per account in its own tiles. The usage key is still a way out (a press toggles back), just blank. A busy remote test queue's key is likewise absent while the stats board is up and returns when it closes.

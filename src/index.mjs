@@ -3220,7 +3220,10 @@ async function run() {
     try {
       // Off the previous poll's sessions — one poll late is what every remote
       // fact here already is. Never under the detail board, which owns the deck.
-      if (view.kind !== "detail") layout(extraKeys().length);
+      // The stats board owns the whole deck bar the status key: back and config
+      // sit at fixed indices (10, 11) that a remote usage key would shift the
+      // status key onto, and it already shows every account's usage itself.
+      if (view.kind !== "detail") layout(view.kind === "stats" ? 0 : extraKeys().length);
       if (view.kind === "stats") {
         // Every subscription cswap knows about, active first, two keys each
         // (usage, resets), then the version. Read off cswap's own cache —
@@ -3399,7 +3402,14 @@ async function run() {
           }
         }
       }
-      if (view.kind !== "detail") {
+      if (view.kind === "stats") {
+        // Its numbers are the account keys above; a second copy down here is
+        // what this used to draw. Still a way out — a press toggles back.
+        if (usageButton.drawn !== "blank") {
+          await deck.fillKeyBuffer(usageButton.index, await renderBlank(usageButton), { format: "rgba" });
+          usageButton.drawn = "blank";
+        }
+      } else if (view.kind !== "detail") {
         await drawUsage(deck, usageButton);
         const extras = extraKeys();
         await Promise.all(
