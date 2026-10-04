@@ -910,7 +910,11 @@ function guaranteeRepresentation(ordered, capacity) {
   for (const s of ordered) {
     const key = folderKeyFor(s);
     if (!byProject.has(key)) byProject.set(key, []);
-    byProject.get(key).push(s);
+    // One session id can be live twice (resumed into a second tmux pane). The
+    // set below is by id, so evicting it drops *every* entry — counting the
+    // entries made a project holding one id look like it had a slot to spare.
+    const list = byProject.get(key);
+    if (!list.some((o) => o.session_id === s.session_id)) list.push(s);
   }
 
   for (const sessions of byProject.values()) {

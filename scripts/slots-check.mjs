@@ -143,6 +143,12 @@ eq(slots, ["a1", "a2", "a3", "b1", null], "new session joins its project block")
   const two3 = new Array(2).fill(null);
   assignSlots([s("v1", V), s("w1", W), s("x1", X)], two3);
   eq(two3, ["v1", "w1"], "no spare slot means a project can still be left out");
+
+  // One session id live twice (two tmux panes) is one key's worth, not two:
+  // W holds only that id, so it is no donor for starved X.
+  const dup = new Array(2).fill(null);
+  assignSlots([s("v1", V), s("w1", W), s("w1", W), s("x1", X)], dup);
+  eq(dup.includes("w1"), true, "a duplicated session id doesn't make its project a donor");
 }
 // A whole project going away closes its gap.
 assignSlots([s("b1", B)], slots);
