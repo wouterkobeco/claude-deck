@@ -1118,6 +1118,7 @@ async function sessionsFrom(source) {
       // running this session is the one whose shell is an ancestor of it.
       // Already read just above for the liveness check.
       pid: s.pid,
+      started: s.startedAt ?? 0,
       cmux,
       tmux,
       // null when the host's clients weren't listed — unknown, not detached.

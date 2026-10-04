@@ -7,6 +7,7 @@ import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
 import { accountFrom } from "./usage.mjs";
 import { parseRunlockStatus } from "./runlock.mjs";
+import { PANES_CMD, SAFE_NAME, parsePanes } from "./tmux-cleanup.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
 // because everything before it is digits and newlines.
@@ -623,6 +624,27 @@ export async function fetchAccount(host, controlPath) {
 export async function fetchRunlock(host, controlPath) {
   const buf = await run(["ssh", ...sshArgs(host, controlPath), "~/.local/bin/runlock status --json 2>/dev/null"], { timeoutMs: 6000 });
   return buf ? parseRunlockStatus(buf.toString("utf8")) : null;
+}
+
+/**
+ * A host's tmux panes (see tmux-cleanup.mjs), or null when the host didn't
+ * answer. `tmux` exits non-zero with no server running, which is an answer too
+ * — an empty listing — so that case is told apart by the `echo ok` after it.
+ */
+export async function fetchTmuxPanes(host, controlPath) {
+  const buf = await run(["ssh", ...sshArgs(host, controlPath), `${PANES_CMD}; echo ok`], { timeoutMs: 6000 });
+  if (!buf) return null;
+  return parsePanes(buf.toString("utf8").replace(/\nok\n?$/, "\n"));
+}
+
+/**
+ * Close one tmux session. `=` makes the target an exact name, so `1` can never
+ * match `10`; the caller has already held `name` to SAFE_NAME, which is what
+ * lets it sit in a remote shell command unquoted.
+ */
+export async function killTmuxSession(host, controlPath, name) {
+  if (!SAFE_NAME.test(name)) return false;
+  return (await run(["ssh", ...sshArgs(host, controlPath), `tmux kill-session -t =${name}`], { timeoutMs: 6000 })) !== null;
 }
 
 /**

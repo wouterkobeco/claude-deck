@@ -699,13 +699,13 @@ eq(board.includes(`<a class="key dark tile" href="/activity?t=${bToken}"`), true
    "the usage tile links there, carrying the token");
 eq(grid.includes(`href="/activity?t=${bToken}"`), true, "and so does the tile the poll swaps in");
 
-// One header on all three views. It was icons on the board and text links on
+// One header on all the views. It was icons on the board and text links on
 // the config pages, which made "where am I and how do I get back" a different
 // question depending on where you already were.
 for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/", "accents"]]) {
   const html = await (await fetch(`${bBase}${path}?t=${bToken}`)).text();
   const head = html.split('class="head"')[1].split("</header>")[0];
-  eq(head.split('class="icon').length - 1, 3, `${path} carries all three destinations`);
+  eq(head.split('class="icon').length - 1, 4, `${path} carries all four destinations`);
   // The accents page is not one of the three destinations — it is where the
   // deck's own config key lands, and it keeps drag-to-reorder — so nothing is
   // marked there rather than something being marked arbitrarily.
@@ -886,3 +886,42 @@ console.log("OK: token gate, palette and folder validation, escaping, swatch cou
   eq(blocked.includes(">blocked<") && blocked.includes("alert"), true, "the attention side still reads as an alarm");
 }
 console.log("OK: status tile");
+
+// The tmux cleanup routes: they reach a shell on another machine, so the host
+// must be one the daemon has open and every name a plain one, before anything
+// is asked of closeTmux. What a name may do is closeTmux's business (tmux-check).
+{
+  const closes = [];
+  const t = await createConfigServer({
+    tmuxHosts: () => ["beast"],
+    tmux: async () => [
+      { host: "beast", rows: [
+        { name: "5", project: "<b>x</b>", title: '"t"', why: "same session open in tmux 13", idle: 7200, kind: "copy", closable: true },
+        { name: "13", project: "portal", title: "t", why: "attached", idle: 5, kind: "use", closable: false },
+      ] },
+      { host: "down", error: true },
+    ],
+    closeTmux: async (host, names) => (closes.push([host, names]), names.map((name) => ({ name, ok: name !== "6" }))),
+  });
+  const tb = new URL(t.url).origin;
+  const tt = new URL(t.url).searchParams.get("t");
+  const post = (body) => fetch(`${tb}/tmux/close?t=${tt}`, { method: "POST", body, redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" } });
+
+  eq((await fetch(`${tb}/tmux`)).status, 403, "the tmux page needs the token too");
+  const tp = await (await fetch(`${tb}/tmux?t=${tt}`)).text();
+  eq(tp.includes('value="5"') && !tp.includes('value="13"'), true, "a closable session has a box, one in use does not");
+  eq(tp.includes("<b>x</b>"), false, "a project name is escaped");
+  eq(tp.includes("not answering"), true, "a host that fails reads as not answering, not as absent");
+  eq((await post("host=evil&name=5")).status, 400, "an unknown host is refused");
+  eq((await post("host=beast&name=5%3Brm%20-rf")).status, 400, "a name with shell characters is refused");
+  eq((await post("host=beast")).status, 400, "no names is refused");
+  eq(closes.length, 0, "nothing was asked of the host for any of those");
+  const ok = await post("host=beast&name=5&name=6&name=5");
+  eq(ok.status, 303, "a valid close redirects");
+  eq(ok.headers.get("location").includes("closed=1&skipped=1"), true, "and reports what happened");
+  eq(closes, [["beast", ["5", "6"]]], "duplicates are collapsed before the close");
+  const banner = await (await fetch(`${tb}${ok.headers.get("location")}`)).text();
+  eq(banner.includes("Closed 1, skipped 1"), true, "the banner says so");
+  t.server.close();
+}
+console.log("OK: tmux cleanup routes");

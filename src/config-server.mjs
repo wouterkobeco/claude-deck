@@ -17,6 +17,8 @@ import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
 import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
+import { tmuxPage } from "./tmux-page.mjs";
+import { SAFE_NAME } from "./tmux-cleanup.mjs";
 import { boardGrid, boardPage, detailPanel, iconHeader, iconLinks, FAVICON_SIZES, HEADER_CSS, HEADER_SCRIPT } from "./board-page.mjs";
 import { renderIcon, usageColor } from "./render.mjs";
 import { esc, colour } from "./html.mjs";
@@ -857,6 +859,31 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
           activityPage(token, deps.activity(url.searchParams.get("p")), await deps.status()),
           "text/html; charset=utf-8"
         );
+      }
+
+      if (req.method === "GET" && url.pathname === "/tmux") {
+        // Counts, not text: they are the only part of the query that reaches
+        // the page, and a number can't carry markup.
+        const n = (k) => Math.max(0, Math.min(999, Number(url.searchParams.get(k)) || 0));
+        const done = url.searchParams.has("closed") ? { closed: n("closed"), skipped: n("skipped") } : null;
+        return send(res, 200, tmuxPage(token, await deps.tmux(), done), "text/html; charset=utf-8");
+      }
+
+      if (req.method === "POST" && url.pathname === "/tmux/close") {
+        const raw = await readBody(req);
+        if (raw === null) return send(res, 400, "body too large");
+        const form = new URLSearchParams(raw);
+        const host = form.get("host");
+        // The host must be one the daemon has open, and every name a plain one:
+        // both reach a shell on another machine. What each name may *do* is
+        // decided by closeTmux against a fresh listing, not by the page.
+        if (!deps.tmuxHosts().includes(host)) return send(res, 400, "unknown host");
+        const names = [...new Set(form.getAll("name"))];
+        if (!names.length || names.length > 50 || !names.every((x) => SAFE_NAME.test(x))) return send(res, 400, "bad names");
+        const results = await deps.closeTmux(host, names);
+        const closed = results.filter((r) => r.ok).length;
+        res.writeHead(303, { Location: `/tmux?t=${token}&closed=${closed}&skipped=${results.length - closed}` });
+        return res.end();
       }
 
       if (req.method === "POST" && url.pathname === "/accent") {

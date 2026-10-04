@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm start              # run the daemon (needs the Stream Deck plugged in)
 npm run render-check   # SVG -> RGBA pipeline; writes scripts/render-check-output.png
 npm run slots-check    # project grouping / slot assignment
+npm run tmux-check     # tmux cleanup: which sessions are hidden copies, and the re-checked close
 npm run tasks-check    # "task X of Y" numbering, and the SDD ledger fallback
 npm run usage-check    # rate-limit parse (add --live to print the raw API response)
 npm run stats-check    # stats board formatting
@@ -75,7 +76,7 @@ needs indexing.
 | `docs/design/render.md` | `render.mjs` — SVG→RGBA, measured text fitting, the three-tier palette and `colors-check`'s floors |
 | `docs/design/usage-stats.md` | `usage.mjs`, `stats.mjs`, `cswap.mjs`, `history.mjs`, `tokens.mjs` — the meters, the state log, the token log |
 | `docs/design/vscode.md` | `vscode-state.mjs`, `terminal-focus.mjs`, `cmux-focus.mjs`, `window-state.mjs`, `extension/` — focus routing (VS Code and cmux), window state, install/reload |
-| `docs/design/web.md` | `config-server.mjs`, `board-page.mjs`, `board-state.mjs`, `html.mjs` — the config/activity/board pages and their trust boundary |
+| `docs/design/web.md` | `config-server.mjs`, `board-page.mjs`, `board-state.mjs`, `html.mjs`, `tmux-page.mjs`, `tmux-cleanup.mjs` — the config/activity/board/tmux pages and their trust boundary |
 | `docs/design/persistence.md` | `publish-sessions.mjs`, `accents.mjs`, `session-transfer.mjs` — every file the daemon writes, and the read-only invariant in full |
 | `docs/design/statusline.md` | `statusline.mjs`, `compact-hook.mjs` — the two manual install steps (context gauge, auto-compaction hooks), local and remote |
 
@@ -112,7 +113,9 @@ on each line. These summaries are reminders, not the rule itself.
   host too (in parallel, short-timeout, silent on an unreachable one), never
   writing to another machine without that per-host yes. `sessions:restore` is
   the only thing that writes a transcript, and stays a two-step command you
-  run, never a poll. (persistence.md, statusline.md)
+  run, never a poll. The web page's tmux cleanup is the one thing that acts on
+  another machine, and only from a confirmed POST that re-checks each session
+  at the moment of closing. (persistence.md, statusline.md, web.md)
 - **A deck coming back is asked for, never waited for** — plugging one in
   raises no event at all and an unplug raises `error` only sometimes, so
   `reconnectDecision` reads the device list every poll: headless leaves when

@@ -329,3 +329,5 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   into place by rename rather than letting `tar -xf` merge it — see
   `remote-fs.mjs` above — for the same reason the daemon never merges anything
   else it's handed: a merged tree keeps what the remote host deleted.
+
+**The tmux page (web.md) closes tmux sessions on a remote host** — an action on another machine, not a file the daemon writes. Never on a poll: a confirmed POST, each session re-listed and re-classified at the moment of closing. Claude Code's own data on that host is untouched; transcripts stay.

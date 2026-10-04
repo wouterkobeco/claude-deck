@@ -1,0 +1,150 @@
+<title>Tmux Cleanup Mockup</title>
+<style>
+/* Layout: one host panel, three groups (cleanable first), a sticky action bar. Matches the board's dark page. */
+:root {
+  --bg: #0b0b0b; --panel: #151515; --line: #262626; --fg: #e0e0e0; --dim: #9e9e9e;
+  --ok: #4caf50; --warn: #ffc107; --bad: #ef5350; --info: #64b5f6; --btn: #262626;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 -apple-system, system-ui, sans-serif; padding-inline: 16px; padding-block: 16px 90px; max-width: 980px; margin-inline: auto; }
+h1 { font-size: 20px; margin: 0 0 4px }
+.sub { color: var(--dim); margin: 0 0 18px }
+.tag { display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; background: #3a2f00; color: var(--warn); margin-bottom: 10px }
+.host { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; margin: 22px 0 8px }
+.host h2 { font-size: 16px; margin: 0 }
+.host span { color: var(--dim) }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; font-variant-numeric: tabular-nums }
+.group { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; overflow: hidden }
+.ghead { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line) }
+.ghead h3 { font-size: 14px; margin: 0 }
+.ghead p { margin: 0; color: var(--dim); font-size: 13px; flex: 1 1 260px; min-width: 0 }
+.ghead label { color: var(--info); cursor: pointer; font-size: 13px }
+.row { display: grid; grid-template-columns: 28px 70px minmax(0, 1.2fr) minmax(0, 2fr) 92px; gap: 4px 12px; align-items: center; padding: 9px 14px; border-top: 1px solid var(--line) }
+.row:first-of-type { border-top: 0 }
+.row.off { opacity: .55 }
+.row input { width: 16px; height: 16px; accent-color: var(--info) }
+.tm { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums }
+.proj { font-weight: 600 }
+.proj small { display: block; font-weight: 400; color: var(--dim) }
+.why { color: var(--dim); font-size: 13px; min-width: 0 }
+.why b { color: var(--fg); font-weight: 500 }
+.age { text-align: right; color: var(--dim); font-variant-numeric: tabular-nums }
+.pill { font-size: 11px; padding: 1px 7px; border-radius: 9px; margin-left: 6px; vertical-align: 1px }
+.p-dup { background: #3a2f00; color: var(--warn) }
+.p-non { background: #2a1f1f; color: var(--bad) }
+.p-use { background: #14301a; color: var(--ok) }
+.bar { position: fixed; inset-inline: 0; bottom: 0; background: #101010; border-top: 1px solid var(--line); padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: center }
+.bar .msg { flex: 1 1 280px; max-width: 640px; min-width: 0 }
+button { font: inherit; color: var(--fg); background: var(--btn); border: 0; border-radius: 5px; padding: 8px 14px; cursor: pointer }
+button.go { background: #5b1f1f; color: #ffd5d5 }
+button.go[disabled] { background: var(--btn); color: var(--dim); cursor: default }
+button.sure { background: var(--bad); color: #fff }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--info); outline-offset: 2px }
+.note { color: var(--dim); font-size: 13px; margin: 8px 0 0 }
+@media (max-width: 640px) {
+  .row { grid-template-columns: 24px 56px minmax(0, 1fr) }
+  .why, .age { grid-column: 3; text-align: left }
+}
+</style>
+
+<span class="tag">Mockup — buttons only tick boxes, nothing is closed</span>
+<h1>Tmux cleanup</h1>
+<p class="sub">Every tmux session on your remote hosts, sorted into what is safe to close and what is in use. Example data taken from BEAST as of today.</p>
+
+<div class="host"><h2>BEAST</h2><span>192.168.2.70</span><span>17 tmux sessions · 15 running Claude · board shows 8</span></div>
+<div class="summary">
+  <div class="chip"><b id="n-dup">8</b> hidden copies</div>
+  <div class="chip"><b>2</b> not Claude</div>
+  <div class="chip"><b>7</b> in use</div>
+</div>
+
+<section class="group" id="g-dup">
+  <div class="ghead">
+    <h3>Hidden copies <span class="pill p-dup">8</span></h3>
+    <p>The same Claude session is also open in a newer window. The board follows the newer one, so these never show up. Two copies writing to one conversation can also mix up its history.</p>
+    <label><input type="checkbox" id="all-dup" checked> select all</label>
+  </div>
+  <div id="dups"></div>
+</section>
+
+<section class="group" id="g-non">
+  <div class="ghead">
+    <h3>Not Claude <span class="pill p-non">2</span></h3>
+    <p>Plain shells and tools left in tmux. Nothing here for the board to show. Not ticked by default.</p>
+    <label><input type="checkbox" id="all-non"> select all</label>
+  </div>
+  <div id="nons"></div>
+</section>
+
+<section class="group">
+  <div class="ghead">
+    <h3>In use <span class="pill p-use">7</span></h3>
+    <p>Showing on the board, or the only copy of its session. Can't be selected here.</p>
+  </div>
+  <div id="uses"></div>
+</section>
+
+<p class="note">Closing a session ends its process. The conversation itself stays on disk and can be resumed later. The server checks each session again right before closing it, and skips any that has since been attached or started working.</p>
+
+<div class="bar">
+  <div class="msg" id="msg"></div>
+  <button id="cancel" hidden>Cancel</button>
+  <button class="go" id="go">Close selected</button>
+</div>
+
+<script>
+const dups = [
+  ["1","kob-portal2","IC memo visualisation","same session open in tmux 15","3d 20h"],
+  ["2","kob-backend","Context placement: assessment vs deal","same session open in tmux 18","3h 11m"],
+  ["4","kob-portal2","Then push and pull","same session open in tmux 14","2d 4h"],
+  ["5","kob-portal2","What did you build here","same session open in tmux 13","1d 14h"],
+  ["6","kob-portal2","LLM models edit pane save shortcut","same session open in tmux 15","3d 18h"],
+  ["7","kob-backend","IC memo editor with change tracking","same session open in tmux 19","3h 11m"],
+  ["9","kob-backend","Tmux startup command in buffer after VSCode reload","same session open in tmux 16","3h 5m"],
+  ["kob","kob-backend","Moxo due diligence page","same session open in tmux 17","3h 11m"],
+];
+const nons = [
+  ["10","BEAST home","htop","running htop since Sep 27","0m"],
+  ["11","kob-backend","bash","idle shell, nothing running","3d 20h"],
+];
+const uses = [
+  ["12","kob-portal2","What did you build here","detached, newest copy of its session, last active Sat","1d 14h","off"],
+  ["13","kob-portal2","What did you build here","attached, working","1m"],
+  ["14","kob-portal2","Then push and pull","attached","1m"],
+  ["15","kob-portal2","IC memo visualisation","attached, working","now"],
+  ["16","kob-backend","Tmux startup command in buffer","attached","3m"],
+  ["17","kob-backend","Moxo due diligence page","attached","1h"],
+  ["18","kob-backend","Context placement","attached","1h"],
+];
+const $ = (id) => document.getElementById(id);
+const row = (r, sel, kind) => `<div class="row${sel ? "" : " off"}">
+  ${sel ? `<input type="checkbox" class="${kind}" value="${r[0]}" ${kind === "dup" ? "checked" : ""} aria-label="select tmux ${r[0]}">` : `<span></span>`}
+  <span class="tm">tmux ${r[0]}</span>
+  <span class="proj">${r[1]}<small>${r[2]}</small></span>
+  <span class="why">${r[3]}</span>
+  <span class="age">${r[4]} idle</span></div>`;
+$("dups").innerHTML = dups.map((r) => row(r, true, "dup")).join("");
+$("nons").innerHTML = nons.map((r) => row(r, true, "non")).join("");
+$("uses").innerHTML = uses.map((r) => row(r, false)).join("");
+let confirming = false;
+const picked = () => [...document.querySelectorAll("input.dup:checked, input.non:checked")].map((i) => i.value);
+function paint() {
+  const n = picked().length;
+  $("go").textContent = confirming ? `Yes, close ${n}` : "Close selected";
+  $("go").className = confirming ? "sure" : "go";
+  $("go").disabled = !n;
+  $("cancel").hidden = !confirming;
+  $("msg").textContent = !n ? "Nothing selected."
+    : confirming ? `This ends ${n} tmux sessions on BEAST. Their conversations stay on disk.`
+    : `${n} selected: ${picked().map((v) => "tmux " + v).join(", ")}`;
+}
+document.addEventListener("change", (e) => {
+  if (e.target.id === "all-dup") document.querySelectorAll("input.dup").forEach((i) => (i.checked = e.target.checked));
+  if (e.target.id === "all-non") document.querySelectorAll("input.non").forEach((i) => (i.checked = e.target.checked));
+  confirming = false; paint();
+});
+$("go").onclick = () => { if (!confirming) confirming = true; else { confirming = false; $("msg").textContent = "Mockup: nothing was closed."; $("go").disabled = true; $("cancel").hidden = true; return; } paint(); };
+$("cancel").onclick = () => { confirming = false; paint(); };
+paint();
+</script>

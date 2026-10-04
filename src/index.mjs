@@ -14,7 +14,8 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource } from "./remote-fs.mjs";
+import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource, fetchTmuxPanes, killTmuxSession } from "./remote-fs.mjs";
+import { classifyTmux, closeTmux } from "./tmux-cleanup.mjs";
 import { queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
@@ -1916,6 +1917,23 @@ export const configDeps = {
     reindexProjects();
     persistAccents();
   },
+  // The tmux cleanup page. Hosts are the ones a window is open on, read from
+  // the same list the poll uses; the sessions are the last poll's, so what the
+  // page calls a copy is what the board already decided.
+  tmuxHosts: () => remoteHosts,
+  tmux: async () =>
+    Promise.all(
+      remoteHosts.map(async (host) => {
+        const panes = await fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h"));
+        return panes ? { host, rows: classifyTmux(panes, lastSessions.filter((s) => s.host === host)) } : { host, error: true };
+      })
+    ),
+  closeTmux: (host, names) =>
+    closeTmux(names, {
+      list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
+      sessions: () => lastSessions.filter((s) => s.host === host),
+      kill: (name) => killTmuxSession(host, join(SCRATCH_ROOT, "cm-%h"), name),
+    }),
   // The board and the palette its settings sheet offers. One call rather than
   // two so the page and the fragment its poll fetches can never be rendered
   // from two different reads.

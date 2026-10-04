@@ -77,10 +77,13 @@ const ICONS = {
     <rect x="1" y="9" width="3" height="6" rx="1" fill="currentColor"/>
     <rect x="6.5" y="5" width="3" height="10" rx="1" fill="currentColor"/>
     <rect x="12" y="1" width="3" height="14" rx="1" fill="currentColor"/></svg>`,
+  tmux: `<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M2 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="8" y="11" width="6" height="1.8" rx=".9" fill="currentColor"/></svg>`,
 };
 
 /**
- * `here` is one of "board" | "activity" | "accents".
+ * `here` is one of "board" | "activity" | "accents" | "tmux".
  *
  * **Every icon means the same thing on every page, including the gear.**
  * Settings are the board's sheet — layout, font, colours — and that is where
@@ -113,6 +116,7 @@ export function iconHeader(token, here, title = "Deck") {
     <span class="spacer"></span>
     ${link("board", "/board", "board")}
     ${link("activity", "/activity", "activity")}
+    ${link("tmux", "/tmux", "tmux")}
     ${
       here === "board"
         ? `<button class="icon" id="gear" title="settings">⚙</button>`

@@ -488,3 +488,34 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   on every other platform, so nothing else moves.
 - `src/html.mjs` — `esc` and `colour`, in one place because two files now render
   markup and the alternative was an import cycle between them.
+
+## The tmux page — the one thing here that acts on another machine
+
+`src/tmux-page.mjs` + `src/tmux-cleanup.mjs`, reached from the header's terminal
+icon (`/tmux`). A Claude session resumed into a second tmux pane (restore, a
+bare `--resume`) leaves the old process running: two processes now hold one
+session id, the board follows the newer, and the older is invisible while it
+keeps the conversation open twice. Nothing else ever closes them, so this page
+lists every tmux session on each open remote host in three groups — **hidden
+copies** (ticked), **not Claude** (listed, unticked), **in use** (no box) — and
+closes the ticked ones.
+
+- **A "copy" is an older process of a session id a newer one also runs**
+  (`started`, then pid). The newest process of an id is never a copy, so
+  closing every copy can't lose the last live process of anything. A session
+  that is attached, working, has an unusual name, or is the only copy is "in
+  use" however old it is — a detached session idle for days may be the only
+  place that work lives, so idleness alone never makes one closable.
+- **This is the first place the daemon acts on another machine**, so it is
+  never a poll: a POST, behind a browser confirm, one `tmux kill-session -t =name`
+  per ticked box over the host's existing multiplexed ssh socket. The
+  read-only invariant (persistence.md) is unchanged for everything the daemon
+  does on its own.
+- **The browser reports ticks; the server decides.** `/tmux/close` checks the
+  host is one the daemon has open and every name matches `SAFE_NAME` (they
+  reach a remote shell unquoted — a name that isn't plain is shown but never
+  closable), then `closeTmux` lists the host's panes *again* and re-classifies
+  against the last poll: a session attached or started working since the page
+  was drawn is skipped and counted. `=` makes the tmux target an exact match,
+  so `1` can't close `10`.
+- Remote hosts only. A local tmux or cmux pane isn't offered.
