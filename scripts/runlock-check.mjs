@@ -55,6 +55,9 @@ eq([at(STUCK_AFTER_S - 1), at(STUCK_AFTER_S)], ["queued", "stuck"], "stuck from 
 // kills: waiters before holders, or losing the queue's order
 const tiles = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0, [holder("ci:kob-trace", 16, 200)], [waiter(5, "a", 16, 250), waiter(6, "b", 2, 20)])]))));
 eq(tiles.map((t) => [t.tone, t.title, t.big, t.age]), [["running", "kob-trace", "16c", "3m"], ["queued", "a", "16c", "4m"], ["queued", "b", "2c", "20s"]], "holders first, then the queue in order");
+// kills: hiding an elastic request's floor, or printing "8-8c" for a fixed one
+const ranged = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0, [{ ...holder("a", 8, 1), cores_min: 8 }], [{ ...waiter(1, "b", 16, 1), cores_min: 4 }])]))));
+eq(ranged.map((t) => t.big), ["8c", "4-16c"], "min-max cores when the request is a range");
 // kills: dropping the requestor's kind when the name moves to the title
 eq(tiles[0].line, "ci · ci:kob-trace run", "the kind leads the small line");
 

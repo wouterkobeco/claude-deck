@@ -32,6 +32,8 @@ export function parseRunlockStatus(text) {
     requestor: str(r?.requestor) || "?",
     label: str(r?.label, 80),
     cores: num(r?.cores),
+    // The floor of an elastic request: a run asking for 4-16 starts on 4.
+    coresMin: num(r?.cores_min),
     age: num(r?.[age]),
     // The Claude Code session that started it, when runlock recorded one
     // (kob-backend #1849): what lets its session's key carry a pill.
@@ -110,7 +112,7 @@ export function queueTiles(summary) {
     return {
       tone,
       title: at > 0 ? r.requestor.slice(at + 1) : r.requestor,
-      big: r.cores != null ? `${r.cores}c` : "?",
+      big: r.cores == null ? "?" : r.coresMin != null && r.coresMin < r.cores ? `${r.coresMin}-${r.cores}c` : `${r.cores}c`,
       line: kind ? `${kind} · ${r.label}` : r.label,
       age: formatAge(r.age ?? NaN),
     };
