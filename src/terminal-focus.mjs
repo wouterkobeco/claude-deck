@@ -112,6 +112,7 @@ export async function psTable() {
  * passes neither.
  */
 export async function requestFocus(session, { path = FOCUS_FILE, readProcessTable = psTable } = {}) {
+  /*DBG*/ import("node:fs").then((f) => f.appendFileSync("/private/tmp/claude-501/-Users-wouterd-projects-claude-streamdeck/e6083ffc-5e5b-40af-bc2f-496fc8f1f7be/scratchpad/press.log", JSON.stringify({ at: new Date().toISOString(), id: session?.session_id?.slice(0, 8), host: session?.host ?? null, pid: session?.pid ?? null, unreachable: !!session?.unreachable, nested: !!session?.nested, anc: session?.ancestors?.length ?? null, folder: session?.folder }) + "\n")).catch(() => {});
   if (!session?.pid) return;
   const host = session.host ?? null;
   // A remote session's chain is not walkable here. Its pids belong to another

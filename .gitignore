@@ -1,2 +1,3 @@
 node_modules/
 scripts/render-check-*.png
+docs/.DS_Store

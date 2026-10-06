@@ -3058,6 +3058,7 @@ async function run() {
     const folder = btn?.assigned?.folder ?? null;
     const host = btn?.assigned?.host ?? null;
     const press = { index: control.index, session_id: sessionId, folder, host };
+    /*DBG*/ import("node:fs").then((f) => f.appendFileSync("/private/tmp/claude-501/-Users-wouterd-projects-claude-streamdeck/e6083ffc-5e5b-40af-bc2f-496fc8f1f7be/scratchpad/press.log", JSON.stringify({ at: new Date().toISOString(), DOWN: control.index, view: view.kind, id: sessionId?.slice(0, 8) ?? null, host, folder: folder?.split("/").pop() ?? null, pid: btn?.assigned?.pid ?? null, anc: btn?.assigned?.ancestors?.length ?? null, unreachable: !!btn?.assigned?.unreachable }) + "\n")).catch(() => {});
 
     // The detail board owns the whole deck, so it leaves only by its own back
     // key. Every other key there is a tile describing something — pressing a

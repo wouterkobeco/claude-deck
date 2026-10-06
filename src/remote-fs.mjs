@@ -396,16 +396,21 @@ export async function swapTree(stagingDir, finalDir) {
 
 function run(argv, { input, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "ignore"] });
+    /*DBG*/ const t0 = Date.now(); const errs = [];
+    /*DBG*/ const dbg = (why, code, signal) => import("node:fs").then((f) => f.appendFileSync("/private/tmp/claude-501/-Users-wouterd-projects-claude-streamdeck/e6083ffc-5e5b-40af-bc2f-496fc8f1f7be/scratchpad/remote-fail.log", JSON.stringify({ at: new Date().toISOString(), why, code, signal, ms: Date.now() - t0, timeoutMs, cmd: argv.slice(0, 1).concat(argv.slice(-1).map((a) => String(a).slice(0, 60))), stderr: Buffer.concat(errs).toString().slice(0, 300) }) + "\n")).catch(() => {});
+    const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+    /*DBG*/ child.stderr.on("data", (c) => errs.push(c));
     const chunks = [];
     const kill = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.stdout.on("data", (c) => chunks.push(c));
     child.on("error", () => {
       clearTimeout(kill);
+      /*DBG*/ dbg("spawn-error");
       resolve(null);
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(kill);
+      /*DBG*/ if (code !== 0) dbg("exit", code, signal);
       resolve(code === 0 ? Buffer.concat(chunks) : null);
     });
     child.stdin.on("error", () => {}); // a host that closed early is not a crash
@@ -585,7 +590,8 @@ export async function fetchSource(host, scratchRoot) {
           }
         : null,
     };
-  } catch {
+  } catch (e) {
+    /*DBG*/ import("node:fs").then((f) => f.appendFileSync("/private/tmp/claude-501/-Users-wouterd-projects-claude-streamdeck/e6083ffc-5e5b-40af-bc2f-496fc8f1f7be/scratchpad/remote-fail.log", JSON.stringify({ at: new Date().toISOString(), why: "fetchSource-threw", host, err: String(e?.stack ?? e).slice(0, 400) }) + "\n")).catch(() => {});
     // Same failure value as an unreachable host: whatever partial state was
     // left in `staging`/`finalDir` is cleaned up or overwritten by the next
     // attempt, which starts with the same `rm(staging, {force: true})` above.
