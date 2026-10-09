@@ -154,3 +154,14 @@ export async function requestFocus(session, { path = FOCUS_FILE, readProcessTabl
     await unlink(tmp).catch(() => {});
   }
 }
+
+/**
+ * Ask the window on `folder` (of `host`) to open a terminal running
+ * `tmux attach -t <tmux>`. Same file, same freshness and host rules as a
+ * press; `pids` is empty so no window mistakes it for a reveal.
+ */
+export async function requestAttach({ host = null, folder, tmux }, { path = FOCUS_FILE } = {}) {
+  const tmp = `${path}.attach.tmp`;
+  await writeFile(tmp, JSON.stringify({ pids: [], sessionId: null, host, attach: { folder, tmux }, ts: Date.now() }));
+  await rename(tmp, path);
+}

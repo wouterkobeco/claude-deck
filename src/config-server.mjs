@@ -865,7 +865,11 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         // Counts, not text: they are the only part of the query that reaches
         // the page, and a number can't carry markup.
         const n = (k) => Math.max(0, Math.min(999, Number(url.searchParams.get(k)) || 0));
-        const done = url.searchParams.has("closed") ? { closed: n("closed"), skipped: n("skipped") } : null;
+        const done = url.searchParams.has("closed")
+          ? { closed: n("closed"), skipped: n("skipped") }
+          : url.searchParams.has("revived")
+            ? { revived: n("revived") }
+            : null;
         return send(res, 200, tmuxPage(token, await deps.tmux(), done), "text/html; charset=utf-8");
       }
 
@@ -883,6 +887,19 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         const results = await deps.closeTmux(host, names);
         const closed = results.filter((r) => r.ok).length;
         res.writeHead(303, { Location: `/tmux?t=${token}&closed=${closed}&skipped=${results.length - closed}` });
+        return res.end();
+      }
+
+      if (req.method === "POST" && url.pathname === "/tmux/revive") {
+        const raw = await readBody(req);
+        if (raw === null) return send(res, 400, "body too large");
+        const form = new URLSearchParams(raw);
+        const host = form.get("host");
+        const name = form.get("revive");
+        if (!deps.tmuxHosts().includes(host)) return send(res, 400, "unknown host");
+        if (!SAFE_NAME.test(name ?? "")) return send(res, 400, "bad name");
+        const r = await deps.reviveTmux(host, name);
+        res.writeHead(303, { Location: `/tmux?t=${token}&revived=${r.ok ? 1 : 0}` });
         return res.end();
       }
 

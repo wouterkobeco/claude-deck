@@ -69,3 +69,15 @@ const k2 = [];
 await closeTmux(["1"], { list: async () => panes, sessions: () => [s("A", "1", 100)], kill: async (n) => (k2.push(n), true) });
 eq(k2, [], "if the live twin has gone, the old one is now the only copy and stays");
 console.log("OK: tmux cleanup classification and re-checked close");
+
+// reviveTmux: only a detached Claude session, re-checked, reaches the attach request.
+{
+  const { reviveTmux } = await import("../src/tmux-cleanup.mjs");
+  const panes = parsePanes("5\t0\t100\tclaude\t/p/a\n6\t1\t100\tclaude\t/p/b\n");
+  const sess = [{ session_id: "a", tmux: "5", pid: 1, folder: "/p/a" }, { session_id: "b", tmux: "6", pid: 2, folder: "/p/b" }];
+  const asked = [];
+  const run = (name) => reviveTmux(name, { list: async () => panes, sessions: () => sess, ask: async (r) => asked.push(r.folder) });
+  eq((await run("5")).ok, true, "detached Claude session is revived");
+  eq((await run("6")).ok, false, "an attached one is not");
+  eq(asked, ["/p/a"], "and only the first reached the window");
+}

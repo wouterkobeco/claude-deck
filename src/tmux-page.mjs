@@ -28,6 +28,7 @@ const STYLE = `
   .proj small { display: block; font-weight: 400; color: #9e9e9e; overflow-wrap: anywhere }
   .why { color: #9e9e9e; font-size: 13px; min-width: 0 }
   .age { text-align: right; color: #9e9e9e; font-variant-numeric: tabular-nums }
+  .rv { display: block; margin: 4px 0 0 auto; font: inherit; font-size: 12px; color: #bbdefb; background: #1b3a57; border: 0; border-radius: 4px; padding: 3px 9px; cursor: pointer }
   .bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-top: 10px }
   .bar .msg { flex: 1 1 240px; color: #9e9e9e }
   .bar button { font: inherit; color: #ffd5d5; background: #5b1f1f; border: 0; border-radius: 5px; padding: 8px 14px; cursor: pointer }
@@ -47,6 +48,7 @@ const SCRIPT = `
       paint();
     });
     form.addEventListener("submit", (e) => {
+      if (e.submitter && e.submitter.name === "revive") return;
       const n = boxes().filter((b) => b.checked).length;
       if (!confirm("End " + n + " tmux session" + (n === 1 ? "" : "s") + " on " + form.dataset.host + "? Their conversations stay on disk.")) e.preventDefault();
     });
@@ -70,7 +72,9 @@ function hostSection(token, { host, rows, error }) {
       <span class="tm">tmux ${esc(r.name)}</span>
       <span class="proj">${esc(r.project)}<small>${esc(r.title)}</small></span>
       <span class="why">${esc(r.why)}</span>
-      <span class="age">${esc(idle(r.idle))}</span></div>`;
+      <span class="age">${esc(idle(r.idle))}${
+        r.revive ? `<button type="submit" class="rv" name="revive" value="${esc(r.name)}" formaction="/tmux/revive?t=${esc(token)}" title="Open it in its VS Code window">Revive</button>` : ""
+      }</span></div>`;
     return `<section class="group"><div class="ghead"><h3>${esc(g.title)} (${mine.length})</h3><p>${esc(g.blurb)}</p>${
       g.kind === "use" ? "" : `<label><input type="checkbox" data-all="${g.kind}"${g.on ? " checked" : ""}> select all</label>`
     }</div>${mine.map(line).join("")}</section>`;
@@ -85,7 +89,9 @@ function hostSection(token, { host, rows, error }) {
 
 /** `done` is `{ closed, skipped }` after a close, or null. */
 export function tmuxPage(token, hosts, done = null) {
-  const banner = done
+  const banner = done?.revived !== undefined
+    ? `<div class="banner${done.revived ? "" : " warn"}">${done.revived ? "Asked the VS Code window to attach. It needs to be open on that folder." : "Couldn't revive: the session changed or is gone."}</div>`
+    : done
     ? `<div class="banner${done.skipped ? " warn" : ""}">Closed ${esc(done.closed)}${done.skipped ? `, skipped ${esc(done.skipped)} that changed since this page was drawn` : ""}.</div>`
     : "";
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck tmux</title>

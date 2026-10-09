@@ -57,9 +57,12 @@ export function classifyTmux(panes, sessions, now = Date.now()) {
   const rows = [];
   for (const [name, p] of panes) {
     const mine = live.filter((s) => s.tmux === name);
-    const row = { name, attached: p.attached, idle: Math.max(0, Math.floor(now / 1000) - p.activity), kind: "use", closable: false, project: "", title: "", why: "" };
+    const row = { name, attached: p.attached, folder: null, revive: false, idle: Math.max(0, Math.floor(now / 1000) - p.activity), kind: "use", closable: false, project: "", title: "", why: "" };
     const first = mine[0];
     row.project = first ? basename(first.folder ?? first.cwd) : basename(p.path) || "home";
+    row.folder = first?.folder ?? null;
+    // Detached with a Claude session in it: a window on that folder can attach.
+    row.revive = !!first && first.folder && p.attached === 0 && SAFE_NAME.test(name);
     row.title = first ? (first.aiTitle ?? first.name ?? "") : (p.commands[0] ?? "");
     const busy = mine.some((s) => s.state === "busy");
     const newer = [...new Set(mine.map((s) => newest.get(s.session_id)).filter((n) => n && !mine.includes(n)).map((n) => n.tmux))];
@@ -107,4 +110,15 @@ export async function closeTmux(names, { list, sessions, kill }) {
     }
   }
   return out;
+}
+
+/** Re-check against a fresh listing, then hand the attach to `ask`. Returns `{ ok, why? }`. */
+export async function reviveTmux(name, { list, sessions, ask }) {
+  const panes = await list();
+  if (!panes) return { ok: false, why: "host not answering" };
+  const row = classifyTmux(panes, sessions()).find((r) => r.name === name);
+  if (!row) return { ok: false, why: "already gone" };
+  if (!row.revive) return { ok: false, why: "not a detached Claude session" };
+  await ask(row);
+  return { ok: true };
 }

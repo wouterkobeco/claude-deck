@@ -106,6 +106,16 @@ async function tick() {
     return;
   }
 
+  if (request.attach) {
+    // A revive, not a reveal: only the window that has this folder open acts.
+    const { folder, tmux } = request.attach;
+    if (!(vscode.workspace.workspaceFolders ?? []).some((f) => f.uri.fsPath === folder)) return;
+    const terminal = vscode.window.createTerminal({ name: "claude", cwd: folder });
+    terminal.sendText(restoreCommand({ tmux, reattach: true }));
+    terminal.show();
+    return;
+  }
+
   busy = true;
   try {
     for (const terminal of vscode.window.terminals) {

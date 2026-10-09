@@ -15,12 +15,12 @@ import {
   transcriptPathFor,
 } from "./sessions.mjs";
 import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource, fetchTmuxPanes, killTmuxSession } from "./remote-fs.mjs";
-import { classifyTmux, closeTmux } from "./tmux-cleanup.mjs";
+import { classifyTmux, closeTmux, reviveTmux } from "./tmux-cleanup.mjs";
 import { queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
-import { requestFocus } from "./terminal-focus.mjs";
+import { requestAttach, requestFocus } from "./terminal-focus.mjs";
 import { publishSessions, readPublishedIds } from "./publish-sessions.mjs";
 import { lanAddress, openConfig, startServer } from "./config-server.mjs";
 import { memorySeries, memoryHosts, concurrency, readHistory, recordStates, recordTick, startOfDay, summarise, trimHistory, TICK_MS } from "./history.mjs";
@@ -1928,6 +1928,12 @@ export const configDeps = {
         return panes ? { host, rows: classifyTmux(panes, lastSessions.filter((s) => s.host === host)) } : { host, error: true };
       })
     ),
+  reviveTmux: (host, name) =>
+    reviveTmux(name, {
+      list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
+      sessions: () => lastSessions.filter((s) => s.host === host),
+      ask: (row) => requestAttach({ host, folder: row.folder, tmux: row.name }),
+    }),
   closeTmux: (host, names) =>
     closeTmux(names, {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
