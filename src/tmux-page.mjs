@@ -73,7 +73,7 @@ function hostSection(token, { host, rows, error }) {
       <span class="proj">${esc(r.project)}<small>${esc(r.title)}</small></span>
       <span class="why">${esc(r.why)}</span>
       <span class="age">${esc(idle(r.idle))}${
-        r.revive ? `<button type="submit" class="rv" name="revive" value="${esc(r.name)}" formaction="/tmux/revive?t=${esc(token)}" title="Open it in its VS Code window">Revive</button>` : ""
+        r.revive ? `<button type="submit" class="rv" name="revive" value="${esc(r.name)}" formaction="/tmux/revive?t=${esc(token)}" title="${r.attached ? "Raise its VS Code window" : "Attach it in its VS Code window"}">${r.attached ? "Go to" : "Revive"}</button>` : ""
       }</span></div>`;
     return `<section class="group"><div class="ghead"><h3>${esc(g.title)} (${mine.length})</h3><p>${esc(g.blurb)}</p>${
       g.kind === "use" ? "" : `<label><input type="checkbox" data-all="${g.kind}"${g.on ? " checked" : ""}> select all</label>`
@@ -89,12 +89,24 @@ function hostSection(token, { host, rows, error }) {
 
 /** `done` is `{ closed, skipped }` after a close, or null. */
 export function tmuxPage(token, hosts, done = null) {
-  const banner = done?.revived !== undefined
-    ? `<div class="banner${done.revived ? "" : " warn"}">${done.revived ? "Asked the VS Code window to attach. It needs to be open on that folder." : "Couldn't revive: the session changed or is gone."}</div>`
-    : done
-    ? `<div class="banner${done.skipped ? " warn" : ""}">Closed ${esc(done.closed)}${done.skipped ? `, skipped ${esc(done.skipped)} that changed since this page was drawn` : ""}.</div>`
-    : "";
+  let refresh = "";
+  let banner = "";
+  if (done?.revived !== undefined) {
+    // The attach happens in VS Code a moment after the click, so re-read the
+    // host a few times until the row shows attached.
+    const row = hosts.flatMap((h) => h.rows ?? []).find((r) => r.name === done.name);
+    if (!done.revived) banner = `<div class="banner warn">Couldn't open it: the session changed or is gone.</div>`;
+    else if (done.go) banner = `<div class="banner">Switched to its window.</div>`;
+    else if (row?.attached) banner = `<div class="banner">Attached in VS Code.</div>`;
+    else if (done.tries < 5) {
+      banner = `<div class="banner">Asked VS Code to attach, waiting…</div>`;
+      refresh = `<meta http-equiv="refresh" content="2;url=/tmux?t=${esc(token)}&amp;revived=1&amp;name=${esc(done.name)}&amp;try=${done.tries + 1}">`;
+    } else banner = `<div class="banner warn">Still not attached. Is a VS Code window open on that folder, with the extension reloaded?</div>`;
+  } else if (done) {
+    banner = `<div class="banner${done.skipped ? " warn" : ""}">Closed ${esc(done.closed)}${done.skipped ? `, skipped ${esc(done.skipped)} that changed since this page was drawn` : ""}.</div>`;
+  }
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck tmux</title>
+    ${refresh}
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     ${iconLinks(token)}
     <style>${HEADER_CSS}${STYLE}</style></head><body>

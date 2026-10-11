@@ -868,7 +868,7 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         const done = url.searchParams.has("closed")
           ? { closed: n("closed"), skipped: n("skipped") }
           : url.searchParams.has("revived")
-            ? { revived: n("revived") }
+            ? { revived: n("revived"), tries: n("try"), go: url.searchParams.get("mode") === "go", name: SAFE_NAME.test(url.searchParams.get("name") ?? "") ? url.searchParams.get("name") : "" }
             : null;
         return send(res, 200, tmuxPage(token, await deps.tmux(), done), "text/html; charset=utf-8");
       }
@@ -899,7 +899,7 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         if (!deps.tmuxHosts().includes(host)) return send(res, 400, "unknown host");
         if (!SAFE_NAME.test(name ?? "")) return send(res, 400, "bad name");
         const r = await deps.reviveTmux(host, name);
-        res.writeHead(303, { Location: `/tmux?t=${token}&revived=${r.ok ? 1 : 0}` });
+        res.writeHead(303, { Location: `/tmux?t=${token}&revived=${r.ok ? 1 : 0}&name=${name}&mode=${r.mode ?? ""}` });
         return res.end();
       }
 

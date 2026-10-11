@@ -78,6 +78,8 @@ console.log("OK: tmux cleanup classification and re-checked close");
   const asked = [];
   const run = (name) => reviveTmux(name, { list: async () => panes, sessions: () => sess, ask: async (r) => asked.push(r.folder) });
   eq((await run("5")).ok, true, "detached Claude session is revived");
-  eq((await run("6")).ok, false, "an attached one is not");
-  eq(asked, ["/p/a"], "and only the first reached the window");
+  const go = await run("6");
+  eq([go.ok, go.mode], [true, "go"], "an attached one is raised, not re-attached");
+  eq((await run("9")).ok, false, "a name the host lacks is refused");
+  eq(asked, ["/p/a", "/p/b"], "both reached the window");
 }

@@ -1932,7 +1932,14 @@ export const configDeps = {
     reviveTmux(name, {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
       sessions: () => lastSessions.filter((s) => s.host === host),
-      ask: (row) => requestAttach({ host, folder: row.folder, tmux: row.name }),
+      ask: async (row, mode) => {
+        const live = lastSessions.find((s) => s.host === host && s.tmux === row.name && !s.nested);
+        // Attached: it is the ordinary press. Detached: no pid, so focusWindow's
+        // reveal is skipped and cannot overwrite the attach request below.
+        if (mode === "go" && live) return focusWindow(live);
+        await requestAttach({ host, folder: row.folder, tmux: row.name });
+        await focusWindow({ folder: row.folder, ide: live?.ide ?? null, host });
+      },
     }),
   closeTmux: (host, names) =>
     closeTmux(names, {
