@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { listStreamDecks, openStreamDeck } from "@elgato-stream-deck/node";
 import qrcode from "qrcode-terminal";
@@ -269,6 +270,16 @@ const extraKeys = () => {
   const u = remoteUsages.slice(0, EXTRA_KEYS - q.length);
   return [...u.map((usage) => ({ usage })), ...q.map((queue) => ({ queue }))];
 };
+// Hosts whose test queue is wanted without a Remote-SSH window open on them:
+// work reaches them over ssh from a local session. One host per line.
+const QUEUE_HOSTS_FILE = join(homedir(), ".claude", "streamdeck-queue-hosts");
+function queueHosts() {
+  try {
+    return readFileSync(QUEUE_HOSTS_FILE, "utf8").split("\n").map((l) => l.trim()).filter((l) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(l));
+  } catch {
+    return [];
+  }
+}
 function runlockSummary(host) {
   const known = runlocks.get(host);
   const ttl = known && known.doc === null ? RUNLOCK_ABSENT_MS : RUNLOCK_POLL_MS;
@@ -297,7 +308,7 @@ async function liveSessions() {
     (await getAccount())?.email,
     (host) => remoteAccount(host)?.email
   );
-  queues = remoteHosts.map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
+  queues = [...new Set([...remoteHosts, ...queueHosts()])].map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
   queueRuns = runsBySession(queues);
   liveProjects.clear();
   for (const s of sessions) {

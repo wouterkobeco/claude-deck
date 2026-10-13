@@ -1017,13 +1017,14 @@ const QUEUE_TONE = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, s
  * bar for how many of the box's cores are taken. `age` goes top-right on a
  * tile, the way a session key carries its own.
  */
-export async function renderQueue({ width, height, tone, title, big, line, pct, age }) {
+export async function renderQueue({ width, height, tone, title, big, line, pct, age, wait }) {
   const capSize = Math.round(height * 0.11);
   const bigSize = fitValue(big ?? "", width - 12, Math.round(height * 0.3));
   const lineSize = Math.round(height * 0.1);
   const known = typeof pct === "number";
   const shown = known ? Math.min(100, Math.max(0, pct)) : 0;
   const barY = height - 9;
+  const waitSize = wait ? fitValue(wait, width - 12, Math.round(height * 0.19)) : 0;
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${width}" height="${height}" fill="${QUEUE_TONE[tone] ?? "#1b1b1b"}" />
@@ -1032,9 +1033,11 @@ export async function renderQueue({ width, height, tone, title, big, line, pct, 
             text-anchor="${age ? "start" : "middle"}" dominant-baseline="middle">${escapeXml(fitCaps(title ?? "", age ? width * 0.62 : width - 8, capSize))}</text>
       ${age ? `<text x="${width - 6}" y="${height * 0.13}" font-family="sans-serif" font-size="${capSize}"
             fill="#ffffffaa" text-anchor="end" dominant-baseline="middle">${escapeXml(age)}</text>` : ""}
-      <text x="50%" y="${height * 0.46}" font-family="sans-serif" font-size="${bigSize}" font-weight="bold"
+      <text x="50%" y="${height * (wait ? 0.37 : 0.46)}" font-family="sans-serif" font-size="${wait ? Math.min(bigSize, Math.round(height * 0.24)) : bigSize}" font-weight="bold"
             fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${escapeXml(big ?? "")}</text>
-      <text x="50%" y="${height * 0.74}" font-family="sans-serif" font-size="${lineSize}"
+      ${wait ? `<text x="50%" y="${height * 0.86}" font-family="sans-serif" font-size="${waitSize}" font-weight="bold"
+            fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${escapeXml(wait)}</text>` : ""}
+      <text x="50%" y="${height * (wait ? 0.6 : 0.74)}" font-family="sans-serif" font-size="${lineSize}"
             fill="#ffffffcc" text-anchor="middle" dominant-baseline="middle">${escapeXml(fitLine(line ?? "", width - 8, lineSize))}</text>
       ${known ? `<rect x="6" y="${barY}" width="${width - 12}" height="4" rx="2" fill="#00000055" />
       <rect x="6" y="${barY}" width="${((width - 12) * shown) / 100}" height="4" rx="2" fill="#ffffff" />` : ""}

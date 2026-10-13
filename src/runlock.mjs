@@ -106,7 +106,7 @@ export function queueKey(summary) {
 export function queueTiles(summary) {
   // `ci:kob-trace` is two facts, and the caps title only fits one: the name
   // goes on top, the kind (ci, repo, claude) leads the small line.
-  const tile = (r, tone) => {
+  const tile = (r, tone, waiting = false) => {
     const at = r.requestor.indexOf(":");
     const kind = at > 0 ? r.requestor.slice(0, at) : "";
     return {
@@ -114,10 +114,13 @@ export function queueTiles(summary) {
       title: at > 0 ? r.requestor.slice(at + 1) : r.requestor,
       big: r.cores == null ? "?" : r.coresMin != null && r.coresMin < r.cores ? `${r.coresMin}-${r.cores}c` : `${r.cores}c`,
       line: kind ? `${kind} · ${r.label}` : r.label,
-      age: formatAge(r.age ?? NaN),
+      // A waiter's wait is the news, so it gets the foot of the tile in large
+      // type, the main board's pill; a holder keeps the small corner age.
+      age: !waiting ? formatAge(r.age ?? NaN) : "",
+      ...(!waiting ? {} : { wait: formatAge(r.age ?? NaN) || "…" }),
     };
   };
-  return [...summary.holders.map((h) => tile(h, "running")), ...summary.waiters.map((w) => tile(w, "queued"))];
+  return [...summary.holders.map((h) => tile(h, "running")), ...summary.waiters.map((w) => tile(w, "queued", true))];
 }
 
 /**
