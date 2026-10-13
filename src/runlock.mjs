@@ -64,13 +64,17 @@ export function queueSummary(doc) {
   const holders = doc.lanes.flatMap((l) => l.holders);
   const waiters = doc.lanes.flatMap((l) => l.waiters);
   if (!holders.length && !waiters.length) return null;
-  const lane = doc.lanes.find((l) => l.lane === "default") ?? doc.lanes[0];
-  const capacity = lane?.capacity ?? null;
-  const free = lane?.free ?? null;
+  // Every lane's budget, summed: a run on any lane holds cores, and the
+  // default lane alone read 0/16 beside a run that sat on the prep lane. The
+  // split per lane is `lanes`, for the board.
+  const lanes = doc.lanes.filter((l) => l.capacity != null && l.free != null).map((l) => ({ lane: l.lane, capacity: l.capacity, free: l.free }));
+  const capacity = lanes.length ? lanes.reduce((n, l) => n + l.capacity, 0) : null;
+  const free = lanes.length ? lanes.reduce((n, l) => n + l.free, 0) : null;
   return {
     host: doc.host,
     capacity,
     free,
+    lanes,
     holders,
     waiters,
     // The head is the longest waiter: the one runlock admits next.
@@ -100,6 +104,21 @@ export function queueKey(summary) {
     line: `QUEUED ${formatAge(headWait)}`.trim(),
     pct,
   };
+}
+
+/**
+ * The cores budget as tiles for the board's bottom-right corner, left to
+ * right: each lane when there is more than one, then the total last, nearest
+ * the corner. One lane is just that lane.
+ */
+export function queueBudget(summary) {
+  const budget = (title, capacity, free) => {
+    const used = capacity - free;
+    const pct = capacity ? Math.round((used / capacity) * 100) : 0;
+    return { tone: summary.waiters.length ? "queued" : "running", title, big: `${used}/${capacity}`, line: `${pct}% of cores`, pct, age: "" };
+  };
+  const lanes = (summary.lanes ?? []).map((l) => budget(l.lane, l.capacity, l.free));
+  return lanes.length > 1 ? [...lanes, budget("TOTAL", summary.capacity, summary.free)] : lanes;
 }
 
 /** One tile per run: holders first (what the cores are doing), then the queue in order. */

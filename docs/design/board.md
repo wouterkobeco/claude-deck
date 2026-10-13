@@ -686,10 +686,12 @@ session asks again.
 
 A busy remote test queue (`runlock.mjs`, remote.md) takes a slot beside the
 usage keys the same way a remote subscription's usage key does: `extraKeys()`
-lists remote usage keys first, then busy queues, and `layout()` sizes the row
-from that one list (still at most three, and a busy queue outranks a third
-usage key). Usage keys first so a queue coming and going — it does, with every
-test run — never moves a usage key. Layout runs off the previous poll, so a
+lists busy queues first, then the remote usage keys reversed, left to right, and
+`layout()` sizes the row from that one list (still at most three, and a busy
+queue outranks a third usage key). Subscriptions run contiguously leftwards
+from this machine's own usage key (bottom right), the first remote one beside
+it, and queues sit left of them, so a queue coming and going — it does, with
+every test run — never moves a usage key. Layout runs off the previous poll, so a
 queue that empties since leaves a surplus key, which the draw blanks at once. The face
 is green while every run fits (`12/16` cores, bar = cores taken), gold once
 something waits (the count, and how long the head has), red once the head has

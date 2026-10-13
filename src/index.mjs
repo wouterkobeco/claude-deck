@@ -17,7 +17,7 @@ import {
 } from "./sessions.mjs";
 import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource, fetchTmuxPanes, killTmuxSession } from "./remote-fs.mjs";
 import { classifyTmux, closeTmux, reviveTmux } from "./tmux-cleanup.mjs";
-import { queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
+import { queueBudget, queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
@@ -259,16 +259,19 @@ let remoteHosts = [];
 let queues = [];
 // session id -> its test run's pill, from the busy queues (runsBySession).
 let queueRuns = new Map();
-// The keys beside this machine's usage key, in slot order: remote usage keys
-// first (they come and go with sessions, rarely), then busy queues (they come
-// and go with test runs, often) — so a queue appearing never moves a usage key.
+// The keys beside this machine's usage key, left to right: busy queues (they
+// come and go with test runs, often), then remote usage keys (rarely) — so a
+// queue appearing never moves a usage key, which stays anchored to the right.
 // At most three (layout's cap), and a busy queue outranks a third usage key:
 // a queue is the one of these that says something is happening right now.
 const EXTRA_KEYS = 3;
 const extraKeys = () => {
   const q = queues.slice(0, EXTRA_KEYS);
   const u = remoteUsages.slice(0, EXTRA_KEYS - q.length);
-  return [...u.map((usage) => ({ usage })), ...q.map((queue) => ({ queue }))];
+  // Left to right: queues, then remote usage keys in reverse, so subscriptions
+  // run contiguously leftwards from this machine's own usage key (bottom
+  // right) and the first remote one sits right beside it.
+  return [...q.map((queue) => ({ queue })), ...u.map((usage) => ({ usage })).reverse()];
 };
 // Hosts whose test queue is wanted without a Remote-SSH window open on them:
 // work reaches them over ssh from a local session. One host per line.
@@ -1625,16 +1628,24 @@ async function drawQueueKey(deck, btn, summary) {
 // over the session keys like the other boards. Returns null once the box has
 // gone idle, which is the poll loop's cue to leave. Tiles carry no session, so
 // a press on one only leaves the board.
-async function refreshQueue(deck, buttons, statusButton, host, page = 0) {
+async function refreshQueue(deck, buttons, statusButton, usageButton, host, page = 0) {
   const summary = queues.find((q) => q.host === host)?.summary ?? null;
   if (!summary) return null;
-  const tiles = queueTiles(summary);
+  const runs = queueTiles(summary);
   // The detail board's back key, in the detail board's slot. Any key but the
   // status key already leaves, so this only has to be drawn. With three extra
   // keys the status key sits on that slot itself, and there is none.
   const backBtn = buttons.find((b) => b.index === DETAIL_BACK_INDEX) ?? null;
-  const tileButtons = buttons.filter((b) => b !== backBtn);
-  const paging = pageOf(tiles, page, tileButtons.length);
+  const allTileButtons = buttons.filter((b) => b !== backBtn);
+  // The cores budget never pages. The total (or the only lane) takes the
+  // bottom-right key, where the usage key sits on every other board; the lanes
+  // take the last session keys. The runs page over the rest.
+  const all = queueBudget(summary);
+  const corner = all.at(-1) ?? null;
+  const budget = all.slice(0, -1).slice(-Math.max(0, Math.min(3, allTileButtons.length - 1)));
+  const tileButtons = allTileButtons.slice(0, allTileButtons.length - budget.length);
+  const paging = pageOf(runs, page, tileButtons.length);
+  const tiles = runs;
   if (backBtn) {
     backBtn.assigned = null;
     backBtn.renderParams = null;
@@ -1645,17 +1656,25 @@ async function refreshQueue(deck, buttons, statusButton, host, page = 0) {
     }
   }
   await Promise.all(
-    tileButtons.map(async (btn, i) => {
-      const tile = paging.entries[i] ?? null;
+    allTileButtons.map(async (btn, i) => {
+      const tile = (i < tileButtons.length ? paging.entries[i] : budget[i - tileButtons.length]) ?? null;
       btn.assigned = null;
       btn.renderParams = null;
       btn.leavingParams = null;
-      const drawn = tile ? `queue-tile ${JSON.stringify(tile)}` : null;
+      // Never null: layout() resets `drawn` to null when the extra keys come or
+      // go, and a null here would read "already blank" for a key that still
+      // holds the main board's face.
+      const drawn = tile ? `queue-tile ${JSON.stringify(tile)}` : "queue-blank";
       if (btn.drawn === drawn) return;
       await deck.fillKeyBuffer(btn.index, await (tile ? renderQueue({ ...btn, ...tile }) : renderBlank(btn)), { format: "rgba" });
       btn.drawn = drawn;
     })
   );
+  const cornerDrawn = corner ? `queue-tile ${JSON.stringify(corner)}` : "blank";
+  if (usageButton.drawn !== cornerDrawn) {
+    await deck.fillKeyBuffer(usageButton.index, await (corner ? renderQueue({ ...usageButton, ...corner }) : renderBlank(usageButton)), { format: "rgba" });
+    usageButton.drawn = cornerDrawn;
+  }
   // The status key names the board: how many runs, on which box.
   const line = pageLine(paging.page, paging.pages, summary.host);
   const drawn = `queue-status ${tiles.length} ${line}`;
@@ -3249,7 +3268,7 @@ async function run() {
       // The stats board owns the whole deck bar the status key: back and config
       // sit at fixed indices (10, 11) that a remote usage key would shift the
       // status key onto, and it already shows every account's usage itself.
-      if (view.kind !== "detail") layout(view.kind === "stats" ? 0 : extraKeys().length);
+      if (view.kind !== "detail") layout(view.kind === "stats" || view.kind === "queue" ? 0 : extraKeys().length);
       if (view.kind === "stats") {
         // Every subscription cswap knows about, active first, two keys each
         // (usage, resets), then the version. Read off cswap's own cache —
@@ -3319,7 +3338,7 @@ async function run() {
         }
       } else if (view.kind === "queue") {
         await liveSessions(); // refreshes `queues`
-        const drawn = await refreshQueue(deck, buttons, statusButton, view.host, queuePage);
+        const drawn = await refreshQueue(deck, buttons, statusButton, usageButton, view.host, queuePage);
         if (drawn) ({ pages: queuePages, page: queuePage } = drawn);
         // The box went idle (or stopped answering): the board is empty, and
         // its key is gone from the deck, so leave the way the other boards do.
@@ -3435,7 +3454,7 @@ async function run() {
           await deck.fillKeyBuffer(usageButton.index, await renderBlank(usageButton), { format: "rgba" });
           usageButton.drawn = "blank";
         }
-      } else if (view.kind !== "detail") {
+      } else if (view.kind !== "detail" && view.kind !== "queue") {
         await drawUsage(deck, usageButton);
         const extras = extraKeys();
         await Promise.all(
