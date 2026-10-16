@@ -17,6 +17,9 @@ export const STUCK_AFTER_S = 600;
 // Remote output is text another machine wrote. Every field is coerced to the
 // type the key needs and bounded, so a strange value can only look strange.
 const str = (v, max = 60) => (typeof v === "string" ? v.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, max) : v == null ? "" : String(v).slice(0, max));
+// Signed: a run past its estimate reports negative time remaining, and that is
+// the one case where the sign is the news.
+const signed = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
 
 /** The runlock document, or null when it is not one this understands. */
@@ -35,6 +38,8 @@ export function parseRunlockStatus(text) {
     // The floor of an elastic request: a run asking for 4-16 starts on 4.
     coresMin: num(r?.cores_min),
     age: num(r?.[age]),
+    // Runlock's own estimate: time left for a holder, until it starts for a waiter.
+    eta: signed(r?.remaining_s ?? r?.starts_in_s),
     // The Claude Code session that started it, when runlock recorded one
     // (kob-backend #1849): what lets its session's key carry a pill.
     session: typeof r?.session === "string" && /^[0-9A-Za-z-]{8,64}$/.test(r.session) ? r.session : null,
@@ -125,21 +130,30 @@ export function queueBudget(summary) {
 export function queueTiles(summary) {
   // `ci:kob-trace` is two facts, and the caps title only fits one: the name
   // goes on top, the kind (ci, repo, claude) leads the small line.
-  const tile = (r, tone, waiting = false) => {
+  const tile = (r, tone, pos = null) => {
+    const holding = pos == null;
+    // A running job shows what is left, not what has elapsed; with no estimate
+    // from runlock the elapsed time is all there is, and it stays.
+    const left = holding && r.eta != null;
+    const eta = r.eta == null || holding ? "" : `starts ~${formatAge(Math.max(0, r.eta)) || "now"}`;
     const at = r.requestor.indexOf(":");
     const kind = at > 0 ? r.requestor.slice(0, at) : "";
     return {
       tone,
       title: at > 0 ? r.requestor.slice(at + 1) : r.requestor,
-      big: r.cores == null ? "?" : r.coresMin != null && r.coresMin < r.cores ? `${r.coresMin}-${r.cores}c` : `${r.cores}c`,
+      big: r.cores == null ? "?" : !holding ? (r.coresMin != null && r.coresMin < r.cores ? `${r.coresMin}-${r.cores}c` : `${r.cores}c`) : `${r.cores}c`,
       line: kind ? `${kind} · ${r.label}` : r.label,
-      // A waiter's wait is the news, so it gets the foot of the tile in large
-      // type, the main board's pill; a holder keeps the small corner age.
-      age: !waiting ? formatAge(r.age ?? NaN) : "",
-      ...(!waiting ? {} : { wait: formatAge(r.age ?? NaN) || "…" }),
+      // How long it has run or waited is the news, so it gets the foot of the
+      // tile in large type, the main board's pill.
+      age: "",
+      wait: left ? (r.eta >= 0 ? `${formatAge(r.eta) || "0s"} left` : `${formatAge(-r.eta)} over`) : formatAge(r.age ?? NaN) || "…",
+      eta,
+      // How far through its estimate a running job is, for the web page's bar.
+      frac: holding && r.eta != null && r.age != null ? Math.min(1, r.age / Math.max(1, r.age + Math.max(0, r.eta))) : null,
+      pos,
     };
   };
-  return [...summary.holders.map((h) => tile(h, "running")), ...summary.waiters.map((w) => tile(w, "queued", true))];
+  return [...summary.holders.map((h) => tile(h, "running")), ...summary.waiters.map((w, i) => tile(w, "queued", i + 1))];
 }
 
 /**
@@ -164,3 +178,49 @@ export function runsBySession(queues) {
   return out;
 }
 
+
+/**
+ * Every run a session has on a busy queue, as chips for the web board:
+ * waiting ones first in queue order (`Q2 4m`), then holding ones (`RUN 3m`),
+ * at most three. The deck's key has room for one pill and keeps `runsBySession`.
+ */
+export function chipsBySession(queues, max = 3) {
+  const out = new Map();
+  for (const { summary } of queues) {
+    const mine = (id) => out.get(id) ?? out.set(id, []).get(id);
+    summary.waiters.forEach((w, i) => w.session && mine(w.session).push({ kind: "queued", text: `Q${i + 1} ${formatAge(w.age ?? NaN) || "…"}`, at: 0 }));
+    for (const h of summary.holders) if (h.session) mine(h.session).push({ kind: "running", text: `RUN ${formatAge(h.age ?? NaN)}`.trim(), at: 1 });
+  }
+  for (const [id, chips] of out) out.set(id, chips.sort((a, b) => a.at - b.at).slice(0, max).map(({ kind, text }) => ({ kind, text })));
+  return out;
+}
+
+/**
+ * Runs that ended without finishing, from the host's history rows (one JSON
+ * object per line, already grepped down to the interesting ones): ran out of
+ * `--timeout`, left the queue before starting, or were killed by a signal.
+ * Newest first, within `maxAgeS`. Text from another machine, so every field is
+ * coerced like the status document's.
+ */
+export function parseEnded(text, now = Date.now(), maxAgeS = 86400, max = 20) {
+  const out = [];
+  for (const line of String(text ?? "").split("\n")) {
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!r || typeof r !== "object") continue;
+    const ended =
+      r.status === "timeout" ? (r.started_at ? "timed out while running" : "timed out waiting for cores")
+      : r.status === "cancelled" ? "left the queue before starting"
+      : r.termination_kind === "signalled" ? `killed by signal ${num(r.signal) ?? "?"}`
+      : null;
+    if (!ended) continue;
+    const at = Date.parse(r.finished_at ?? r.enqueued_at) + (r.finished_at ? 0 : (num(r.wait_seconds) ?? 0) * 1000);
+    if (!Number.isFinite(at) || now - at > maxAgeS * 1000) continue;
+    out.push({ at, ended, requestor: str(r.requestor) || "?", label: str(r.label, 80), ranS: num(r.run_seconds), waitedS: num(r.wait_seconds), session: typeof r.session === "string" && /^[0-9A-Za-z-]{8,64}$/.test(r.session) ? r.session : null });
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, max);
+}

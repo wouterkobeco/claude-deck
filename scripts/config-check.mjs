@@ -705,7 +705,7 @@ eq(grid.includes(`href="/activity?t=${bToken}"`), true, "and so does the tile th
 for (const [path, here] of [["/board", "board"], ["/activity", "activity"], ["/", "accents"]]) {
   const html = await (await fetch(`${bBase}${path}?t=${bToken}`)).text();
   const head = html.split('class="head"')[1].split("</header>")[0];
-  eq(head.split('class="icon').length - 1, 4, `${path} carries all four destinations`);
+  eq(head.split('class="icon').length - 1, 5, `${path} carries all five destinations`);
   // The accents page is not one of the three destinations — it is where the
   // deck's own config key lands, and it keeps drag-to-reorder — so nothing is
   // marked there rather than something being marked arbitrarily.
@@ -894,6 +894,7 @@ console.log("OK: status tile");
   const closes = [];
   const t = await createConfigServer({
     tmuxHosts: () => ["beast"],
+    queues: () => [{ host: "<b>BEAST</b>", budget: [{ tone: "queued", title: "TOTAL", big: "16/20", line: "80% of cores" }], tiles: [{ tone: "running", big: "12c", title: "kob-trace", line: "ci · vitest", age: "", wait: "5m" }, { tone: "queued", big: "4-16c", title: "w9", line: "claude · run", age: "", wait: "21m" }] }],
     tmux: async () => [
       { host: "beast", rows: [
         { name: "5", project: "<b>x</b>", title: '"t"', why: "same session open in tmux 13", idle: 7200, kind: "copy", closable: true },
@@ -908,6 +909,10 @@ console.log("OK: status tile");
   const post = (body) => fetch(`${tb}/tmux/close?t=${tt}`, { method: "POST", body, redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" } });
 
   eq((await fetch(`${tb}/tmux`)).status, 403, "the tmux page needs the token too");
+  eq((await fetch(`${tb}/queue`)).status, 403, "the queue page needs the token too");
+  const qp = await (await fetch(`${tb}/queue?t=${tt}`)).text();
+  eq(qp.includes("<b>BEAST</b>"), false, "a host name is escaped on the queue page");
+  eq(qp.includes("21m") && qp.includes("5m") && qp.includes("16/20"), true, "every run's time and the budget are listed");
   const tp = await (await fetch(`${tb}/tmux?t=${tt}`)).text();
   eq(tp.includes('value="5"') && !tp.includes('value="13"'), true, "a closable session has a box, one in use does not");
   eq(tp.includes("<b>x</b>"), false, "a project name is escaped");

@@ -18,6 +18,7 @@ import { networkInterfaces } from "node:os";
 import { ACCENTS } from "./accents.mjs";
 import { DEFAULT_PORT, readBoardState, writeBoardState } from "./board-state.mjs";
 import { tmuxPage } from "./tmux-page.mjs";
+import { queuePage } from "./queue-page.mjs";
 import { SAFE_NAME } from "./tmux-cleanup.mjs";
 import { boardGrid, boardPage, detailPanel, iconHeader, iconLinks, FAVICON_SIZES, HEADER_CSS, HEADER_SCRIPT } from "./board-page.mjs";
 import { renderIcon, usageColor } from "./render.mjs";
@@ -859,6 +860,10 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
           activityPage(token, deps.activity(url.searchParams.get("p")), await deps.status()),
           "text/html; charset=utf-8"
         );
+      }
+
+      if (req.method === "GET" && url.pathname === "/queue") {
+        return send(res, 200, queuePage(token, deps.queues()), "text/html; charset=utf-8");
       }
 
       if (req.method === "GET" && url.pathname === "/tmux") {

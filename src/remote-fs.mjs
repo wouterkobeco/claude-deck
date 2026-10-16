@@ -620,6 +620,20 @@ export async function fetchAccount(host, controlPath) {
 }
 
 /**
+ * The runs on a host that ended without finishing (timed out, cancelled,
+ * signalled), as raw history lines for `parseEnded`; null when the host did not
+ * answer. This month's segment only, grepped on the host so a few MB of
+ * history never crosses the wire. `[[:space:]]*` because runlock writes
+ * `"status": "ok"` with a space and nothing promises it always will.
+ */
+export async function fetchRunlockEnded(host, controlPath) {
+  const cmd =
+    'f=$(ls -d ~/.local/state/runlock/history/*.jsonl 2>/dev/null | tail -1); [ -n "$f" ] && grep -E \'"status":[[:space:]]*"(timeout|cancelled)"|"termination_kind":[[:space:]]*"signalled"\' "$f" | tail -n 40; echo ok';
+  const buf = await run(["ssh", ...sshArgs(host, controlPath), cmd], { timeoutMs: 8000 });
+  return buf ? buf.toString("utf8").replace(/\nok\n?$/, "\n") : null;
+}
+
+/**
  * A remote host's test queue, as `runlock status --json` reports it (see
  * runlock.mjs), or null: no runlock there, host unreachable, or output this
  * does not recognise. Rides the poll's own multiplexed ssh socket like

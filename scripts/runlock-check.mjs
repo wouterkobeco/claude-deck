@@ -2,7 +2,7 @@
 // another machine wrote), the busy/idle fold that makes the key appear only
 // while the box works, the key's face, and the board's tiles.
 // Run: node scripts/runlock-check.mjs
-import { parseRunlockStatus, queueSummary, queueKey, queueBudget, queueTiles, runsBySession, STUCK_AFTER_S } from "../src/runlock.mjs";
+import { parseRunlockStatus, queueSummary, queueKey, queueBudget, queueTiles, runsBySession, chipsBySession, parseEnded, STUCK_AFTER_S } from "../src/runlock.mjs";
 import { renderQueue } from "../src/render.mjs";
 
 const eq = (got, want, label) => {
@@ -57,10 +57,13 @@ const board = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0, [holder("c
 const tiles = board;
 // kills: a board with no cores figure (the subscription %); one lane is one budget tile
 eq(queueBudget(queueSummary(parseRunlockStatus(doc([lane(0, [holder("ci:kob-trace", 16, 200)], [])])))).map((t) => [t.title, t.big, t.line, t.pct]), [["default", "16/16", "100% of cores", 100]], "one lane is one budget tile");
-eq(tiles.map((t) => [t.tone, t.title, t.big, t.age, t.wait]), [["running", "kob-trace", "16c", "3m", undefined], ["queued", "a", "16c", "", "4m"], ["queued", "b", "2c", "", "20s"]], "holders first, then the queue in order, a waiter carrying its position and wait");
+eq(tiles.map((t) => [t.tone, t.title, t.big, t.age, t.wait]), [["running", "kob-trace", "16c", "", "3m"], ["queued", "a", "16c", "", "4m"], ["queued", "b", "2c", "", "20s"]], "holders first, then the queue in order, a waiter carrying its position and wait");
 // kills: hiding an elastic request's floor, or printing "8-8c" for a fixed one
 const ranged = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0, [{ ...holder("a", 8, 1), cores_min: 8 }], [{ ...waiter(1, "b", 16, 1), cores_min: 4 }])]))));
-eq(ranged.map((t) => t.big), ["8c", "4-16c"], "min-max cores when the request is a range");
+eq(ranged.map((t) => t.big), ["8c", "4-16c"], "min-max cores for a waiting range");
+// kills: a started elastic run still showing its request (10-16c) instead of what it got
+const started = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0, [{ ...holder("a", 14, 1), cores_min: 10 }], [])]))));
+eq(started[0].big, "14c", "a started run shows the cores it received");
 // kills: dropping the requestor's kind when the name moves to the title
 eq(tiles[0].line, "ci · ci:kob-trace run", "the kind leads the small line");
 
@@ -92,5 +95,31 @@ eq(tileBuf.length, 72 * 72 * 4, "renders a tile");
 const two = queueSummary(parseRunlockStatus(doc([lane(16), lane(14, [holder("ci:kob-trace", 2, 60)], [], "prep")])));
 eq(queueKey(two).big, "2/32", "the key totals every lane");
 eq(queueBudget(two).map((t) => [t.title, t.big]), [["default", "0/16"], ["prep", "2/16"], ["TOTAL", "2/32"]], "the board splits it per lane, total in the corner");
+
+// kills: one chip per session when it has several runs; unbounded chips; wrong order
+const many = parseRunlockStatus(doc([lane(0,
+  [{ ...holder("ci:x", 8, 200), session: sid(5) }],
+  [{ ...waiter(1, "a", 2, 400), session: sid(5) }, waiter(2, "b", 2, 300), { ...waiter(3, "c", 2, 200), session: sid(5) }, { ...waiter(4, "d", 2, 100), session: sid(5) }])]));
+eq(chipsBySession([{ summary: queueSummary(many) }]).get(sid(5)), [{ kind: "queued", text: "Q1 6m" }, { kind: "queued", text: "Q3 3m" }, { kind: "queued", text: "Q4 1m" }], "up to three chips, the waits first in queue order");
+
+// kills: a timeout missing from the page, a kill labelled as a timeout, or a day-old row listed
+const now = Date.parse("2026-10-16T15:00:00Z");
+const row = (o) => JSON.stringify({ requestor: "ci:x", label: "run", enqueued_at: "2026-10-16T14:00:00Z", wait_seconds: 60, ...o });
+const ended = parseEnded([
+  row({ status: "timeout", started_at: null }),
+  row({ status: "timeout", started_at: "2026-10-16T14:05:00Z", finished_at: "2026-10-16T14:50:00Z", run_seconds: 2700 }),
+  row({ status: "failed", termination_kind: "signalled", signal: 15, finished_at: "2026-10-16T14:55:00Z" }),
+  row({ status: "failed", termination_kind: "exited", finished_at: "2026-10-16T14:56:00Z" }),
+  row({ status: "timeout", enqueued_at: "2026-10-14T14:00:00Z" }),
+  "not json",
+].join("\n"), now);
+eq(ended.map((e) => e.ended), ["killed by signal 15", "timed out while running", "timed out waiting for cores"], "timeouts and kills, newest first, ordinary failures and old rows left out");
+
+// kills: the estimate missing, a waiter's "starts" read as "left", an overrun hidden
+const est = queueTiles(queueSummary(parseRunlockStatus(doc([lane(0,
+  [{ ...holder("ci:x", 8, 180), remaining_s: 120 }, { ...holder("ci:y", 4, 900), remaining_s: -200 }],
+  [{ ...waiter(1, "w", 8, 300), starts_in_s: 330 }])]))));
+eq(est.map((t) => [t.wait, t.eta]), [["2m left", ""], ["3m over", ""], ["5m", "starts ~5m"]], "time left on one line, an overrun, and a waiter still showing its wait");
+eq([est[0].frac, est[2].pos], [0.6, 1], "a bar fraction for a holder, a position for a waiter");
 
 console.log("OK: runlock queue key");

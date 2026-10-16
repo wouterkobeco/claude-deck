@@ -15,9 +15,9 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { codexTreeReader, fetchAccount, fetchRunlock, fetchSource, fetchTmuxPanes, killTmuxSession } from "./remote-fs.mjs";
+import { codexTreeReader, fetchAccount, fetchRunlock, fetchRunlockEnded, fetchSource, fetchTmuxPanes, killTmuxSession } from "./remote-fs.mjs";
 import { classifyTmux, closeTmux, reviveTmux } from "./tmux-cleanup.mjs";
-import { queueBudget, queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
+import { chipsBySession, parseEnded, queueBudget, queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
 import { focusCmuxPane } from "./cmux-focus.mjs";
@@ -259,6 +259,7 @@ let remoteHosts = [];
 let queues = [];
 // session id -> its test run's pill, from the busy queues (runsBySession).
 let queueRuns = new Map();
+let queueChips = new Map();
 // The keys beside this machine's usage key, left to right: busy queues (they
 // come and go with test runs, often), then remote usage keys (rarely) — so a
 // queue appearing never moves a usage key, which stays anchored to the right.
@@ -282,6 +283,19 @@ function queueHosts() {
   } catch {
     return [];
   }
+}
+// Runs that ended early, per host, for the web queue page only: a minute is
+// fresh enough for something that happened in the last day.
+const endedRuns = new Map();
+function endedFor(host) {
+  const known = endedRuns.get(host);
+  if (process.env.STREAMDECK_NO_REMOTE !== "1" && (!known || (!known.inFlight && Date.now() - known.at > 60000))) {
+    endedRuns.set(host, { rows: known?.rows ?? [], at: Date.now(), inFlight: true });
+    fetchRunlockEnded(host, join(SCRATCH_ROOT, "cm-%h"))
+      .then((text) => endedRuns.set(host, { rows: text == null ? known?.rows ?? [] : parseEnded(text), at: Date.now(), inFlight: false }))
+      .catch(() => endedRuns.set(host, { rows: known?.rows ?? [], at: Date.now(), inFlight: false }));
+  }
+  return known?.rows ?? [];
 }
 function runlockSummary(host) {
   const known = runlocks.get(host);
@@ -313,6 +327,7 @@ async function liveSessions() {
   );
   queues = [...new Set([...remoteHosts, ...queueHosts()])].map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
   queueRuns = runsBySession(queues);
+  queueChips = chipsBySession(queues);
   liveProjects.clear();
   for (const s of sessions) {
     if (s.nested) continue;
@@ -1905,7 +1920,7 @@ async function boardKeys() {
   // either way, so the page's poll sees that tile *change* rather than one
   // tile being removed and another appearing in its place.
   return [
-    ...keys.map((k) => (k.kind === "session" && queueRuns.has(k.id) ? { ...k, queue: queueRuns.get(k.id) } : k)),
+    ...keys.map((k) => (k.kind === "session" && queueRuns.has(k.id) ? { ...k, queue: queueRuns.get(k.id), queues: queueChips.get(k.id) } : k)),
     // A busy remote test queue, the same face as its deck key. Inert here:
     // the web board has no sub-boards.
     ...queues.map((q) => ({ id: `__queue:${q.host}`, kind: "queue", ...queueKey(q.summary) })),
@@ -1950,6 +1965,15 @@ export const configDeps = {
   // The tmux cleanup page. Hosts are the ones a window is open on, read from
   // the same list the poll uses; the sessions are the last poll's, so what the
   // page calls a copy is what the board already decided.
+  // Busy hosts first, then any other watched host with something that ended
+  // early: a timeout on an idle box is exactly what you come here to find.
+  queues: () => {
+    const busy = new Map(queues.map((q) => [q.host, q.summary]));
+    const hosts = [...new Set([...busy.keys(), ...remoteHosts, ...queueHosts()])];
+    return hosts
+      .map((host) => ({ host, budget: busy.has(host) ? queueBudget(busy.get(host)) : [], tiles: busy.has(host) ? queueTiles(busy.get(host)) : [], ended: endedFor(host) }))
+      .filter((h) => h.tiles.length || h.ended.length);
+  },
   tmuxHosts: () => remoteHosts,
   tmux: async () =>
     Promise.all(

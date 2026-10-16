@@ -77,13 +77,17 @@ const ICONS = {
     <rect x="1" y="9" width="3" height="6" rx="1" fill="currentColor"/>
     <rect x="6.5" y="5" width="3" height="10" rx="1" fill="currentColor"/>
     <rect x="12" y="1" width="3" height="14" rx="1" fill="currentColor"/></svg>`,
+  queue: `<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">
+    <rect x="1" y="2" width="14" height="3" rx="1" fill="currentColor"/>
+    <rect x="1" y="6.5" width="10" height="3" rx="1" fill="currentColor"/>
+    <rect x="1" y="11" width="6" height="3" rx="1" fill="currentColor"/></svg>`,
   tmux: `<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M2 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     <rect x="8" y="11" width="6" height="1.8" rx=".9" fill="currentColor"/></svg>`,
 };
 
 /**
- * `here` is one of "board" | "activity" | "accents" | "tmux".
+ * `here` is one of "board" | "activity" | "accents" | "queue" | "tmux".
  *
  * **Every icon means the same thing on every page, including the gear.**
  * Settings are the board's sheet — layout, font, colours — and that is where
@@ -116,6 +120,7 @@ export function iconHeader(token, here, title = "Deck") {
     <span class="spacer"></span>
     ${link("board", "/board", "board")}
     ${link("activity", "/activity", "activity")}
+    ${link("queue", "/queue", "test queue")}
     ${link("tmux", "/tmux", "tmux")}
     ${
       here === "board"
@@ -316,7 +321,9 @@ const STYLE = `
   .foot i.active { background: #ffffff99 }
   /* This session's run on a remote test queue (runlock.mjs): the deck key's
      foot-row pill, gold while it waits for cores, green while it holds them. */
-  .foot .qpill { flex: none; margin-left: auto; padding: 0 3cqw; border-radius: 3px; color: #000;
+  .foot .qpill + .qpill { margin-left: 1cqw }
+  .foot .qpill:first-of-type { margin-left: auto }
+  .foot .qpill { flex: 0 1 auto; min-width: 0; overflow: hidden; padding: 0 3cqw; border-radius: 3px; color: #000;
                  font-weight: 700; font-size: calc(var(--fs) * .6cqh); line-height: 1.4; align-self: center }
 
   /* The three reserved keys. Dark and quiet, like their tiles on the deck.
@@ -544,12 +551,12 @@ function tile(k, token) {
   // once something waits for cores, red once the head has waited too long.
   if (k.kind === "queue") {
     const tone = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, stuck: STATE_COLORS.requires_action }[k.tone] ?? STATE_COLORS.idle;
-    return `<div class="key dark tile"${id} style="background:${tone}">
+    return `<a class="key dark tile" href="/queue?t=${esc(token)}"${id} style="background:${tone}">
       <div class="lbl">${esc(k.title)}</div>
       <div class="val">${esc(k.big)}</div>
       <div class="sub">${esc(k.line)}</div>
       ${typeof k.pct === "number" ? `<div class="gauge"><i style="width:${Math.min(100, Math.max(0, k.pct))}%;background:#ffffff"></i></div>` : ""}
-    </div>`;
+    </a>`;
   }
   if (k.kind === "memory") {
     return `<a class="key dark tile alert" href="/activity?t=${esc(token)}"${id}>
@@ -614,16 +621,16 @@ function tile(k, token) {
     ${
       // One foot row, as on the deck: the task squares, and the test-run pill
       // at its right end, the squares giving way.
-      k.squares?.length || k.queue
+      k.squares?.length || k.queue || k.queues?.length
         ? `<div class="foot">${(k.squares ?? [])
             .map((s) => {
               const { state, title } = typeof s === "string" ? { state: s, title: "" } : s;
               return `<i class="${state === "todo" ? "" : esc(state)}"${title ? ` title="${esc(title)}"` : ""}></i>`;
             })
             .join("")}${
-            k.queue
-              ? `<b class="qpill" style="background:${k.queue.kind === "queued" ? MARKER_COLORS.waiting : MARKER_COLORS.busy}">${esc(k.queue.text)}</b>`
-              : ""
+            (k.queues?.length ? k.queues : k.queue ? [k.queue] : [])
+              .map((q) => `<b class="qpill" style="background:${q.kind === "queued" ? MARKER_COLORS.waiting : MARKER_COLORS.busy}">${esc(q.text)}</b>`)
+              .join("")
           }</div>`
         : ""
     }
