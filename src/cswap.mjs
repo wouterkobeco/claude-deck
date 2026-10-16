@@ -107,16 +107,28 @@ export async function getCswapAccounts(now = Date.now(), root = CSWAP_ROOT) {
 // of it is running — while the daemon already asks the API about the active
 // subscription every five minutes. Let that answer win for the active account:
 // a live number over a cached one, and a cached one over nothing.
-export function withLiveUsage(accounts, live) {
-  return accounts.map((a) =>
-    a.active
-      ? {
-          ...a,
-          session: live.session ?? a.session,
-          week: live.week ?? a.week,
-          sessionResetsAt: live.sessionResetsAt ?? a.sessionResetsAt,
-          weekResetsAt: live.weekResetsAt ?? a.weekResetsAt,
-        }
-      : a
-  );
+//
+// "Active" is the account the live numbers belong to, which is the one signed
+// in right now (`email`, from getAccount) — not what cswap's sequence.json says
+// is active, because that file only changes when cswap itself switches. After a
+// plain /login it kept naming the old account, and its stale 4%/72% got the
+// live account's 78%/92% painted over it. cswap's own marker is the fallback
+// when the live email is unknown or matches no stored account.
+export function withLiveUsage(accounts, live, email = null) {
+  const mine = email ? accounts.find((a) => a.email === email) : null;
+  const isLive = (a) => (mine ? a === mine : a.active);
+  return accounts
+    .map((a) =>
+      isLive(a)
+        ? {
+            ...a,
+            active: true,
+            session: live.session ?? a.session,
+            week: live.week ?? a.week,
+            sessionResetsAt: live.sessionResetsAt ?? a.sessionResetsAt,
+            weekResetsAt: live.weekResetsAt ?? a.weekResetsAt,
+          }
+        : { ...a, active: false }
+    )
+    .sort((x, y) => y.active - x.active);
 }

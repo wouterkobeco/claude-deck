@@ -37,6 +37,10 @@ assert.equal((await getCswapAccounts(200_000, root)).length, 2, "a half-written 
 
 // The active account takes the daemon's own live numbers over cswap's cache
 // (which can be stale or missing a reset); the others keep what cswap has.
+// A stale cswap "active" marker: the live numbers go to the signed-in account.
+const notActive = withLiveUsage([{ slot: "2", email: "wouter@x", active: true, session: 4, week: 72 }, { slot: "4", email: "claude3@x", active: false, session: 1, week: 2 }], { session: 78, week: 92 }, "claude3@x");
+assert.deepEqual(notActive.map((a) => [a.email, a.active, a.session, a.week]), [["claude3@x", true, 78, 92], ["wouter@x", false, 4, 72]], "live numbers go to the signed-in account, which leads");
+
 const merged = withLiveUsage(parsed, { session: 9, week: 61, sessionResetsAt: "2026-08-20T20:30:00Z", weekResetsAt: null });
 assert.deepEqual([merged[0].session, merged[0].sessionResetsAt, merged[0].week], [9, "2026-08-20T20:30:00Z", 61]);
 assert.equal(merged[1].week, 29, "inactive accounts are untouched");

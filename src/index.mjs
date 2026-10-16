@@ -2030,7 +2030,7 @@ export const configDeps = {
       account: await getAccountName(),
       // This machine first, then every reachable host, under its name.
       memory: [{ name: "This Mac", ...getMemory() }, ...Object.entries(hostMemories()).map(([name, m]) => ({ name, ...m }))],
-      accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }).map((a) => ({
+      accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }, (await getAccount())?.email).map((a) => ({
         // The local part, not the whole email: the same string the usage keys
         // and the stats board title themselves with.
         name: a.name,
@@ -3333,7 +3333,7 @@ async function run() {
         // Accounts lead, the version beside them, then the memory keys on a
         // row of their own — read as two things, not one run — padded to the
         // next row only when the memory keys still fit above the back key.
-        const head = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage())), versionTile];
+        const head = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage(), (await getAccount())?.email)), versionTile];
         const nextRow = Math.ceil(head.length / 5) * 5;
         const pad = nextRow + memoryTiles.length <= DETAIL_BACK_INDEX ? Array(nextRow - head.length).fill(null) : [];
         const statTiles = [...head, ...pad, ...memoryTiles].slice(
