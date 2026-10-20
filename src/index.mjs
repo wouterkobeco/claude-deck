@@ -15,8 +15,8 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { codexTreeReader, fetchAccount, fetchRunlock, fetchRunlockEnded, fetchSource, fetchTmuxPanes, killTmuxSession } from "./remote-fs.mjs";
-import { classifyTmux, closeTmux, reviveTmux } from "./tmux-cleanup.mjs";
+import { codexTreeReader, fetchAccount, fetchRunlock, fetchRunlockEnded, fetchSource, fetchTmuxPanes, killTmuxSession, peekTmuxSession } from "./remote-fs.mjs";
+import { classifyTmux, closeTmux, killDetached, reviveTmux } from "./tmux-cleanup.mjs";
 import { chipsBySession, parseEnded, queueBudget, queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
@@ -1908,7 +1908,7 @@ async function boardKeys() {
   const now = Date.now() / 1000;
   const sessions = lastSessions;
   const keys = boardTiles(sessions, unreachableTiles(readWindowStates()), now);
-  const { session, week } = await getUsage();
+  const { session, week, sessionResetsAt, weekResetsAt } = await getUsage();
   const attention = attentionQueue(sessions, now);
   // The resting count is every non-nested session, the same definition
   // drawStatus uses for the deck's own key — not the free queue, which is a
@@ -1924,7 +1924,9 @@ async function boardKeys() {
     // A busy remote test queue, the same face as its deck key. Inert here:
     // the web board has no sub-boards.
     ...queues.map((q) => ({ id: `__queue:${q.host}`, kind: "queue", ...queueKey(q.summary) })),
-    { id: "__usage", kind: "usage", session, week },
+    // The deck's extra subscription keys (a remote host's, or Codex), same order.
+    ...[...remoteUsages].reverse().map((u) => ({ id: `__usage:${u.id}`, kind: "usage", session: u.session, week: u.week, sessionResets: formatReset(u.sessionResetsAt) ?? "", weekResets: formatReset(u.weekResetsAt) ?? "", title: u.id.startsWith("codex") ? u.id : remoteAccount(u.id)?.name ?? u.id })),
+    { id: "__usage", kind: "usage", title: await getAccountName(), session, week, sessionResets: formatReset(sessionResetsAt) ?? "", weekResets: formatReset(weekResetsAt) ?? "" },
     { id: "__status", ...statusKey(attention, total, now, allPressures()) },
   ];
 }
@@ -1982,6 +1984,7 @@ export const configDeps = {
         return panes ? { host, rows: classifyTmux(panes, lastSessions.filter((s) => s.host === host)) } : { host, error: true };
       })
     ),
+  peekTmux: (host, name) => peekTmuxSession(host, join(SCRATCH_ROOT, "cm-%h"), name),
   reviveTmux: (host, name) =>
     reviveTmux(name, {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
@@ -1994,6 +1997,12 @@ export const configDeps = {
         await requestAttach({ host, folder: row.folder, tmux: row.name });
         await focusWindow({ folder: row.folder, ide: live?.ide ?? null, host });
       },
+    }),
+  killTmux: (host, name) =>
+    killDetached(name, {
+      list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
+      sessions: () => lastSessions.filter((s) => s.host === host),
+      kill: (n) => killTmuxSession(host, join(SCRATCH_ROOT, "cm-%h"), n),
     }),
   closeTmux: (host, names) =>
     closeTmux(names, {

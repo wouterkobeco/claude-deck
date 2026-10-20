@@ -113,6 +113,20 @@ export async function closeTmux(names, { list, sessions, kill }) {
   return out;
 }
 
+/**
+ * Kill one detached session the user picked by name, even the only copy of its
+ * Claude session (the conversation stays on disk). Still re-checked now: one
+ * attached or working since the page was drawn is left alone.
+ */
+export async function killDetached(name, { list, sessions, kill }) {
+  const panes = await list();
+  if (!panes) return { ok: false, why: "host not answering" };
+  const row = classifyTmux(panes, sessions()).find((r) => r.name === name);
+  if (!row) return { ok: false, why: "already gone" };
+  if (row.attached > 0 || row.why === "working") return { ok: false, why: `in use now: ${row.why}` };
+  return (await kill(name)) ? { ok: true } : { ok: false, why: "tmux refused" };
+}
+
 /** Re-check against a fresh listing, then hand it to `ask`. Returns `{ ok, mode: "attach" | "go", why? }`. */
 export async function reviveTmux(name, { list, sessions, ask }) {
   const panes = await list();

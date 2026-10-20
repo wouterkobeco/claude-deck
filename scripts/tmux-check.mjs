@@ -83,3 +83,15 @@ console.log("OK: tmux cleanup classification and re-checked close");
   eq((await run("9")).ok, false, "a name the host lacks is refused");
   eq(asked, ["/p/a", "/p/b"], "both reached the window");
 }
+
+// killDetached: the user's explicit kill reaches even the only copy, but not an attached or working session.
+{
+  const { killDetached } = await import("../src/tmux-cleanup.mjs");
+  const panes = parsePanes("5\t0\t100\tclaude\t/p/a\n6\t1\t100\tclaude\t/p/b\n7\t0\t100\tclaude\t/p/c\n");
+  const sess = [{ session_id: "a", tmux: "5", pid: 1, folder: "/p/a" }, { session_id: "b", tmux: "6", pid: 2, folder: "/p/b" }, { session_id: "c", tmux: "7", pid: 3, folder: "/p/c", state: "busy" }];
+  const killed = [];
+  const run = (name) => killDetached(name, { list: async () => panes, sessions: () => sess, kill: async (n) => (killed.push(n), true) });
+  eq((await run("5")).ok, true, "the only copy of a detached session can be killed on request");
+  eq([(await run("6")).ok, (await run("7")).ok, (await run("9")).ok], [false, false, false], "attached, working and missing are refused");
+  eq(killed, ["5"], "only the detached one was killed");
+}

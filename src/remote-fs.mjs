@@ -667,6 +667,13 @@ export async function killTmuxSession(host, controlPath, name) {
   return (await run(["ssh", ...sshArgs(host, controlPath), `tmux kill-session -t =${name}`], { timeoutMs: 6000 })) !== null;
 }
 
+/** The last `lines` lines on a tmux session's screen, or null; `name` must pass SAFE_NAME. */
+export async function peekTmuxSession(host, controlPath, name, lines = 250) {
+  if (!SAFE_NAME.test(name)) return null;
+  const buf = await run(["ssh", ...sshArgs(host, controlPath), `tmux capture-pane -p -J -S -${lines} -t =${name}:`], { timeoutMs: 6000 });
+  return buf ? buf.toString("utf8").trimEnd().split("\n").slice(-lines).join("\n") : null;
+}
+
 /**
  * The one field this reaches into `~/.claude.json` for, as `{ name, email }` —
  * named by `accountFrom`, the same rule the local account uses, email as the

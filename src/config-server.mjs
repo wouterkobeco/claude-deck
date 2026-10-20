@@ -878,6 +878,15 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         return send(res, 200, tmuxPage(token, await deps.tmux(), done), "text/html; charset=utf-8");
       }
 
+      if (req.method === "GET" && url.pathname === "/tmux/peek") {
+        // Read-only, but it still reaches a remote shell: same host and name gates.
+        const host = url.searchParams.get("host");
+        const name = url.searchParams.get("name") ?? "";
+        if (!deps.tmuxHosts().includes(host) || !SAFE_NAME.test(name)) return send(res, 400, "bad request");
+        const text = await deps.peekTmux(host, name);
+        return send(res, text === null ? 502 : 200, text ?? "couldn't read that session", "text/plain; charset=utf-8");
+      }
+
       if (req.method === "POST" && url.pathname === "/tmux/close") {
         const raw = await readBody(req);
         if (raw === null) return send(res, 400, "body too large");
@@ -892,6 +901,19 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
         const results = await deps.closeTmux(host, names);
         const closed = results.filter((r) => r.ok).length;
         res.writeHead(303, { Location: `/tmux?t=${token}&closed=${closed}&skipped=${results.length - closed}` });
+        return res.end();
+      }
+
+      if (req.method === "POST" && url.pathname === "/tmux/kill") {
+        const raw = await readBody(req);
+        if (raw === null) return send(res, 400, "body too large");
+        const form = new URLSearchParams(raw);
+        const host = form.get("host");
+        const name = form.get("kill");
+        if (!deps.tmuxHosts().includes(host)) return send(res, 400, "unknown host");
+        if (!SAFE_NAME.test(name ?? "")) return send(res, 400, "bad name");
+        const r = await deps.killTmux(host, name);
+        res.writeHead(303, { Location: `/tmux?t=${token}&closed=${r.ok ? 1 : 0}&skipped=${r.ok ? 0 : 1}` });
         return res.end();
       }
 
@@ -1071,7 +1093,19 @@ let running = null;
  * starts it on loopback instead.
  */
 export function startServer(deps, host, opts) {
-  running ??= createConfigServer(deps, host, opts);
+  if (!running) {
+    const mine = createConfigServer(deps, host, opts);
+    running = mine;
+    // The cache must not outlive the server it holds. `main` closes the board
+    // server between runs (a deck reconnect), and a cached promise for a closed
+    // server made every later start — and the gear key — hand back a dead URL
+    // until the daemon was restarted. A failed start is dropped for the same
+    // reason: a rejected promise would be returned forever.
+    mine.then(
+      ({ server }) => server.once("close", () => { if (running === mine) running = null; }),
+      () => { if (running === mine) running = null; }
+    );
+  }
   return running;
 }
 

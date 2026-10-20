@@ -2,9 +2,17 @@
 // reports which boxes were ticked (tmux-cleanup.mjs decides what that means),
 // and the one script here ticks groups and asks before submitting.
 import { esc } from "./html.mjs";
+import { SAFE_NAME } from "./tmux-cleanup.mjs";
 import { HEADER_CSS, iconHeader, iconLinks } from "./board-page.mjs";
 
 const idle = (s) => (s < 90 ? "now" : s < 5400 ? `${Math.round(s / 60)}m` : s < 172800 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`);
+
+// When it was last active, as a clock time: today bare, otherwise with the weekday.
+const when = (s, now = Date.now()) => {
+  const d = new Date(now - s * 1000);
+  const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  return d.toDateString() === new Date(now).toDateString() ? t : `${d.toLocaleDateString([], { weekday: "short" })} ${t}`;
+};
 
 const STYLE = `
   body { margin: 0; background: #0b0b0b; color: #e0e0e0; font: 14px/1.45 -apple-system, system-ui, sans-serif }
@@ -19,23 +27,42 @@ const STYLE = `
   .ghead h3 { font-size: 14px; margin: 0 }
   .ghead p { margin: 0; color: #9e9e9e; font-size: 13px; flex: 1 1 260px; min-width: 0 }
   .ghead label { color: #64b5f6; cursor: pointer; font-size: 13px }
-  .row { display: grid; grid-template-columns: 28px 70px minmax(0, 1.2fr) minmax(0, 2fr) 70px; gap: 4px 12px; align-items: center; padding: 9px 14px; border-top: 1px solid #262626 }
+  .row { display: grid; grid-template-columns: 28px 70px minmax(0, 1.2fr) minmax(0, 2fr) auto; gap: 4px 12px; align-items: center; padding: 9px 14px; border-top: 1px solid #262626 }
   .group .row:first-of-type { border-top: 0 }
   .row.off { opacity: .55 }
   .row input { width: 16px; height: 16px; accent-color: #64b5f6 }
   .tm { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums }
+  .st { display: block; font: 11px/1.4 -apple-system, system-ui, sans-serif; margin-top: 2px }
+  .st.on { color: #81c784 }
+  .st.det { color: #ffb74d }
   .proj { font-weight: 600; min-width: 0 }
   .proj small { display: block; font-weight: 400; color: #9e9e9e; overflow-wrap: anywhere }
   .why { color: #9e9e9e; font-size: 13px; min-width: 0 }
   .age { text-align: right; color: #9e9e9e; font-variant-numeric: tabular-nums }
-  .rv { display: block; margin: 4px 0 0 auto; font: inherit; font-size: 12px; color: #bbdefb; background: #1b3a57; border: 0; border-radius: 4px; padding: 3px 9px; cursor: pointer }
+  .rv { display: inline-block; margin: 4px 0 0 4px; font: inherit; font-size: 12px; color: #bbdefb; background: #1b3a57; border: 0; border-radius: 4px; padding: 3px 9px; cursor: pointer }
+  .rv.kill { color: #ffd5d5; background: #5b1f1f }
   .bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-top: 10px }
   .bar .msg { flex: 1 1 240px; color: #9e9e9e }
   .bar button { font: inherit; color: #ffd5d5; background: #5b1f1f; border: 0; border-radius: 5px; padding: 8px 14px; cursor: pointer }
   .bar button:disabled { background: #262626; color: #9e9e9e; cursor: default }
+  details.pk { grid-column: 2 / -1 }
+  details.pk summary { cursor: pointer; color: #9e9e9e; font-size: 12px }
+  details.pk pre { margin: 6px 0 0; padding: 8px 10px; background: #0b0b0b; border-radius: 4px; overflow: auto; max-height: 24em; font: 12px/1.35 ui-monospace, Menlo, monospace; color: #cfcfcf }
   @media (max-width: 640px) { .row { grid-template-columns: 24px 56px minmax(0, 1fr) } .why, .age { grid-column: 3; text-align: left } }`;
 
 const SCRIPT = `
+  for (const d of document.querySelectorAll("details.pk")) {
+    d.addEventListener("toggle", async () => {
+      if (!d.open) return;
+      const pre = d.querySelector("pre");
+      pre.textContent = "reading…";
+      try {
+        const r = await fetch("/tmux/peek?t=" + encodeURIComponent(d.dataset.t) + "&host=" + encodeURIComponent(d.dataset.host) + "&name=" + encodeURIComponent(d.dataset.name));
+        pre.textContent = await r.text();
+        pre.scrollTop = pre.scrollHeight;
+      } catch { pre.textContent = "couldn't read that session"; }
+    });
+  }
   for (const form of document.querySelectorAll("form.host")) {
     const boxes = () => [...form.querySelectorAll("input[name=name]")];
     const paint = () => {
@@ -49,6 +76,10 @@ const SCRIPT = `
     });
     form.addEventListener("submit", (e) => {
       if (e.submitter && e.submitter.name === "revive") return;
+      if (e.submitter && e.submitter.name === "kill") {
+        if (!confirm("Kill tmux " + e.submitter.value + " on " + form.dataset.host + "? Its process ends; the conversation stays on disk.")) e.preventDefault();
+        return;
+      }
       const n = boxes().filter((b) => b.checked).length;
       if (!confirm("End " + n + " tmux session" + (n === 1 ? "" : "s") + " on " + form.dataset.host + "? Their conversations stay on disk.")) e.preventDefault();
     });
@@ -69,12 +100,16 @@ function hostSection(token, { host, rows, error }) {
     if (!mine.length) return "";
     const line = (r) => `<div class="row${g.kind === "use" ? " off" : ""}">
       ${g.kind === "use" ? "<span></span>" : `<input type="checkbox" name="name" value="${esc(r.name)}" data-g="${g.kind}"${g.on ? " checked" : ""} aria-label="select tmux ${esc(r.name)}">`}
-      <span class="tm">tmux ${esc(r.name)}</span>
+      <span class="tm">tmux ${esc(r.name)}<small class="st ${r.attached ? "on" : "det"}">${r.attached ? "attached" : "detached"}</small></span>
       <span class="proj">${esc(r.project)}<small>${esc(r.title)}</small></span>
       <span class="why">${esc(r.why)}</span>
-      <span class="age">${esc(idle(r.idle))}${
-        r.revive ? `<button type="submit" class="rv" name="revive" value="${esc(r.name)}" formaction="/tmux/revive?t=${esc(token)}" title="${r.attached ? "Raise its VS Code window" : "Attach it in its VS Code window"}">${r.attached ? "Go to" : "Revive"}</button>` : ""
-      }</span></div>`;
+      <span class="age" title="last active ${esc(when(r.idle))}">${esc(idle(r.idle))}${r.idle < 90 ? "" : " ago"}<small class="st">${esc(when(r.idle))}</small>${
+        r.revive ? `<button type="submit" class="rv" name="revive" value="${esc(r.name)}" formaction="/tmux/revive?t=${esc(token)}" title="${r.attached ? "Raise its VS Code window" : "Attach it in its VS Code window"}">${r.attached ? "Jump to" : "Attach"}</button>` : ""
+      }${
+        !r.attached && SAFE_NAME.test(r.name) ? `<button type="submit" class="rv kill" name="kill" value="${esc(r.name)}" formaction="/tmux/kill?t=${esc(token)}" title="End this tmux session">Kill</button>` : ""
+      }</span>${
+        r.attached ? "" : `<details class="pk" data-t="${esc(token)}" data-host="${esc(host)}" data-name="${esc(r.name)}"><summary>last 250 lines</summary><pre></pre></details>`
+      }</div>`;
     return `<section class="group"><div class="ghead"><h3>${esc(g.title)} (${mine.length})</h3><p>${esc(g.blurb)}</p>${
       g.kind === "use" ? "" : `<label><input type="checkbox" data-all="${g.kind}"${g.on ? " checked" : ""}> select all</label>`
     }</div>${mine.map(line).join("")}</section>`;

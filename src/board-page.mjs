@@ -362,6 +362,7 @@ const STYLE = `
      half past the bottom edge: two percentages, two caps rows and two bars is
      the most crowded tile on the board, and a landscape phone makes every key
      smaller than a portrait one. */
+  .usage .utitle { font-size: 9cqh; line-height: 1; text-align: center; color: #9e9e9e; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; width: 100% }
   .usage .half { flex: 1; min-height: 0; overflow: hidden;
                  display: flex; flex-direction: column; align-items: center;
                  justify-content: center; gap: 1cqh; padding: 0 7cqw }
@@ -514,9 +515,9 @@ const bar = (k) =>
     k.context
   )}</div>`;
 
-const usageHalf = (caps, pct) =>
+const usageHalf = (caps, pct, reset = "") =>
   `<div class="half">
-     <div class="lbl">${caps}</div>
+     <div class="lbl">${caps}${reset ? ` · ${esc(reset)}` : ""}</div>
      <div class="val">${typeof pct === "number" ? Math.round(pct) + "%" : "—"}</div>
      <div class="bar"><i style="width:${typeof pct === "number" ? Math.min(100, Math.max(0, pct)) : 0}%;background:${usageColor(
        pct ?? 0
@@ -542,10 +543,11 @@ function tile(k, token) {
     // usage key opens the stats board on a press for the same reason. Native
     // means it needs nothing from SCRIPT and survives the poll's diffing
     // unchanged, since the markup is what gets compared either way.
-    return `<a class="key dark tile" href="/activity?t=${esc(token)}"${id}><div class="usage">${usageHalf(
+    return `<a class="key dark tile" href="/activity?t=${esc(token)}"${id}><div class="usage">${k.title ? `<div class="utitle">${esc(k.title)}</div>` : ""}${usageHalf(
       "Session",
-      k.session
-    )}${usageHalf("Week", k.week)}</div></a>`;
+      k.session,
+      k.sessionResets
+    )}${usageHalf("Week", k.week, k.weekResets)}</div></a>`;
   }
   // A busy remote test queue (runlock.mjs): green while its runs fit, gold
   // once something waits for cores, red once the head has waited too long.

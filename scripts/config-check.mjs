@@ -539,6 +539,7 @@ const boardKeys = [
     teammates: Array.from({ length: 6 }, (_, i) => ({ id: `t-${i}`, name: `agent-${i}`, state: "busy" })),
   },
   { id: "pi:/x", kind: "offline", project: "x", accent: ACCENTS[2], label: "pi offline 4m" },
+  { id: "__usage:beast", kind: "usage", title: "<b>wouter</b>", session: 12, week: 80, sessionResets: "3h 5m", weekResets: "2d 4h" },
   { id: "__usage", kind: "usage", session: 46, week: null },
   // One status tile, not two: attention and free are never both the answer, so
   // the deck and the page both fold them onto one key.
@@ -600,6 +601,8 @@ eq((await fetch(`${bBase}/board/grid`)).status, 403, "and so is its poll fragmen
 const board = await (await fetch(`${bBase}/board?t=${bToken}`)).text();
 eq(board.includes("data-id=\"s-1\""), true, "every tile carries the id its poll diffs on");
 eq(board.includes("data-id=\"__usage\""), true, "the reserved keys are tiles like any other");
+eq(board.includes('data-id="__usage:beast"') && board.includes("&lt;b&gt;wouter") && !board.includes("<b>wouter"), true, "a second subscription is its own tile, its title escaped");
+eq(board.includes("Session · 3h 5m") && board.includes("Week · 2d 4h"), true, "a usage tile says when each window resets");
 // Exactly one — the page's own SCRIPT. A second is a project name or a title
 // that reached the document as a tag.
 eq(board.split("<script>").length - 1, 2, "a project named <img> and a title of <script> do not reach the page as tags, beside the header's own script and the board's");
@@ -892,16 +895,19 @@ console.log("OK: status tile");
 // is asked of closeTmux. What a name may do is closeTmux's business (tmux-check).
 {
   const closes = [];
+  const kills = [];
   const t = await createConfigServer({
     tmuxHosts: () => ["beast"],
     queues: () => [{ host: "<b>BEAST</b>", budget: [{ tone: "queued", title: "TOTAL", big: "16/20", line: "80% of cores" }], tiles: [{ tone: "running", big: "12c", title: "kob-trace", line: "ci · vitest", age: "", wait: "5m" }, { tone: "queued", big: "4-16c", title: "w9", line: "claude · run", age: "", wait: "21m" }] }],
     tmux: async () => [
       { host: "beast", rows: [
         { name: "5", project: "<b>x</b>", title: '"t"', why: "same session open in tmux 13", idle: 7200, kind: "copy", closable: true },
-        { name: "13", project: "portal", title: "t", why: "attached", idle: 5, kind: "use", closable: false },
+        { name: "13", project: "portal", title: "t", why: "attached", attached: true, idle: 5, kind: "use", closable: false },
       ] },
       { host: "down", error: true },
     ],
+    killTmux: async (host, name) => (kills.push([host, name]), { ok: name === "5" }),
+    peekTmux: async (host, name) => (name === "5" ? "line1\nline2" : null),
     closeTmux: async (host, names) => (closes.push([host, names]), names.map((name) => ({ name, ok: name !== "6" }))),
   });
   const tb = new URL(t.url).origin;
@@ -921,6 +927,17 @@ console.log("OK: status tile");
   eq((await post("host=beast&name=5%3Brm%20-rf")).status, 400, "a name with shell characters is refused");
   eq((await post("host=beast")).status, 400, "no names is refused");
   eq(closes.length, 0, "nothing was asked of the host for any of those");
+  const kill = (body) => fetch(`${tb}/tmux/kill?t=${tt}`, { method: "POST", body, redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" } });
+  eq(tp.includes('name="kill" value="5"') && !tp.includes('name="kill" value="13"'), true, "a detached row has a Kill button, an attached one does not");
+  eq([(await kill("host=evil&kill=5")).status, (await kill("host=beast&kill=5%3Brm")).status, kills.length], [400, 400, 0], "kill refuses a bad host or name without asking");
+  eq((await kill("host=beast&kill=5")).headers.get("location").includes("closed=1&skipped=0"), true, "a kill reports success");
+  eq((await kill("host=beast&kill=6")).headers.get("location").includes("closed=0&skipped=1"), true, "a refused kill reports skipped");
+  const peek = (q) => fetch(`${tb}/tmux/peek?t=${tt}&${q}`);
+  eq(tp.includes('data-name="5"') && !tp.includes('data-name="13"'), true, "a detached row has the twisty, an attached one does not");
+  eq((await fetch(`${tb}/tmux/peek?host=beast&name=5`)).status, 403, "peek needs the token");
+  eq([(await peek("host=evil&name=5")).status, (await peek("host=beast&name=5%3Brm")).status], [400, 400], "peek refuses an unknown host or a shell-y name");
+  eq(await (await peek("host=beast&name=5")).text(), "line1\nline2", "peek returns the screen text");
+  eq((await peek("host=beast&name=9")).status, 502, "an unreadable session is an error, not an empty screen");
   const ok = await post("host=beast&name=5&name=6&name=5");
   eq(ok.status, 303, "a valid close redirects");
   eq(ok.headers.get("location").includes("closed=1&skipped=1"), true, "and reports what happened");
@@ -928,5 +945,19 @@ console.log("OK: status tile");
   const banner = await (await fetch(`${tb}${ok.headers.get("location")}`)).text();
   eq(banner.includes("Closed 1, skipped 1"), true, "the banner says so");
   t.server.close();
+}
+// The board server is closed between runs (a deck reconnect). The next start
+// must listen again, not hand back the closed one: the gear key opened a dead
+// URL until the daemon was restarted.
+{
+  const { startServer } = await import("../src/config-server.mjs");
+  const first = await startServer({});
+  eq((await fetch(first.url)).status < 500, true, "the first start answers");
+  await new Promise((r) => { first.server.closeAllConnections?.(); first.server.close(r); });
+  const second = await startServer({});
+  eq(second === first, false, "a closed server is not handed out again");
+  eq((await fetch(second.url)).status < 500, true, "the restart after a close answers");
+  second.server.closeAllConnections?.();
+  await new Promise((r) => second.server.close(r));
 }
 console.log("OK: tmux cleanup routes");

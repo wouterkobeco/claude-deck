@@ -1,3 +1,4 @@
 node_modules/
 scripts/render-check-*.png
 .DS_Store
+.playwright-mcp/
