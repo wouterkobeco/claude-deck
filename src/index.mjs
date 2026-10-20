@@ -1904,6 +1904,19 @@ export function boardTiles(sessions, unreachable = [], now = Date.now() / 1000) 
   return keys;
 }
 
+// cswap's accounts with the freshest numbers on hand: the signed-in one live,
+// and any other that a remote host is signed into from what its sessions
+// report — cswap's own cache for an account goes blank once its login dies.
+async function subscriptionAccounts() {
+  const live = await getUsage();
+  return withLiveUsage(await getCswapAccounts(), live, (await getAccount())?.email).map((a) => {
+    const u = a.active ? null : remoteUsages.find((r) => !r.id.startsWith("codex") && remoteAccount(r.id)?.email?.toLowerCase() === a.email.toLowerCase());
+    return u
+      ? { ...a, session: u.session ?? a.session, week: u.week ?? a.week, sessionResetsAt: u.sessionResetsAt ?? a.sessionResetsAt, weekResetsAt: u.weekResetsAt ?? a.weekResetsAt }
+      : a;
+  });
+}
+
 async function boardKeys() {
   const now = Date.now() / 1000;
   const sessions = lastSessions;
@@ -2039,7 +2052,7 @@ export const configDeps = {
       account: await getAccountName(),
       // This machine first, then every reachable host, under its name.
       memory: [{ name: "This Mac", ...getMemory() }, ...Object.entries(hostMemories()).map(([name, m]) => ({ name, ...m }))],
-      accounts: withLiveUsage(await getCswapAccounts(), { session, week, sessionResetsAt, weekResetsAt }, (await getAccount())?.email).map((a) => ({
+      accounts: (await subscriptionAccounts()).map((a) => ({
         // The local part, not the whole email: the same string the usage keys
         // and the stats board title themselves with.
         name: a.name,
@@ -3342,7 +3355,7 @@ async function run() {
         // Accounts lead, the version beside them, then the memory keys on a
         // row of their own — read as two things, not one run — padded to the
         // next row only when the memory keys still fit above the back key.
-        const head = [...cswapTiles(withLiveUsage(await getCswapAccounts(), await getUsage(), (await getAccount())?.email)), versionTile];
+        const head = [...cswapTiles(await subscriptionAccounts()), versionTile];
         const nextRow = Math.ceil(head.length / 5) * 5;
         const pad = nextRow + memoryTiles.length <= DETAIL_BACK_INDEX ? Array(nextRow - head.length).fill(null) : [];
         const statTiles = [...head, ...pad, ...memoryTiles].slice(
