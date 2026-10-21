@@ -232,6 +232,7 @@ await copy(103, "idle", 4000, 3);
 const deduped = await getLiveSessions([{ ...remoteSource, root: dupes, isAlive: () => true }]);
 assert.equal(deduped.length, 1, "one session id is one session, however many processes hold it");
 assert.equal(deduped[0].pid, 102, "the copy that reported most recently is the one shown");
+assert.deepEqual(deduped[0].copies.map((c) => c.pid).sort(), [101, 103], "the other processes ride along, for the tmux page");
 
 // The ancestor chain is computed here, during the poll, from the host's own
 // process table — never at press time, because the press is a synchronous key

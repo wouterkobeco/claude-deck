@@ -1155,14 +1155,17 @@ async function sessionsFrom(source) {
   // tmux-cleanup.mjs). Each copy writes its own registry entry and its own
   // status, so without this the id took a key per copy and its state flipped
   // with whichever copy was read last. Keep the copy that reported last; ties
-  // go to the newer process.
+  // go to the newer process. The others ride along as `copies`: the tmux page
+  // needs every process, or an older copy reads as a pane with no session.
   const byId = new Map();
-  for (const s of matched) {
-    const kept = byId.get(s.session_id);
-    if (!kept || s.ts > kept.ts || (s.ts === kept.ts && s.started > kept.started)) byId.set(s.session_id, s);
-  }
+  for (const s of matched) byId.set(s.session_id, [...(byId.get(s.session_id) ?? []), s]);
   matched.length = 0;
-  matched.push(...byId.values());
+  for (const all of byId.values()) {
+    all.sort((a, b) => b.ts - a.ts || b.started - a.started);
+    const [kept, ...copies] = all;
+    if (copies.length) kept.copies = copies;
+    matched.push(kept);
+  }
 
   // An SDK session records no parent, but it has one: the Agent SDK spawns
   // `claude` as a subprocess, so whatever started it is in its pid ancestry.

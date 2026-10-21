@@ -50,6 +50,15 @@ eq(classifyTmux(panes, sessions, NOW).map((x) => x.name), ["1", "14", "10", "11"
 // Attached older copy is in use: somebody is looking at it.
 eq(by(classifyTmux(parsePanes(`1${T}2${T}${2_000_000}${T}claude${T}/p`), [s("A", "1", 100), s("A", "9", 200)], NOW))["1"].closable, false, "an attached copy stays");
 
+// The board gets one entry per session id, the others folded into `copies`
+// (sessions.mjs). The page needs every process: without them an older copy
+// read as "Claude with no session yet", with no Attach and nothing to close.
+{
+  const folded = by(classifyTmux(panes, [{ ...s("A", "13", 200), copies: [s("A", "1", 100)] }, s("B", "12", 300)], NOW));
+  eq(folded["1"].kind, "copy", "a folded copy is still a copy");
+  eq(folded["1"].revive, true, "and can still be attached");
+}
+
 // Closing re-lists and re-decides: 13 was attached, 1 is fine, 99 is gone, 14 is a copy.
 const killed = [];
 const out = await closeTmux(["1", "13", "99", "14", "15"], {

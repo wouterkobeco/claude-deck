@@ -48,7 +48,9 @@ const KIND_ORDER = { copy: 0, other: 1, use: 2 };
  * newest copy is by `started`, then pid.
  */
 export function classifyTmux(panes, sessions, now = Date.now()) {
-  const live = sessions.filter((s) => !s.nested && s.tmux);
+  // `copies`: the other processes of a session id, which sessions.mjs folds
+  // onto the one entry the board shows.
+  const live = sessions.flatMap((s) => [s, ...(s.copies ?? [])]).filter((s) => !s.nested && s.tmux);
   const newest = new Map();
   for (const s of live) {
     const cur = newest.get(s.session_id);

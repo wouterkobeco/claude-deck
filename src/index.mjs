@@ -1999,7 +1999,9 @@ export const configDeps = {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
       sessions: () => lastSessions.filter((s) => s.host === host),
       ask: async (row, mode) => {
-        const live = lastSessions.find((s) => s.host === host && s.tmux === row.name && !s.nested);
+        const live = lastSessions
+          .flatMap((s) => [s, ...(s.copies ?? [])])
+          .find((s) => s.host === host && s.tmux === row.name && !s.nested);
         // Attached: it is the ordinary press. Detached: no pid, so focusWindow's
         // reveal is skipped and cannot overwrite the attach request below.
         if (mode === "go" && live) return focusWindow(live);
