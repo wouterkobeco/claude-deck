@@ -1150,6 +1150,20 @@ async function sessionsFrom(source) {
     });
   }
 
+  // One session id can be live in several processes: resumed again into a new
+  // tmux pane while the old one still runs (restore run twice — see
+  // tmux-cleanup.mjs). Each copy writes its own registry entry and its own
+  // status, so without this the id took a key per copy and its state flipped
+  // with whichever copy was read last. Keep the copy that reported last; ties
+  // go to the newer process.
+  const byId = new Map();
+  for (const s of matched) {
+    const kept = byId.get(s.session_id);
+    if (!kept || s.ts > kept.ts || (s.ts === kept.ts && s.started > kept.started)) byId.set(s.session_id, s);
+  }
+  matched.length = 0;
+  matched.push(...byId.values());
+
   // An SDK session records no parent, but it has one: the Agent SDK spawns
   // `claude` as a subprocess, so whatever started it is in its pid ancestry.
   // Caught live on this machine — an `sdk-py` worker's chain read

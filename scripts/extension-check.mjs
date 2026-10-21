@@ -171,12 +171,6 @@ const { sessionRows } = await import("../src/publish-sessions.mjs");
   ];
   assert.deepEqual(toRestore([], live), [{ ...live[0], reattach: true }], "only the detached tmux session is offered");
   assert.equal(restoreCommand({ ...live[0], reattach: true }), "tmux attach -t 3", "and it reattaches");
-  assert.equal(
-    restoreCommand({ id: ID, tmux: "kob" }),
-    `t=$(tmux new-session -dP -F '#{session_name}') && tmux send-keys -t "$t" 'claude --resume ${ID}' Enter && tmux attach -t "$t"`,
-    "a dead tmux session resumes inside a fresh tmux"
-  );
-  assert.equal(restoreCommand({ id: ID, tmux: null }), `claude --resume ${ID}`, "a plain one resumes plainly");
   assert.equal(sessionsForWindow([row({ tmux: "x;rm -rf ~", attached: false })], ["/Users/w/p"], null)[0].tmux, null,
     "a tmux name with shell in it is not a tmux name");
   assert.throws(() => restoreCommand({ id: ID, tmux: "$(whoami)", reattach: true }), "and restoreCommand refuses it too");
@@ -327,3 +321,65 @@ assert.deepEqual(
 }
 
 console.log("OK: extension routing, session restore, session transfer");
+
+// A resume asks the host's own registry first, at the moment it runs. The
+// deck's list can be empty for a host it couldn't fetch, and restore then
+// started a second copy of every session still running there — measured on
+// BEAST, one conversation in four processes. Run for real, in both shells a
+// terminal is likely to be: a fixture HOME, and `tmux`/`claude` stubs that
+// say what they were asked to do.
+{
+  const { execFileSync, spawnSync } = await import("node:child_process");
+  const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "streamdeck-restore-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  for (const cmd of ["tmux", "claude"]) {
+    writeFileSync(join(bin, cmd), `#!/bin/sh\necho "${cmd} $*"\n`);
+    chmodSync(join(bin, cmd), 0o755);
+  }
+  const reg = join(home, ".claude", "sessions");
+  const dead = spawnSync("true").pid; // exited, so `kill -0` fails
+  const entry = (pid, over = {}) => {
+    mkdirSync(reg, { recursive: true });
+    writeFileSync(join(reg, `${pid}.json`), JSON.stringify({ pid, sessionId: ID, cwd: "/a", kind: "interactive", ...over }));
+  };
+  const shells = ["bash", "zsh"].filter((sh) => spawnSync("sh", ["-c", `command -v ${sh}`]).status === 0);
+  const run = (session) =>
+    shells.map((sh) =>
+      execFileSync(sh, ["-c", restoreCommand(session)], { env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8" }).trim()
+    );
+  const every = (outs, want, msg) => outs.forEach((o, i) => assert.equal(o, want, `${msg} (${shells[i]})`));
+  const fresh = `tmux send-keys -t tmux new-session -dP -F #{session_name} claude --resume ${ID} Enter\ntmux attach -t tmux new-session -dP -F #{session_name}`;
+
+  every(run({ id: ID, tmux: null }), `claude --resume ${ID}`, "no registry at all resumes plainly");
+  every(run({ id: ID, tmux: "kob" }), fresh, "and a session that was in tmux resumes into a fresh one");
+
+  entry(dead, { tmux: "8:@8.%8" });
+  every(run({ id: ID, tmux: "kob" }), fresh, "a registry entry whose process is gone is no holder");
+
+  entry(process.pid, { sessionId: ID2, tmux: "9:@9.%9" });
+  every(run({ id: ID, tmux: null }), `claude --resume ${ID}`, "another session's live entry is no holder either");
+
+  entry(process.pid, { tmux: "8:@8.%8" });
+  every(run({ id: ID, tmux: "kob" }), "tmux attach -t 8", "a live holder in tmux is reattached, not resumed again");
+  every(run({ id: ID, tmux: null }), "tmux attach -t 8", "whatever the deck thought its tmux was");
+
+  entry(process.pid, {});
+  every(
+    run({ id: ID, tmux: null }),
+    `claude: ${ID} is already running (pid ${process.pid}), not starting a second copy`,
+    "a live holder outside tmux is left alone"
+  );
+  entry(process.pid, { tmux: "cmux:ABC" });
+  every(
+    run({ id: ID, tmux: null }),
+    `claude: ${ID} is already running (pid ${process.pid}), not starting a second copy`,
+    "a cmux pane is not a tmux session to attach"
+  );
+  rmSync(home, { recursive: true, force: true });
+}
+
+console.log("extension-check: restore re-checks the host OK");

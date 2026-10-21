@@ -213,6 +213,26 @@ assert.deepEqual(deadRemote, [], "a pid absent from the host's list drops the se
 const both = await getLiveSessions([localSource(fx), remoteSource]);
 assert.equal(both.length, 2, "sources concatenate");
 
+// One id live in several processes (restore run twice: each `--resume` is its
+// own process with its own registry entry). Measured on BEAST: one id in four
+// entries, two busy and two idle, so it took four keys and flipped state every
+// poll. One entry per id, the copy that reported last.
+const dupes = await mkdtemp(join(tmpdir(), "streamdeck-dupes-fixture-"));
+await mkdir(join(dupes, "sessions"), { recursive: true });
+await mkdir(join(dupes, "ide"), { recursive: true });
+await writeFile(join(dupes, "ide", "1.lock"), JSON.stringify({ workspaceFolders: [CWD] }));
+const copy = (pid, status, statusUpdatedAt, startedAt) =>
+  writeFile(
+    join(dupes, "sessions", `${pid}.json`),
+    JSON.stringify({ pid, sessionId: SID, cwd: CWD, kind: "interactive", entrypoint: "cli", status, statusUpdatedAt, startedAt })
+  );
+await copy(101, "idle", 3000, 1);
+await copy(102, "busy", 5000, 2);
+await copy(103, "idle", 4000, 3);
+const deduped = await getLiveSessions([{ ...remoteSource, root: dupes, isAlive: () => true }]);
+assert.equal(deduped.length, 1, "one session id is one session, however many processes hold it");
+assert.equal(deduped[0].pid, 102, "the copy that reported most recently is the one shown");
+
 // The ancestor chain is computed here, during the poll, from the host's own
 // process table — never at press time, because the press is a synchronous key
 // handler that cannot wait on ssh, and never from the local table, whose pids

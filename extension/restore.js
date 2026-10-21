@@ -96,8 +96,33 @@ function restoreCommand(s) {
   if (s.tmux && !TMUX_NAME_RE.test(s.tmux)) throw new Error(`not a tmux session name: ${s.tmux}`);
   if (s.reattach) return `tmux attach -t ${s.tmux}`;
   const resume = resumeCommand(s.id);
-  if (!s.tmux) return resume;
-  return `t=$(tmux new-session -dP -F '#{session_name}') && tmux send-keys -t "$t" '${resume}' Enter && tmux attach -t "$t"`;
+  if (!s.tmux) return unlessRunning(s.id, resume);
+  return unlessRunning(
+    s.id,
+    `t=$(tmux new-session -dP -F '#{session_name}') && tmux send-keys -t "$t" '${resume}' Enter && tmux attach -t "$t"`
+  );
+}
+
+/**
+ * `fresh`, unless a live process on this machine already holds the id.
+ *
+ * The deck's list is no proof a session is gone: a host it couldn't fetch, or
+ * a window that opened before its first fetch, publishes nothing, and every
+ * remembered session then reads as dead. Measured on BEAST: three restores in
+ * that state left one conversation in four processes, each believing it was
+ * the coordinator. So the line asks the host's own registry at the moment it
+ * runs — the terminal is on that host — and a live holder is reattached when
+ * it sits in tmux, left alone when it doesn't. A cmux pane's `tmux` field is
+ * not a tmux session, and the name class keeps anything odd out of `attach`.
+ *
+ * `id` is already through SESSION_ID_RE (resumeCommand), so it is safe inside
+ * the single-quoted grep pattern.
+ */
+function unlessRunning(id, fresh) {
+  const find = `f=; for p in $(grep -rlF '"sessionId":"${id}"' ~/.claude/sessions 2>/dev/null); do kill -0 "$(basename "$p" .json)" 2>/dev/null && f=$p && break; done`;
+  const name = `t=$(sed -n 's/.*"tmux":"\\([A-Za-z0-9_-]*\\):.*/\\1/p' "$f")`;
+  const busy = `echo "claude: ${id} is already running (pid $(basename "$f" .json)), not starting a second copy"`;
+  return `${find}; if [ -z "$f" ]; then ${fresh}; else ${name}; if [ -n "$t" ] && [ "$t" != cmux ]; then tmux attach -t "$t"; else ${busy}; fi; fi`;
 }
 
 module.exports = { sessionsForWindow, toRestore, resumeCommand, restoreCommand, SESSION_ID_RE };
