@@ -94,6 +94,18 @@ assert.deepEqual([...withTmux.pids], [50], "and stay out of the pid set");
 assert.equal(splitTreeStream(Buffer.from("50 1\n---\ntar")).tmuxClients, null, "no marker, no tmux knowledge");
 assert.equal(splitTreeStream(Buffer.from("50 1\nt\n---\ntar")).tmuxClients.size, 0, "a marker alone: tmux ran, nothing attached");
 
+// Recent subagent transcripts: listed with their mtime instead of shipped whole
+// (one was 12MB; the stream reached 37MB and timed BEAST out every few
+// minutes). The path is the host's choice and becomes a file in the local
+// tree, so only the exact shape of one is accepted.
+const AGENT = "projects/-home-w-kob/0e8ce703-6e6f-4380-95de-92776ad62dc2/subagents/agent-a139871fadd74ceb2.jsonl";
+const withAgents = splitTreeStream(
+  Buffer.from(`50 1\ns 1792600000.25 ${AGENT}\ns 1 projects/../../.ssh/x/subagents/agent-a.jsonl\ns 1 /etc/subagents/agent-a.jsonl\ns x ${AGENT}\n---\ntar`)
+);
+assert.deepEqual(withAgents.subagents, [{ path: AGENT, mtime: 1792600000.25 }], "only a real subagent path with a real mtime is kept");
+assert.deepEqual([...withAgents.pids], [50], "and they stay out of the pid set");
+assert.deepEqual(splitTreeStream(Buffer.alloc(0)).subagents, [], "an empty stream lists none");
+
 // --- ssh argv -------------------------------------------------------------
 const argv = sshArgs("192.168.2.6", "/tmp/cm/%r@%h:%p");
 assert.equal(argv.at(-1), "192.168.2.6", "the host is the last argument");

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { parseMeminfo } from "./memory.mjs";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tailLines, transcriptPathFor } from "./sessions.mjs";
 import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
@@ -80,12 +80,18 @@ export const TREE_CMD =
   // detached" would read the same, and restore would offer to reattach
   // sessions that are on screen.
   "tmux list-clients -F 't #{client_pid} #{session_name}' 2>/dev/null && echo t; " +
+  // Recent subagent transcripts are listed, not shipped: the reader wants only
+  // their tail and mtime, and shipping them whole put a 12MB agent in every
+  // poll — BEAST's stream reached 37MB and timed out into "offline" every few
+  // minutes. The tails ride call 2 (SUBAGENT_RE). GNU find, like the Codex
+  // line; a host without it shows no subagents rather than failing.
+  "find projects -path '*/subagents/*.jsonl' -mmin -11 -printf 's %T@ %p\\n' 2>/dev/null; " +
   "echo ---; " +
   "{ find sessions ide tasks -type f 2>/dev/null; " +
-  // A subagent idle past SUBAGENT_IDLE_MAX_S (600s) is skipped by the reader
-  // anyway, and nothing reads tool-results/ — shipping them every poll grew a
-  // busy host's stream to 199MB and timed it out into "offline". +11 is margin.
-  "  find projects -type f ! -path '*/tool-results/*' ! \\( -path '*/subagents/*.jsonl' -mmin +11 \\) 2>/dev/null" +
+  // Nothing reads tool-results/ — shipping them every poll grew a busy host's
+  // stream to 199MB and timed it out into "offline". Subagent transcripts are
+  // listed above instead.
+  "  find projects -type f ! -path '*/tool-results/*' ! -path '*/subagents/*.jsonl' 2>/dev/null" +
   ' | grep -v "^projects/[^/]*/[^/]*\\.jsonl$"; ' +
   "} | tar -cf - -T - 2>/dev/null";
 
@@ -98,7 +104,7 @@ export const TREE_CMD =
  */
 export function splitTreeStream(buffer) {
   const at = buffer.indexOf(SEPARATOR);
-  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, codex: [], tmuxClients: null, tar: Buffer.alloc(0) };
+  if (at < 0) return { pids: new Set(), ppids: new Map(), memory: null, codex: [], subagents: [], tmuxClients: null, tar: Buffer.alloc(0) };
   const pids = new Set();
   // The memory block precedes the pid table behind its own fence; a stream
   // from before the fence existed has no block and reads as no memory data.
@@ -116,6 +122,7 @@ export function splitTreeStream(buffer) {
   // session there as dead.
   const ppids = new Map();
   const codex = [];
+  const subagents = [];
   // tmux session name -> attached client pids; null when tmux couldn't be asked.
   let tmuxClients = null;
   const clientLines = [];
@@ -127,6 +134,12 @@ export function splitTreeStream(buffer) {
     const client = /^t (\d+) (.+)$/.exec(line);
     if (client) {
       clientLines.push([client[2], Number(client[1])]);
+      continue;
+    }
+    const agent = /^s (\S+) (.+)$/.exec(line);
+    if (agent) {
+      const mtime = Number(agent[1]);
+      if (SUBAGENT_RE.test(agent[2]) && Number.isFinite(mtime)) subagents.push({ path: agent[2], mtime });
       continue;
     }
     const open = /^c \/proc\/(\d+)\/fd (\/.*)$/.exec(line);
@@ -149,8 +162,14 @@ export function splitTreeStream(buffer) {
   }
   if (memory) memory.claude.mb = Math.round(memory.claude.mb);
   for (const [name, pid] of tmuxClients ? clientLines : []) tmuxClients.set(name, [...(tmuxClients.get(name) ?? []), pid]);
-  return { pids, ppids, memory, codex, tmuxClients, tar: buffer.subarray(at + SEPARATOR.length) };
+  return { pids, ppids, memory, codex, subagents, tmuxClients, tar: buffer.subarray(at + SEPARATOR.length) };
 }
+
+// A subagent transcript as TREE_CMD lists it, relative to ~/.claude. The host
+// chose the path and it becomes a file in the local tree, so it is held to the
+// exact shape: a slug (projectSlug leaves only [A-Za-z0-9-]), a session id, an
+// agent file. No `/`-led path and no `..` can match.
+const SUBAGENT_RE = /^projects\/[A-Za-z0-9-]+\/[0-9a-fA-F-]+\/subagents\/agent-[A-Za-z0-9_-]+\.jsonl$/;
 
 /**
  * A path the host named as an open Codex rollout, before it is sent back to
@@ -468,7 +487,7 @@ export async function fetchSource(host, scratchRoot) {
 
     const stream = await run(["ssh", ...sshArgs(host, controlPath), TREE_CMD]);
     if (!stream) return null;
-    const { pids, ppids, memory, codex: codexOpen, tmuxClients, tar } = splitTreeStream(stream);
+    const { pids, ppids, memory, codex: codexOpen, subagents, tmuxClients, tar } = splitTreeStream(stream);
 
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
@@ -479,6 +498,15 @@ export async function fetchSource(host, scratchRoot) {
     if (extracted === null) {
       await rm(staging, { recursive: true, force: true });
       return null;
+    }
+    // An empty stand-in per listed subagent, stamped with the host's mtime:
+    // readRunningSubagents finds it by readdir and retires it by stat exactly
+    // as before, and its tail comes from call 2 below.
+    for (const a of subagents) {
+      const local = join(staging, a.path);
+      await mkdir(dirname(local), { recursive: true });
+      await writeFile(local, "");
+      await utimes(local, a.mtime, a.mtime);
     }
     await swapTree(staging, finalDir);
 
@@ -502,10 +530,13 @@ export async function fetchSource(host, scratchRoot) {
     const liveSessions = registry.filter(
       (s) => s.sessionId && s.cwd && pids.has(s.pid) && isPathSafeId(s.sessionId)
     );
-    const wanted = liveSessions.map((s) => ({
-      local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
-      remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
-    }));
+    const wanted = [
+      ...liveSessions.map((s) => ({
+        local: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, finalDir),
+        remote: transcriptPathFor({ cwd: s.cwd, sessionId: s.sessionId }, ""),
+      })),
+      ...subagents.map((a) => ({ local: join(finalDir, a.path), remote: a.path })),
+    ];
     const ctx = ctxTargets(liveSessions, finalDir);
     const compact = compactTargets(liveSessions, finalDir);
 
