@@ -536,3 +536,24 @@ assert.equal(sinceMemo.get("pi").failures, 0, "the recovering fetch really ran")
 assert.equal(sinceMemo.get("pi").failingSince, null, "recovery clears it");
 
 console.log("remote-check: unreachable hosts OK");
+
+// The tar is the host's to write. A host sending `…/subagents` as a symlink
+// to a folder on this machine must not get a listed agent's stand-in written
+// through it — that would truncate whatever file sits there.
+{
+  const { extractTree } = await import("../src/remote-fs.mjs");
+  const { execFileSync } = await import("node:child_process");
+  const { mkdirSync, readFileSync, symlinkSync, writeFileSync, rmSync } = await import("node:fs");
+  const base = await mkdtemp(join(tmpdir(), "streamdeck-symlink-"));
+  const victim = join(base, "victim");
+  mkdirSync(victim);
+  writeFileSync(join(victim, "agent-a1.jsonl"), "keep");
+  const evil = join(base, "evil");
+  mkdirSync(join(evil, "projects", "-h", "0e8ce703"), { recursive: true });
+  symlinkSync(victim, join(evil, "projects", "-h", "0e8ce703", "subagents"));
+  const tar = execFileSync("tar", ["-cf", "-", "-C", evil, "projects"]);
+  await extractTree(join(base, "staging"), tar, [{ path: "projects/-h/0e8ce703/subagents/agent-a1.jsonl", mtime: 1 }]);
+  assert.equal(readFileSync(join(victim, "agent-a1.jsonl"), "utf8"), "keep", "a symlinked subagents dir from the host truncates nothing here");
+  rmSync(base, { recursive: true, force: true });
+  console.log("remote-check: stand-ins can't be written through the host's symlinks OK");
+}

@@ -394,6 +394,33 @@ export function parseTails(buffer, paths) {
 }
 
 /**
+ * Fill a fresh `staging` with the host's tree: an empty stand-in per listed
+ * subagent, stamped with the host's mtime (readRunningSubagents finds it by
+ * readdir and retires it by stat; its tail comes from call 2), then the tar.
+ *
+ * Stand-ins first, while `staging` holds only directories made here. The tar
+ * is the host's to write, and a symlink member such as `…/subagents -> ~`
+ * extracted first would have turned this `writeFile` into a truncation of a
+ * file on this machine. Afterwards the tar can at most replace a stand-in.
+ *
+ * Returns false when tar refused the stream.
+ */
+export async function extractTree(staging, tar, subagents) {
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  for (const a of subagents) {
+    const local = join(staging, a.path);
+    await mkdir(dirname(local), { recursive: true });
+    await writeFile(local, "", { flag: "wx" });
+    await utimes(local, a.mtime, a.mtime);
+  }
+  // No `-P`: without it both GNU tar and bsdtar strip a leading `/` and
+  // refuse `..` members, so a stream cannot write outside the tree. `-P`
+  // would disable exactly that — it is the flag to *not* reach for here.
+  return (await run(["tar", "-xf", "-", "-C", staging], { input: tar })) !== null;
+}
+
+/**
  * Replace a host's tree with a freshly extracted one.
  *
  * `tar -xf` merges, and a merged tree keeps what the remote deleted. Only one of
@@ -489,24 +516,9 @@ export async function fetchSource(host, scratchRoot) {
     if (!stream) return null;
     const { pids, ppids, memory, codex: codexOpen, subagents, tmuxClients, tar } = splitTreeStream(stream);
 
-    await rm(staging, { recursive: true, force: true });
-    await mkdir(staging, { recursive: true });
-    // No `-P`: without it both GNU tar and bsdtar strip a leading `/` and
-    // refuse `..` members, so a stream cannot write outside the tree. `-P`
-    // would disable exactly that — it is the flag to *not* reach for here.
-    const extracted = await run(["tar", "-xf", "-", "-C", staging], { input: tar });
-    if (extracted === null) {
+    if (!(await extractTree(staging, tar, subagents))) {
       await rm(staging, { recursive: true, force: true });
       return null;
-    }
-    // An empty stand-in per listed subagent, stamped with the host's mtime:
-    // readRunningSubagents finds it by readdir and retires it by stat exactly
-    // as before, and its tail comes from call 2 below.
-    for (const a of subagents) {
-      const local = join(staging, a.path);
-      await mkdir(dirname(local), { recursive: true });
-      await writeFile(local, "");
-      await utimes(local, a.mtime, a.mtime);
     }
     await swapTree(staging, finalDir);
 
