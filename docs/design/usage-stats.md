@@ -196,6 +196,12 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   11s against 2GB, measured — so `index.mjs` fires it without awaiting and
   guards it in-flight, the shape `remote-hosts.mjs` uses and for the same
   reason: the bookmark is written when a pass *finishes*.
+  **`codex-deepseek` is the ship-review skill's cheaper metered rung** — the
+  same Codex CLI against Opper's DeepSeek, in its own `~/.codex-deepseek` home,
+  read like `codex-api` and priced the same way (`RATES.deepseek`; a cache write
+  bills as plain input there, not 1.25x). Both providers are in `METERED`, so
+  the spend board's totals and turn counts cover them without a second path.
+  Local only: a remote host's DeepSeek home is not read.
   **`account` says whose plan a turn ran on, and is stamped by the pass, not
   read from the transcript** — nothing in a transcript names the plan. It is
   the signed-in email (`getAccount`) at the moment the line is read, and only

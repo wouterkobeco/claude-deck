@@ -29,7 +29,7 @@ await mkdir(join(codex, "2026", "08", "18"), { recursive: true });
 // happens to have spent into every assertion below.
 const codexApi = join(root, "codex-api-sessions");
 await mkdir(join(codexApi, "2026", "08", "18"), { recursive: true });
-const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, codexApiRoot: codexApi });
+const collect = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, codexApiRoot: codexApi, codexDeepseekRoot: join(root, 'no-deepseek') });
 
 // One assistant message, in the shape Claude Code writes it.
 const msg = (minute, usage, { model = "claude-opus-5", cwd = "/Users/me/thing" } = {}) =>
@@ -149,7 +149,7 @@ assert.equal(await collect(), 1, "a shrunk transcript is re-read from zero");
 // Nothing here may throw. This runs on the daemon's own timer, and a home
 // directory it cannot read is a quiet zero, not a crash.
 assert.deepEqual(readTokens(join(root, "nope")), [], "an unreadable log reads as nothing collected");
-const nowhere = { root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex"), codexApiRoot: join(root, "no-codex-api") };
+const nowhere = { root, projectsRoot: join(root, "no-projects"), codexRoot: join(root, "no-codex"), codexApiRoot: join(root, "no-codex-api"), codexDeepseekRoot: join(root, "no-deepseek") };
 assert.equal(await collectTokens(nowhere), 0, "a missing projects tree collects nothing");
 assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex home is not an error either");
 
@@ -357,7 +357,7 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
     ].join("\n") + "\n"
   );
   const remoteCalls = () => readTokens(root).filter((r) => r.cwd === "/home/me/thing").reduce((n, r) => n + r.calls, 0);
-  const withHost = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, codexApiRoot: codexApi, remoteApiReaders: { box: localCodexReader(remote) } });
+  const withHost = () => collectTokens({ root, projectsRoot: projects, codexRoot: codex, codexApiRoot: codexApi, codexDeepseekRoot: join(root, 'no-deepseek'), remoteApiReaders: { box: localCodexReader(remote) } });
   await withHost();
   assert.equal(remoteCalls(), 1, "a remote host's turn is counted");
   // The host has no open session this pass, while something local moves —
@@ -449,7 +449,7 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   await mkdir(pr, { recursive: true });
   const now = HOUR + 30 * 60000;
   writeFileSync(join(pr, "a.jsonl"), [msg(1, usage(10)), msg(29, usage(5))].join("\n") + "\n"); // 29 min old, 1 min old
-  const opts = { root: r2, projectsRoot: join(r2, "projects"), codexRoot: join(r2, "c"), codexApiRoot: join(r2, "ca"), now, account: "me@x.io" };
+  const opts = { root: r2, projectsRoot: join(r2, "projects"), codexRoot: join(r2, "c"), codexApiRoot: join(r2, "ca"), codexDeepseekRoot: join(r2, "cd"), now, account: "me@x.io" };
   await collectTokens(opts);
   const rows = readTokens(r2);
   assert.equal(rows.length, 2, "an account change splits the hour into two buckets");
@@ -457,6 +457,29 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   assert.equal(rows.find((x) => !x.account)?.out, 10, "a stale line is left unattributed, not guessed");
   assert.deepEqual(groupTokens(rows, "account", HOUR, HOUR + HOUR_MS).map((g) => [g.account, g.out]), [["", 10], ["me@x.io", 5]], "and grouping by account works");
   assert.equal(compactTokens(now, r2), 0, "differently-attributed buckets are not merged");
+}
+
+// The DeepSeek rung (ship-review via Opper) is metered like the OpenAI API one,
+// at DeepSeek's rates: a cache write bills as plain input, not 1.25x.
+{
+  const r3 = await mkdtemp(join(tmpdir(), "streamdeck-tokens-deepseek-"));
+  const ds = join(r3, "ds", "2026", "08", "18");
+  await mkdir(ds, { recursive: true });
+  const ts = new Date(HOUR + 600000).toISOString();
+  writeFileSync(
+    join(ds, "rollout-2026-08-18T09-10-00-abc.jsonl"),
+    [
+      JSON.stringify({ type: "session_meta", timestamp: ts, payload: { cwd: "/Users/me/thing" } }),
+      JSON.stringify({ type: "turn_context", timestamp: ts, payload: { model: "azure/deepseek-v4-flash-0731" } }),
+      JSON.stringify({ type: "event_msg", timestamp: ts, payload: { type: "token_count", info: { last_token_usage: { input_tokens: 1000000, cached_input_tokens: 800000, cache_write_input_tokens: 100000, output_tokens: 100000, reasoning_output_tokens: 0 } } } }),
+    ].join("\n") + "\n"
+  );
+  await collectTokens({ root: r3, projectsRoot: join(r3, "p"), codexRoot: join(r3, "c"), codexApiRoot: join(r3, "ca"), codexDeepseekRoot: join(r3, "ds") });
+  const [b] = readTokens(r3);
+  assert.equal(b.provider, "codex-deepseek", "its own provider, so the chart can tell it from the OpenAI rung");
+  const want = 0.24 * 0.1 + 0.0048 * 0.8 + 0.24 * 0.1 + 0.96 * 0.1; // fresh, read, write-as-input, out ($/M x M)
+  assert.ok(Math.abs(b.costUsd - want) < 1e-9, `priced at DeepSeek's rates: ${b.costUsd} ~ ${want}`);
+  assert.equal(summariseTokens(readTokens(r3), HOUR, HOUR + HOUR_MS)[0].apiCalls, 1, "and counted as a billed turn");
 }
 
 console.log("OK: token extraction, incremental reads, codex, the metered rung and its prices, grouping, compaction, the repo join");

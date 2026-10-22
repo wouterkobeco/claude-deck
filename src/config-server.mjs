@@ -222,6 +222,9 @@ const STATE_FILL = {
   // Amber, and deliberately not another cool hue: this is the rung that costs
   // money per run, and it should not blend into the two that are prepaid.
   "codex-api": "#ffb300",
+  // Metered as well, so also warm, but a different hue from amber: the two
+  // sit in one stacked bar and must stay tellable apart.
+  "codex-deepseek": "#ff7043",
   // The input chart's three kinds: fresh input in the page's blue, cache reads
   // a dimmer blue (most of the bar, least of the cost), cache writes purple.
   memory: "#4fc3f7",

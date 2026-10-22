@@ -47,6 +47,10 @@ const CODEX_DIR = join(homedir(), ".codex", "sessions");
 // the ledger's money was a subset of theirs, so reading both would count the
 // reviews twice.
 const CODEX_API_DIR = join(homedir(), ".codex-api", "sessions");
+// The ship-review skill's DeepSeek rung (via Opper), tried before the OpenAI
+// API one. Its own CODEX_HOME for the same reason: nothing else on the machine
+// runs `codex` against Opper, so a rollout under here billed Opper.
+const CODEX_DEEPSEEK_DIR = join(homedir(), ".codex-deepseek", "sessions");
 
 // $ per million tokens, as of September 2026, and deliberately the same four
 // numbers the ship-review skill prices its own runs with. Input bills at three
@@ -61,6 +65,10 @@ const RATES = {
   sol: { in: 4.0, read: 0.4, write: 5.0, out: 20.0 },
   terra: { in: 2.0, read: 0.2, write: 2.5, out: 12.0 },
   luna: { in: 0.2, read: 0.02, write: 0.25, out: 1.2 },
+  // DeepSeek V4.1 Flash on Opper (azure/deepseek-v4-flash-0731). Cache writes
+  // bill as plain input there, unlike OpenAI's 1.25x. Opper's catalog:
+  // https://docs.opper.ai/capabilities/models.md
+  deepseek: { in: 0.24, read: 0.0048, write: 0.24, out: 0.96 },
 };
 
 /** What one turn's tokens cost, or 0 for a model with no rate on file. */
@@ -258,6 +266,10 @@ export const CODEX = "codex";
 // only thing on disk that knows, and the reason the two trees are read
 // separately rather than as one.
 export const CODEX_API = "codex-api";
+// The same CLI against Opper's DeepSeek: metered too, at cents a review.
+export const CODEX_DEEPSEEK = "codex-deepseek";
+// Every provider whose turns are priced in dollars rather than prepaid.
+const METERED = [CODEX_API, CODEX_DEEPSEEK];
 
 // One bucket per hour per cwd per model per kind. `sub` is whether the
 // transcript sat under a `subagents/` directory — an Agent-tool subagent
@@ -360,6 +372,7 @@ export async function collectTokens({
   projectsRoot = join(root, "projects"),
   codexRoot = CODEX_DIR,
   codexApiRoot = CODEX_API_DIR,
+  codexDeepseekRoot = CODEX_DEEPSEEK_DIR,
   remoteApiReaders = {},
   account = null,
 } = {}) {
@@ -426,6 +439,9 @@ export async function collectTokens({
 
   if (await collectCodex(localCodexReader(codexRoot), previous, positions, buckets, CODEX)) moved = true;
   if (await collectCodex(localCodexReader(codexApiRoot), previous, positions, buckets, CODEX_API)) moved = true;
+  // Local only: a remote host's ~/.codex-deepseek is not read (the metered
+  // OpenAI home above is, over the poll's ssh connection).
+  if (await collectCodex(localCodexReader(codexDeepseekRoot), previous, positions, buckets, CODEX_DEEPSEEK)) moved = true;
   // Another machine's metered home bills the same key. Its bookmarks carry the
   // host, and a host that can't answer this pass simply keeps its cursor — so
   // does one that wasn't asked at all (no open session there). Dropping those
@@ -630,7 +646,7 @@ async function collectCodex(reader, previous, positions, buckets, provider = COD
       // Per turn, not per session: the turn is where the model is known for
       // certain (a session can switch mid-way) and where the timestamp is, so
       // the money lands in the hour that spent it like every other bucket here.
-      if (provider === CODEX_API) usage.costUsd = priceOf(model, usage);
+      if (METERED.includes(provider)) usage.costUsd = priceOf(model, usage);
       if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
       addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, cwd, model, false, usage, provider);
     }
@@ -716,7 +732,7 @@ export function summariseTokens(records, from, to, step = HOUR_MS) {
     // how many billed round-trips the window holds. The caption says "turns"
     // for that reason — it used to say "runs" when one ledger row was one
     // review, and the word had to follow the meaning.
-    if (p === CODEX_API) row.apiCalls += rec.calls ?? 0;
+    if (METERED.includes(p)) row.apiCalls += rec.calls ?? 0;
   }
   return [...buckets.values()];
 }
