@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -158,6 +158,35 @@ export function seedSessionOrder(ids) {
 // source that fetch produced. Held here for the daemon's lifetime, like
 // folderOrder — a host that goes away is evicted by remoteSources().
 const remoteMemo = new Map();
+
+// What the tmux page matches a host's panes against: the board's sessions,
+// plus every live registry entry the board never got because no editor window
+// holds its folder. Read from the tree the last fetch already brought over;
+// without them such a pane read "Claude with no session yet", which isn't so.
+function tmuxSessions(host) {
+  const board = lastSessions.filter((s) => s.host === host);
+  const source = remoteMemo.get(host)?.source;
+  if (!source?.root) return board;
+  const known = new Set(board.flatMap((s) => [s, ...(s.copies ?? [])]).map((s) => s.pid));
+  const dir = join(source.root, "sessions");
+  const windowless = [];
+  let names = [];
+  try {
+    names = readdirSync(dir).filter((n) => n.endsWith(".json"));
+  } catch {
+    return board;
+  }
+  for (const n of names) {
+    try {
+      const r = JSON.parse(readFileSync(join(dir, n), "utf8"));
+      if (r.kind !== "interactive" || typeof r.sessionId !== "string" || typeof r.tmux !== "string" || known.has(r.pid) || !source.isAlive(r.pid)) continue;
+      windowless.push({ session_id: r.sessionId, tmux: r.tmux.split(":")[0], pid: r.pid, started: r.startedAt ?? 0, folder: null, cwd: r.cwd ?? "", state: r.status ?? null, windowless: true });
+    } catch {
+      // mid-write or corrupt: that pane keeps its old label for one poll
+    }
+  }
+  return [...board, ...windowless];
+}
 
 // Which sessions the working board is still draining, `session_id ->
 // {ts, leftAt}`. Module-level for the same reason `sessionOrder` is: it is
@@ -1991,14 +2020,14 @@ export const configDeps = {
     Promise.all(
       remoteHosts.map(async (host) => {
         const panes = await fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h"));
-        return panes ? { host, rows: classifyTmux(panes, lastSessions.filter((s) => s.host === host)) } : { host, error: true };
+        return panes ? { host, rows: classifyTmux(panes, tmuxSessions(host)) } : { host, error: true };
       })
     ),
   peekTmux: (host, name) => peekTmuxSession(host, join(SCRATCH_ROOT, "cm-%h"), name),
   reviveTmux: (host, name) =>
     reviveTmux(name, {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
-      sessions: () => lastSessions.filter((s) => s.host === host),
+      sessions: () => tmuxSessions(host),
       ask: async (row, mode) => {
         const live = lastSessions
           .flatMap((s) => [s, ...(s.copies ?? [])])
@@ -2013,13 +2042,13 @@ export const configDeps = {
   killTmux: (host, name) =>
     killDetached(name, {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
-      sessions: () => lastSessions.filter((s) => s.host === host),
+      sessions: () => tmuxSessions(host),
       kill: (n) => killTmuxSession(host, join(SCRATCH_ROOT, "cm-%h"), n),
     }),
   closeTmux: (host, names) =>
     closeTmux(names, {
       list: () => fetchTmuxPanes(host, join(SCRATCH_ROOT, "cm-%h")),
-      sessions: () => lastSessions.filter((s) => s.host === host),
+      sessions: () => tmuxSessions(host),
       kill: (name) => killTmuxSession(host, join(SCRATCH_ROOT, "cm-%h"), name),
     }),
   // The board and the palette its settings sheet offers. One call rather than

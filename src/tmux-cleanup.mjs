@@ -71,6 +71,7 @@ export function classifyTmux(panes, sessions, now = Date.now()) {
     const newer = [...new Set(mine.map((s) => newest.get(s.session_id)).filter((n) => n && !mine.includes(n)).map((n) => n.tmux))];
     const shadowed = mine.length > 0 && mine.every((s) => newest.get(s.session_id) !== s);
     if (!SAFE_NAME.test(name)) row.why = "unusual name, close it by hand";
+    else if (mine.length && mine.every((s) => s.windowless)) row.why = `session ${mine[0].session_id.slice(0, 8)}, no editor window on its folder`;
     else if (p.attached > 0) row.why = shadowed ? `attached, also open in tmux ${newer.join(", ")}` : "attached";
     else if (busy) row.why = "working";
     else if (shadowed) {

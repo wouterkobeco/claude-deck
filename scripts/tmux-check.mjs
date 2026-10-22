@@ -59,6 +59,17 @@ eq(by(classifyTmux(parsePanes(`1${T}2${T}${2_000_000}${T}claude${T}/p`), [s("A",
   eq(folded["1"].revive, true, "and can still be attached");
 }
 
+// A live session whose folder no editor window holds never reaches the board,
+// so its pane read "Claude with no session yet". The host's registry still
+// knows it: said as such, with no Attach (there is no window to attach in)
+// and never closable.
+{
+  const lone = parsePanes(`18${T}0${T}${2_000_000}${T}claude${T}/p/portal`);
+  const row = classifyTmux(lone, [{ session_id: "08b4b82f-5704-48a2-95f8-d7d809c10e83", tmux: "18", pid: 5, started: 5, folder: null, cwd: "/p/portal", windowless: true }], NOW)[0];
+  eq(row.why, "session 08b4b82f, no editor window on its folder", "a windowless session says what it is");
+  eq([row.revive, row.closable, row.project], [false, false, "portal"], "no Attach, not closable, named by its cwd");
+}
+
 // Closing re-lists and re-decides: 13 was attached, 1 is fine, 99 is gone, 14 is a copy.
 const killed = [];
 const out = await closeTmux(["1", "13", "99", "14", "15"], {
