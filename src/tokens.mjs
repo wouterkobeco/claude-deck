@@ -263,10 +263,23 @@ export const CODEX_API = "codex-api";
 // transcript sat under a `subagents/` directory — an Agent-tool subagent
 // writes there and nowhere else, and it turned out to be 38% of all calls on
 // this machine, which is exactly the split the deck cannot show you.
-const keyOf = (b) => `${b.hour}|${b.cwd}|${b.model}|${b.sub ? 1 : 0}|${b.provider ?? CLAUDE}`;
+//
+// `account` is the email signed in when the line was read — a transcript says
+// nothing about whose plan paid for a turn, so this is stamped by the pass, and
+// only on lines young enough that "signed in now" is still "signed in then"
+// (ACCOUNT_FRESH_MS). Older lines — a first backfill, a resumed session's
+// history — get no field at all rather than today's account: a number that
+// reads as a fact and is a guess. Rows without it group under "".
+const keyOf = (b) => `${b.hour}|${b.cwd}|${b.model}|${b.sub ? 1 : 0}|${b.provider ?? CLAUDE}|${b.account ?? ""}`;
 
-function addTo(buckets, hour, cwd, model, sub, usage, provider = CLAUDE) {
+// Wider than the 5-minute cadence the pass runs on, so a line written just
+// before a pass that was slow or skipped still counts; narrow enough that an
+// account switch mid-hour misattributes minutes, not hours.
+export const ACCOUNT_FRESH_MS = 600_000;
+
+function addTo(buckets, hour, cwd, model, sub, usage, provider = CLAUDE, account = "") {
   const b = { hour, cwd, model, sub, provider };
+  if (account) b.account = account;
   const key = keyOf(b);
   const found = buckets.get(key) ?? Object.assign(b, Object.fromEntries(METRICS.map((m) => [m, 0])));
   for (const m of METRICS) found[m] += usage[m];
@@ -348,6 +361,7 @@ export async function collectTokens({
   codexRoot = CODEX_DIR,
   codexApiRoot = CODEX_API_DIR,
   remoteApiReaders = {},
+  account = null,
 } = {}) {
   const previous = readPositions(root);
   // Once: the metered rows written while the model lookup was broken priced a
@@ -404,7 +418,7 @@ export async function collectTokens({
       // bucket per hour per session saying nothing happened, which is a third
       // of the rows on this machine's first backfill.
       if (!METRICS.some((m) => m !== "calls" && usage[m] > 0)) continue;
-      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, rec.cwd ?? "", rec.message?.model ?? "", sub, usage, CLAUDE);
+      addTo(buckets, Math.floor(ts / HOUR_MS) * HOUR_MS, rec.cwd ?? "", rec.message?.model ?? "", sub, usage, CLAUDE, account && now - ts <= ACCOUNT_FRESH_MS ? account : "");
     }
     positions.set(name, slice.at);
     moved = true;

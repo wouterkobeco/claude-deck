@@ -441,4 +441,22 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   assert.equal(repoOf(noremote), null, "a checkout with no origin is not guessed from another remote");
 }
 
+// Whose plan a turn ran on is not in the transcript; the pass stamps the
+// signed-in account, but only on lines young enough to trust it for.
+{
+  const r2 = await mkdtemp(join(tmpdir(), "streamdeck-tokens-account-"));
+  const pr = join(r2, "projects", "-s");
+  await mkdir(pr, { recursive: true });
+  const now = HOUR + 30 * 60000;
+  writeFileSync(join(pr, "a.jsonl"), [msg(1, usage(10)), msg(29, usage(5))].join("\n") + "\n"); // 29 min old, 1 min old
+  const opts = { root: r2, projectsRoot: join(r2, "projects"), codexRoot: join(r2, "c"), codexApiRoot: join(r2, "ca"), now, account: "me@x.io" };
+  await collectTokens(opts);
+  const rows = readTokens(r2);
+  assert.equal(rows.length, 2, "an account change splits the hour into two buckets");
+  assert.equal(rows.find((x) => x.account)?.out, 5, "the fresh line carries the account");
+  assert.equal(rows.find((x) => !x.account)?.out, 10, "a stale line is left unattributed, not guessed");
+  assert.deepEqual(groupTokens(rows, "account", HOUR, HOUR + HOUR_MS).map((g) => [g.account, g.out]), [["", 10], ["me@x.io", 5]], "and grouping by account works");
+  assert.equal(compactTokens(now, r2), 0, "differently-attributed buckets are not merged");
+}
+
 console.log("OK: token extraction, incremental reads, codex, the metered rung and its prices, grouping, compaction, the repo join");

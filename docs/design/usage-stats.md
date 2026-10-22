@@ -196,6 +196,14 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   11s against 2GB, measured — so `index.mjs` fires it without awaiting and
   guards it in-flight, the shape `remote-hosts.mjs` uses and for the same
   reason: the bookmark is written when a pass *finishes*.
+  **`account` says whose plan a turn ran on, and is stamped by the pass, not
+  read from the transcript** — nothing in a transcript names the plan. It is
+  the signed-in email (`getAccount`) at the moment the line is read, and only
+  for lines under `ACCOUNT_FRESH_MS` (10 min) old; a backfill or a resumed
+  session's history gets no field rather than today's account, and groups under
+  `""`. It is part of the bucket key, so an account switch splits the hour
+  instead of blending two plans. Local Claude transcripts only; Codex rows and
+  remote hosts carry none. Rows from before 1.6.90 never have it.
   **It reads a second vendor's log, and that is what `provider` is for.** The
   ship-review skill drives `codex exec` for a second opinion, so part of the
   cost of a review lands in `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` and

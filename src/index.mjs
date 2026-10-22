@@ -419,7 +419,8 @@ function collectTokensInBackground() {
   const remoteApiReaders = Object.fromEntries(
     [...remoteMemo].filter(([, e]) => e.source).map(([host]) => [host, codexTreeReader(host, join(SCRATCH_ROOT, "cm-%h"))])
   );
-  collectTokens({ remoteApiReaders })
+  getAccount()
+    .then((a) => collectTokens({ remoteApiReaders, account: a?.email ?? null }))
     .catch((err) => console.error("tokens:", err?.message ?? err))
     .finally(() => {
       collecting = false;
