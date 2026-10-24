@@ -25,6 +25,7 @@ import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { applyRunCosts, fetchRunCosts, runOf, SETTLE_MS } from "./opper-cost.mjs";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 // The Codex CLI's own session log. The ship-review skill drives `codex exec`
@@ -375,6 +376,7 @@ export async function collectTokens({
   codexDeepseekRoot = CODEX_DEEPSEEK_DIR,
   remoteApiReaders = {},
   account = null,
+  opperCosts = fetchRunCosts,
 } = {}) {
   const previous = readPositions(root);
   // Once: the metered rows written while the model lookup was broken priced a
@@ -459,7 +461,10 @@ export async function collectTokens({
     }
   }
 
-  if (!moved) return 0;
+  if (!moved) {
+    await reconcileOpper(root, now, opperCosts);
+    return 0;
+  }
   try {
     if (buckets.size) {
       appendFileSync(logIn(root), [...buckets.values()].map((b) => JSON.stringify(b)).join("\n") + "\n");
@@ -473,7 +478,22 @@ export async function collectTokens({
     // bookmark that did get written.
     return 0;
   }
+  await reconcileOpper(root, now, opperCosts);
   return buckets.size;
+}
+
+// At most one Opper question per pass, and only while a recent tagged run is
+// still on its estimate. A whole-file rewrite, safe here for the reason
+// dropProvider is: this pass is the only writer of the log.
+async function reconcileOpper(root, now, fetchCosts) {
+  const records = readTokens(root);
+  const open = records.filter((r) => r.provider === CODEX_DEEPSEEK && !r.exact && runOf(r.cwd) && now - r.hour < SETTLE_MS);
+  if (!open.length) return;
+  const costs = await fetchCosts(Math.min(...open.map((r) => r.hour)));
+  if (!costs?.length || !applyRunCosts(records, costs)) return;
+  try {
+    writeFileSync(logIn(root), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  } catch {} // the estimate stands; next pass asks again
 }
 
 /**

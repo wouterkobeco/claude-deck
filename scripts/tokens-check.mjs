@@ -11,6 +11,7 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { applyRunCosts } from "../src/opper-cost.mjs";
 import { CLAUDE, CODEX, CODEX_API, collectTokens, compactTokens, groupTokens, localCodexReader, readTokens, repoOf, summariseTokens, HOUR_MS } from "../src/tokens.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "streamdeck-tokens-check-"));
@@ -480,6 +481,45 @@ assert.equal(await collectTokens(nowhere), 0, "and a machine with neither Codex 
   const want = 0.24 * 0.1 + 0.0048 * 0.8 + 0.24 * 0.1 + 0.96 * 0.1; // fresh, read, write-as-input, out ($/M x M)
   assert.ok(Math.abs(b.costUsd - want) < 1e-9, `priced at DeepSeek's rates: ${b.costUsd} ~ ${want}`);
   assert.equal(summariseTokens(readTokens(r3), HOUR, HOUR + HOUR_MS)[0].apiCalls, 1, "and counted as a billed turn");
+}
+
+// Opper's own figure replaces the estimate for a tagged run, split over the
+// run's rows by tokens, and an untagged run keeps its estimate.
+{
+  const r4 = await mkdtemp(join(tmpdir(), "streamdeck-tokens-opper-"));
+  const ds = join(r4, "ds", "2026", "08", "18");
+  await mkdir(ds, { recursive: true });
+  const ts = new Date(HOUR + 600000).toISOString();
+  const rollout = (name, cwd, input) =>
+    writeFileSync(
+      join(ds, name),
+      [
+        JSON.stringify({ type: "session_meta", timestamp: ts, payload: { cwd } }),
+        JSON.stringify({ type: "turn_context", timestamp: ts, payload: { model: "azure/deepseek-v4-flash-0731" } }),
+        JSON.stringify({ type: "event_msg", timestamp: ts, payload: { type: "token_count", info: { last_token_usage: { input_tokens: input, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 } } } }),
+      ].join("\n") + "\n"
+    );
+  rollout("rollout-a.jsonl", "/tmp/ship-review.XXXXXX.Ab12/tree", 1000);
+  rollout("rollout-b.jsonl", "/tmp/ship-review.XXXXXX.Ab12", 3000);
+  rollout("rollout-c.jsonl", "/tmp/untagged", 1000);
+  const asked = [];
+  const opperCosts = async (from) => {
+    asked.push(from);
+    return [{ hour: HOUR, run: "ship-review.XXXXXX.Ab12", model: "azure-inference/deepseek-v4-flash-0731-global", cost: 0.4 }];
+  };
+  const args = { root: r4, projectsRoot: join(r4, "p"), codexRoot: join(r4, "c"), codexApiRoot: join(r4, "ca"), codexDeepseekRoot: join(r4, "ds"), now: HOUR + 3600000, opperCosts };
+  await collectTokens(args);
+  const rows = readTokens(r4);
+  const tagged = rows.filter((x) => x.cwd.includes("Ab12"));
+  assert.ok(Math.abs(tagged.reduce((s, x) => s + x.costUsd, 0) - 0.4) < 1e-9, "the run's rows add up to what Opper billed");
+  assert.ok(tagged.every((x) => x.exact && x.model.startsWith("azure-inference/")), "and carry the provider that served it");
+  assert.ok(Math.abs(tagged.find((x) => x.in === 3000).costUsd - 0.3) < 1e-9, "split by tokens");
+  assert.equal(rows.find((x) => x.cwd === "/tmp/untagged").exact, undefined, "an untagged run keeps its estimate");
+  const before = asked.length;
+  await collectTokens(args);
+  assert.equal(asked.length, before, "once every tagged row is exact, Opper isn't asked again");
+  assert.equal(readTokens(r4).length, rows.length, "a second pass changes nothing");
+  assert.equal(applyRunCosts([{ provider: "codex-deepseek", hour: 1, cwd: "/x", in: 5 }], []), 0, "no figure yet leaves rows alone");
 }
 
 console.log("OK: token extraction, incremental reads, codex, the metered rung and its prices, grouping, compaction, the repo join");

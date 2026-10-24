@@ -202,6 +202,16 @@ Part of the design record CLAUDE.md indexes. Moved here verbatim so it loads whe
   bills as plain input there, not 1.25x). Both providers are in `METERED`, so
   the spend board's totals and turn counts cover them without a second path.
   Local only: a remote host's DeepSeek home is not read.
+  **Its dollars are Opper's own figure, not `RATES.deepseek`, once known** —
+  Opper picks the serving provider per call and the providers price one model
+  differently. The skill tags each run `review:<temp dir name>`
+  (`X-Opper-Tags`, via codex's `env_http_headers`); the rollout's cwd is inside
+  that dir, so `opper-cost.mjs` joins `GET /v2/analytics/usage` (hourly, grouped
+  by tag and model, the Opper CLI's own `~/.opper/config.json` key) to the log's
+  rows: the run's real cost is split over its rows by tokens, `model` becomes
+  the serving `provider/model`, and the row is marked `exact`. The pass asks at
+  most once, only while a tagged row under 48h old is still on its estimate; no
+  key, no network or an untagged run leaves the estimate standing.
   **`account` says whose plan a turn ran on, and is stamped by the pass, not
   read from the transcript** — nothing in a transcript names the plan. It is
   the signed-in email (`getAccount`) at the moment the line is read, and only
