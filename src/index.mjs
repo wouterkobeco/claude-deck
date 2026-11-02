@@ -15,8 +15,9 @@ import {
   taskWindow,
   transcriptPathFor,
 } from "./sessions.mjs";
-import { codexTreeReader, fetchAccount, fetchRunlock, fetchRunlockEnded, fetchSource, fetchTmuxPanes, killTmuxSession, peekTmuxSession } from "./remote-fs.mjs";
+import { codexTreeReader, fetchAccount, fetchDispatch, fetchRunlock, fetchRunlockEnded, fetchSource, fetchTmuxPanes, killTmuxSession, peekTmuxSession } from "./remote-fs.mjs";
 import { classifyTmux, closeTmux, killDetached, reviveTmux } from "./tmux-cleanup.mjs";
+import { agentsKey } from "./dispatch.mjs";
 import { chipsBySession, parseEnded, queueBudget, queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
@@ -337,6 +338,25 @@ function runlockSummary(host) {
   }
   return queueSummary(known?.doc ?? null);
 }
+// A host's agent queue (dispatch.mjs), polled like runlockSummary but slower:
+// the status command calls `gh`, and agents change state in minutes, not
+// seconds. A host with no dispatcher is asked every five minutes.
+const DISPATCH_POLL_MS = 20000;
+const DISPATCH_ABSENT_MS = 5 * 60 * 1000;
+const dispatches = new Map();
+// [{ host, doc }] for every host whose dispatcher answered, idle ones too.
+let agents = [];
+function dispatchFor(host) {
+  const known = dispatches.get(host);
+  const ttl = known && known.doc === null ? DISPATCH_ABSENT_MS : DISPATCH_POLL_MS;
+  if (process.env.STREAMDECK_NO_REMOTE !== "1" && (!known || (!known.inFlight && Date.now() - known.at > ttl))) {
+    dispatches.set(host, { ...(known ?? { doc: undefined }), at: Date.now(), inFlight: true });
+    fetchDispatch(host, join(SCRATCH_ROOT, "cm-%h"))
+      .then((doc) => dispatches.set(host, { at: Date.now(), doc, inFlight: false }))
+      .catch(() => dispatches.set(host, { at: Date.now(), doc: null, inFlight: false }));
+  }
+  return known?.doc ?? null;
+}
 
 async function liveSessions() {
   const sessions = await getLiveSessions(allSources());
@@ -354,7 +374,9 @@ async function liveSessions() {
     (await getAccount())?.email,
     (host) => remoteAccount(host)?.email
   );
-  queues = [...new Set([...remoteHosts, ...queueHosts()])].map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
+  const watched = [...new Set([...remoteHosts, ...queueHosts()])];
+  queues = watched.map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
+  agents = watched.map((host) => ({ host, doc: dispatchFor(host) })).filter((a) => a.doc);
   queueRuns = runsBySession(queues);
   queueChips = chipsBySession(queues);
   liveProjects.clear();
@@ -1683,8 +1705,11 @@ async function refreshQueue(deck, buttons, statusButton, usageButton, host, page
   // take the last session keys. The runs page over the rest.
   const all = queueBudget(summary);
   const corner = all.at(-1) ?? null;
-  const budget = all.slice(0, -1).slice(-Math.max(0, Math.min(3, allTileButtons.length - 1)));
-  const tileButtons = allTileButtons.slice(0, allTileButtons.length - budget.length);
+  // The host's agent queue, when it has a dispatcher: one fixed key left of
+  // the lanes, never paged. Inert like the tiles.
+  const agentsDoc = agents.find((a) => a.host === host)?.doc ?? null;
+  const fixed = [...(agentsDoc ? [agentsKey(agentsDoc)] : []), ...all.slice(0, -1).slice(-3)].slice(-Math.max(0, Math.min(4, allTileButtons.length - 1)));
+  const tileButtons = allTileButtons.slice(0, allTileButtons.length - fixed.length);
   const paging = pageOf(runs, page, tileButtons.length);
   const tiles = runs;
   if (backBtn) {
@@ -1698,7 +1723,7 @@ async function refreshQueue(deck, buttons, statusButton, usageButton, host, page
   }
   await Promise.all(
     allTileButtons.map(async (btn, i) => {
-      const tile = (i < tileButtons.length ? paging.entries[i] : budget[i - tileButtons.length]) ?? null;
+      const tile = (i < tileButtons.length ? paging.entries[i] : fixed[i - tileButtons.length]) ?? null;
       btn.assigned = null;
       btn.renderParams = null;
       btn.leavingParams = null;
@@ -2015,6 +2040,8 @@ export const configDeps = {
       .map((host) => ({ host, budget: busy.has(host) ? queueBudget(busy.get(host)) : [], tiles: busy.has(host) ? queueTiles(busy.get(host)) : [], ended: endedFor(host) }))
       .filter((h) => h.tiles.length || h.ended.length);
   },
+  // The queue page's Agents sections: every host whose dispatcher answered.
+  agents: () => agents,
   tmuxHosts: () => remoteHosts,
   tmux: async () =>
     Promise.all(

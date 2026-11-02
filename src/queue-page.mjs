@@ -4,6 +4,7 @@
 import { esc } from "./html.mjs";
 import { HEADER_CSS, iconHeader, iconLinks } from "./board-page.mjs";
 import { STATE_COLORS, formatAge } from "./render.mjs";
+import { ISSUE_URL, agentsKey } from "./dispatch.mjs";
 
 const STYLE = `
   body { margin: 0; background: #0b0b0b; color: #e0e0e0; font: 14px/1.45 -apple-system, system-ui, sans-serif }
@@ -23,7 +24,8 @@ const STYLE = `
   .bar i { display: block; height: 100%; align-self: auto }
   .ended i { background: ${STATE_COLORS.requires_action} }
   h3 { font-size: 14px; margin: 16px 0 6px; color: #ef9a9a }
-  .time { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums }`;
+  .time { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums }
+  .who a { color: inherit }`;
 
 // A running job's bar fills toward runlock's estimate; a waiting one says where
 // it stands in line. Nothing when runlock gave no estimate.
@@ -36,8 +38,33 @@ const progress = (t, tiles) =>
 
 const TONE = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, stuck: STATE_COLORS.requires_action };
 
-/** `queues` is `[{ host, budget, tiles, ended }]` as index.mjs builds it from queueBudget/queueTiles/parseEnded. */
-export function queuePage(token, queues, now = Date.now()) {
+// One host's agent queue (dispatch.mjs): the budget, then each agent at work,
+// each issue waiting for a slot, each card waiting for the owner's approval.
+function agentsSection({ host, doc }, now) {
+  const face = agentsKey(doc);
+  const cell = (colour, big, label) => `<div class="cell" style="background:${colour}"><b>${esc(big)}</b><span>${esc(label)}</span></div>`;
+  const row = (colour, kind, it, small, time, under) =>
+    `<div class="run"><i style="background:${colour}"></i><span class="cores">${esc(kind)}</span><span class="who"><a href="${ISSUE_URL}${esc(it.n)}">#${esc(it.n)}</a> ${esc(it.title)}<small>${esc(small)}</small></span><span></span><span class="time">${esc(time)}<small class="sub" style="display:block;font-weight:400">${esc(under)}</small></span></div>`;
+  const tick = doc.lastTickAgeSeconds != null ? ` · last tick ${formatAge(doc.lastTickAgeSeconds) || "0s"} ago` : "";
+  return `<h2>Agents · ${esc(host)}</h2>
+    <p class="sub">AI agents planning and building issues${esc(tick)}.</p>
+    <div class="budget">${[
+      cell(TONE[face.tone] ?? STATE_COLORS.idle, face.big, "agents busy"),
+      cell(doc.waiting.length ? TONE.queued : STATE_COLORS.idle, doc.waiting.length, "queued"),
+      cell(doc.cards.length ? TONE.queued : STATE_COLORS.idle, doc.cards.length, "cards waiting"),
+      doc.hold ? cell(TONE.stuck, "held", doc.hold.reason || "no reason given") : "",
+    ].join("")}</div>
+    ${doc.leases.map((l) => row(TONE.running, l.kind, l, [l.attempt > 0 ? `retry ${l.attempt}` : "", ...l.areas, l.migration ? "migration" : ""].filter(Boolean).join(" · "), l.startedAt != null ? formatAge(now / 1000 - l.startedAt) || "0s" : "…", "running")).join("")}
+    ${doc.waiting.map((w) => row(TONE.queued, "waiting", w, w.reason, "", "queued")).join("")}
+    ${doc.cards.map((c) => row(STATE_COLORS.idle, "card", c, "waiting for the owner's approval", "", "card")).join("")}`;
+}
+
+/**
+ * `queues` is `[{ host, budget, tiles, ended }]` as index.mjs builds it from
+ * queueBudget/queueTiles/parseEnded; `agents` is `[{ host, doc }]`, each doc
+ * from parseDispatchStatus. A host with no dispatcher is simply not in it.
+ */
+export function queuePage(token, queues, now = Date.now(), agents = []) {
   const endedRows = (ended) =>
     ended?.length
       ? `<h3>Ended early, last 24 hours</h3>${ended
@@ -56,5 +83,6 @@ export function queuePage(token, queues, now = Date.now()) {
     <main>
       <p class="sub">Test runs holding or waiting for cores on your remote hosts, in the order the host will admit them.</p>
       ${queues.length ? queues.map(host).join("") : `<p class="sub">No test run is queued or running, and none ended early in the last day.</p>`}
+      ${agents.map((a) => agentsSection(a, now)).join("")}
     </main></body></html>`;
 }

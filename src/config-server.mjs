@@ -866,7 +866,7 @@ export async function createConfigServer(deps, host = "127.0.0.1", { port: wante
       }
 
       if (req.method === "GET" && url.pathname === "/queue") {
-        return send(res, 200, queuePage(token, deps.queues()), "text/html; charset=utf-8");
+        return send(res, 200, queuePage(token, deps.queues(), Date.now(), deps.agents?.() ?? []), "text/html; charset=utf-8");
       }
 
       if (req.method === "GET" && url.pathname === "/tmux") {

@@ -7,6 +7,7 @@ import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
 import { accountFrom } from "./usage.mjs";
 import { parseRunlockStatus } from "./runlock.mjs";
+import { parseDispatchStatus } from "./dispatch.mjs";
 import { PANES_CMD, SAFE_NAME, parsePanes } from "./tmux-cleanup.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
@@ -687,6 +688,20 @@ export async function fetchRunlockEnded(host, controlPath) {
 export async function fetchRunlock(host, controlPath) {
   const buf = await run(["ssh", ...sshArgs(host, controlPath), "~/.local/bin/runlock status --json 2>/dev/null"], { timeoutMs: 6000 });
   return buf ? parseRunlockStatus(buf.toString("utf8")) : null;
+}
+
+/**
+ * A remote host's agent queue, as kob-dispatch's `status --json` reports it
+ * (see dispatch.mjs), or null: no ~/kob-dispatch there, host unreachable, or
+ * output this does not recognise. Node is named by its nvm path because a
+ * non-interactive ssh shell has no nvm; the command shells out to `gh`, so it
+ * gets a longer timeout than runlock's.
+ */
+const DISPATCH_CMD =
+  "[ -f ~/kob-dispatch/bin/dispatch.mjs ] && PATH=$HOME/.nvm/versions/node/v24.20.0/bin:$HOME/.local/bin:/snap/bin:/usr/bin:/bin node ~/kob-dispatch/bin/dispatch.mjs status --json 2>/dev/null";
+export async function fetchDispatch(host, controlPath) {
+  const buf = await run(["ssh", ...sshArgs(host, controlPath), DISPATCH_CMD], { timeoutMs: 20000 });
+  return buf ? parseDispatchStatus(buf.toString("utf8")) : null;
 }
 
 /**

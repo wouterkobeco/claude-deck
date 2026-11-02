@@ -100,3 +100,19 @@ but 1, blanks control characters, bounds lengths and reads a non-number or a
 negative age as unknown. An idle box folds to no key at all (`queueSummary`
 returns null), which is what makes the key appear only while it is busy.
 
+
+## A remote agent queue (`dispatch.mjs`)
+
+A host running kob-dispatch (AI agents planning and building kob-trace issues)
+answers `node ~/kob-dispatch/bin/dispatch.mjs status --json`; `fetchDispatch`
+runs it over the same `cm-%h` socket, node named by its nvm path because a
+non-interactive shell has no nvm. The command calls `gh`, so it is asked every
+20s (5 min once a host has answered nothing) with a 20s timeout. Same hosts as
+runlock. `parseDispatchStatus` treats it like any remote text: issue numbers
+must be plain positive integers (they become URLs), strings are blanked of
+control characters and bounded, lists capped at 50. Unlike runlock an idle
+dispatcher is still shown: `agentsKey` is one fixed key on that host's queue
+board (busy/capacity, queued, cards; red while held), and the web queue page
+gets an Agents section per host. Not on the main board: its extra-key cap of
+three is shared by busy queues and remote usage keys, and an always-present
+agents key would cost a session slot for good.

@@ -898,6 +898,7 @@ console.log("OK: status tile");
   const kills = [];
   const t = await createConfigServer({
     tmuxHosts: () => ["beast"],
+    agents: () => [{ host: "beast", doc: { capacity: 2, leases: [{ n: 77, kind: "worker", attempt: 0, startedAt: null, title: "t", areas: [], migration: false }], waiting: [], cards: [], hold: null, lastTickAgeSeconds: 5 } }],
     queues: () => [{ host: "<b>BEAST</b>", budget: [{ tone: "queued", title: "TOTAL", big: "16/20", line: "80% of cores" }], tiles: [{ tone: "running", big: "12c", title: "kob-trace", line: "ci · vitest", age: "", wait: "5m" }, { tone: "queued", big: "4-16c", title: "w9", line: "claude · run", age: "", wait: "21m" }] }],
     tmux: async () => [
       { host: "beast", rows: [
@@ -919,6 +920,7 @@ console.log("OK: status tile");
   const qp = await (await fetch(`${tb}/queue?t=${tt}`)).text();
   eq(qp.includes("<b>BEAST</b>"), false, "a host name is escaped on the queue page");
   eq(qp.includes("21m") && qp.includes("5m") && qp.includes("16/20"), true, "every run's time and the budget are listed");
+  eq(qp.includes("Agents · beast") && qp.includes("issues/77"), true, "the queue page carries the agents the daemon hands it");
   const tp = await (await fetch(`${tb}/tmux?t=${tt}`)).text();
   eq(tp.includes('value="5"') && !tp.includes('value="13"'), true, "a closable session has a box, one in use does not");
   eq(tp.includes("<b>x</b>"), false, "a project name is escaped");

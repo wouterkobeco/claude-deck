@@ -71,7 +71,7 @@ needs indexing.
 | Doc | Covers |
 |---|---|
 | `docs/design/sessions.md` | `sessions.mjs`, `sdd-ledger.mjs`, `codex.mjs` — reading Claude Code's state; transcript signals (`aiTitle`, `/clear`, `lastPrompt`, `blockedOnDenial`, compacting); nested/subagent synthesis |
-| `docs/design/remote.md` | `remote-fs.mjs`, `remote-hosts.mjs`, `runlock.mjs` — the ssh fetches, backoff, cached sources, unreachable hosts, a remote test queue |
+| `docs/design/remote.md` | `remote-fs.mjs`, `remote-hosts.mjs`, `runlock.mjs`, `dispatch.mjs` — the ssh fetches, backoff, cached sources, unreachable hosts, a remote test queue, a remote agent queue |
 | `docs/design/board.md` | `index.mjs` — slot assignment and its exceptions, the six boards, the detail view, presses, `pulse()`, the self-restart |
 | `docs/design/render.md` | `render.mjs` — SVG→RGBA, measured text fitting, the three-tier palette and `colors-check`'s floors |
 | `docs/design/usage-stats.md` | `usage.mjs`, `stats.mjs`, `cswap.mjs`, `history.mjs`, `tokens.mjs` — the meters, the state log, the token log |

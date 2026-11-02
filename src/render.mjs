@@ -1009,7 +1009,7 @@ export async function renderBlank({ width, height }) {
 // A remote test queue (runlock.mjs): green while its runs all fit, gold once
 // something waits for cores, red when the head has waited long enough that
 // something is probably wedged. The state colours the board already speaks.
-const QUEUE_TONE = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, stuck: STATE_COLORS.requires_action };
+const QUEUE_TONE = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, stuck: STATE_COLORS.requires_action, idle: STATE_COLORS.idle };
 
 /**
  * The queue key, and each tile on its board: the host (or the run's requestor)
