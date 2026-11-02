@@ -2645,7 +2645,6 @@ async function refresh(deck, buttons, slots, nestedBySlot) {
   const sessions = await liveSessions();
   const tiles = [...sessions, ...unreachableTiles(readWindowStates())];
   assignSlots(tiles, slots, nestedBySlot);
-  /*DBG*/ { const shown = new Set(slots.map((id) => tiles.find((x) => x.session_id === id)).filter(Boolean).map(folderKeyFor)); const lost = [...new Set(tiles.filter((s) => !s.nested).map(folderKeyFor))].filter((k) => !shown.has(k)); if (lost.length) import('node:fs').then((f) => f.appendFileSync('/private/tmp/claude-501/-Users-wouterd-projects-claude-streamdeck/8450a06e-06c2-4b3e-b5b1-463c840621dd/scratchpad/lost.log', JSON.stringify({ at: new Date().toISOString(), cap: slots.length, lost, slots: slots.map((id) => { const s = tiles.find((x) => x.session_id === id); return s ? folderKeyFor(s).split('/').pop() : null; }), all: tiles.map((s) => [folderKeyFor(s).split('/').pop(), s.session_id.slice(0, 6), !!s.nested, !!s.unreachable]) }) + '\n')).catch(() => {}); }
   persistAccents();
   const byId = new Map(tiles.map((s) => [s.session_id, s]));
 
@@ -3209,7 +3208,6 @@ async function run() {
     const folder = btn?.assigned?.folder ?? null;
     const host = btn?.assigned?.host ?? null;
     const press = { index: control.index, session_id: sessionId, folder, host };
-    /*DBG*/ import("node:fs").then((f) => f.appendFileSync("/private/tmp/claude-501/-Users-wouterd-projects-claude-streamdeck/e6083ffc-5e5b-40af-bc2f-496fc8f1f7be/scratchpad/press.log", JSON.stringify({ at: new Date().toISOString(), DOWN: control.index, view: view.kind, id: sessionId?.slice(0, 8) ?? null, host, folder: folder?.split("/").pop() ?? null, pid: btn?.assigned?.pid ?? null, anc: btn?.assigned?.ancestors?.length ?? null, unreachable: !!btn?.assigned?.unreachable }) + "\n")).catch(() => {});
 
     // The detail board owns the whole deck, so it leaves only by its own back
     // key. Every other key there is a tile describing something — pressing a
