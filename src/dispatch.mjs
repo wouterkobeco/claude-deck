@@ -48,6 +48,38 @@ export function parseDispatchStatus(text) {
   };
 }
 
+const clip = (v, n) => str(String(v ?? "").split("\n")[0].trim(), n);
+const rel = (p) => clip(p, 200).split("/").slice(-3).join("/");
+
+/**
+ * What an agent is doing right now, from the tail of its stream-json log: the
+ * last tool call (`Edit src/a.ts`, `Bash: pnpm test`) or, failing that, the
+ * last words it wrote. Lines are parsed, never matched as text; the tail may
+ * start mid-line, which just fails to parse. "" when nothing readable.
+ */
+export function parseActivity(text) {
+  const lines = String(text).split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let o;
+    try {
+      o = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const parts = o?.type === "assistant" && Array.isArray(o.message?.content) ? o.message.content : [];
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const p = parts[j];
+      if (p?.type === "tool_use") {
+        const a = p.input ?? {};
+        const what = a.file_path ? rel(a.file_path) : a.description || a.command || a.pattern || a.prompt || a.path || "";
+        return clip(`${p.name} ${p.name === "Bash" && !a.description ? ": " : ""}${what}`, 100);
+      }
+      if (p?.type === "text" && p.text?.trim()) return clip(p.text, 100);
+    }
+  }
+  return "";
+}
+
 const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 /**

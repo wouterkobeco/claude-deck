@@ -93,3 +93,17 @@ eq(page([{ host: "beast", doc: parseDispatchStatus(doc()) }]).includes("No test 
 eq(queuePage("tok", [{ host: "beast", budget: [], tiles: [], ended: [] }], now).includes("Agents"), false, "test queue alone: no agents");
 
 console.log("OK: dispatch agent queue");
+
+// --- what an agent is doing -----------------------------------------------------
+import { parseActivity } from "../src/dispatch.mjs";
+const asst = (...c) => JSON.stringify({ type: "assistant", message: { content: c } });
+const tail = [
+  '{"type":"user","message":{"cont', // cut mid-line
+  asst({ type: "tool_use", name: "Edit", input: { file_path: "/home/x/repo/src/data/a.ts" } }),
+  JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } }),
+].join("\n");
+// kills: reading the tool result or the cut line instead of the last call; an absolute path in full
+eq(parseActivity(tail), "Edit src/data/a.ts", "last tool call");
+eq(parseActivity(asst({ type: "tool_use", name: "Bash", input: { command: "pnpm test\nmore" } })), "Bash : pnpm test", "bash shows the command's first line");
+eq(parseActivity(asst({ type: "text", text: "Looking at the schema" })), "Looking at the schema", "falls back to text");
+eq(parseActivity("garbage"), "", "unreadable reads empty");

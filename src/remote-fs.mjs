@@ -7,7 +7,7 @@ import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
 import { accountFrom } from "./usage.mjs";
 import { parseRunlockStatus } from "./runlock.mjs";
-import { parseDispatchStatus } from "./dispatch.mjs";
+import { parseActivity, parseDispatchStatus } from "./dispatch.mjs";
 import { PANES_CMD, SAFE_NAME, parsePanes } from "./tmux-cleanup.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
@@ -695,7 +695,18 @@ const DISPATCH_CMD =
   "[ -f ~/kob-dispatch/bin/dispatch.mjs ] && PATH=$HOME/.nvm/versions/node/v24.20.0/bin:$HOME/.local/bin:/snap/bin:/usr/bin:/bin node ~/kob-dispatch/bin/dispatch.mjs status --json 2>/dev/null";
 export async function fetchDispatch(host, controlPath) {
   const buf = await run(["ssh", ...sshArgs(host, controlPath), DISPATCH_CMD], { timeoutMs: 20000 });
-  return buf ? parseDispatchStatus(buf.toString("utf8")) : null;
+  const doc = buf ? parseDispatchStatus(buf.toString("utf8")) : null;
+  if (doc?.leases.length) {
+    // What each running agent is doing: the tail of its newest log. Best effort —
+    // a failed fetch leaves the rows as they were. `n` is a plain integer (issue()).
+    const cmd = doc.leases.map((l) => `echo "@@${l.n}"; tail -c 300000 "$(ls -t ~/dispatch-logs/card-${l.n}-*.jsonl 2>/dev/null | head -1)" 2>/dev/null`).join("; ");
+    const out = await run(["ssh", ...sshArgs(host, controlPath), cmd], { timeoutMs: 8000 });
+    if (out) {
+      const by = new Map(out.toString("utf8").split(/^@@(\d+)\n/m).slice(1).reduce((a, x, i, arr) => (i % 2 ? a : [...a, [Number(x), arr[i + 1]]]), []));
+      for (const l of doc.leases) l.doing = parseActivity(by.get(l.n) ?? "");
+    }
+  }
+  return doc;
 }
 
 /**

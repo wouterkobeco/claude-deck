@@ -1,6 +1,6 @@
 // The test queue page: every busy remote queue (runlock.mjs) as the deck's
 // board reads it — the cores budget, then each run holding or waiting, with how
-// long. Server-rendered and read-only; it re-reads itself every few seconds.
+// long. Server-rendered and read-only; it swaps itself in place every few seconds.
 import { esc } from "./html.mjs";
 import { HEADER_CSS, iconHeader, iconLinks } from "./board-page.mjs";
 import { STATE_COLORS, formatAge } from "./render.mjs";
@@ -43,8 +43,8 @@ const TONE = { running: STATE_COLORS.busy, queued: STATE_COLORS.waiting, stuck: 
 function agentsSection({ host, doc }, now) {
   const face = agentsKey(doc);
   const cell = (colour, big, label) => `<div class="cell" style="background:${colour}"><b>${esc(big)}</b><span>${esc(label)}</span></div>`;
-  const row = (colour, kind, it, small, time, under) =>
-    `<div class="run"><i style="background:${colour}"></i><span class="cores">${esc(kind)}</span><span class="who"><a href="${ISSUE_URL}${esc(it.n)}">#${esc(it.n)}</a> ${esc(it.title)}<small>${esc(small)}</small></span><span></span><span class="time">${esc(time)}<small class="sub" style="display:block;font-weight:400">${esc(under)}</small></span></div>`;
+  const row = (colour, kind, it, small, time, under, doing = "") =>
+    `<div class="run"><i style="background:${colour}"></i><span class="cores">${esc(kind)}</span><span class="who"><a href="${ISSUE_URL}${esc(it.n)}">#${esc(it.n)}</a> ${esc(it.title)}<small>${esc(small)}</small>${doing ? `<small>▸ ${esc(doing)}</small>` : ""}</span><span></span><span class="time">${esc(time)}<small class="sub" style="display:block;font-weight:400">${esc(under)}</small></span></div>`;
   const tick = doc.lastTickAgeSeconds != null ? ` · last tick ${formatAge(doc.lastTickAgeSeconds) || "0s"} ago` : "";
   return `<h2>Agents · ${esc(host)}</h2>
     <p class="sub">AI agents planning and building issues${esc(tick)}.</p>
@@ -54,7 +54,7 @@ function agentsSection({ host, doc }, now) {
       cell(doc.cards.length ? TONE.queued : STATE_COLORS.idle, doc.cards.length, "cards waiting"),
       doc.hold ? cell(TONE.stuck, "held", doc.hold.reason || "no reason given") : "",
     ].join("")}</div>
-    ${doc.leases.map((l) => row(TONE.running, l.kind, l, [l.attempt > 0 ? `retry ${l.attempt}` : "", ...l.areas, l.migration ? "migration" : ""].filter(Boolean).join(" · "), l.startedAt != null ? formatAge(now / 1000 - l.startedAt) || "0s" : "…", "running")).join("")}
+    ${doc.leases.map((l) => row(TONE.running, l.kind, l, [l.attempt > 0 ? `retry ${l.attempt}` : "", ...l.areas, l.migration ? "migration" : ""].filter(Boolean).join(" · "), l.startedAt != null ? formatAge(now / 1000 - l.startedAt) || "0s" : "…", "running", l.doing)).join("")}
     ${doc.waiting.map((w) => row(TONE.queued, "waiting", w, w.reason, "", "queued")).join("")}
     ${doc.cards.map((c) => row(STATE_COLORS.idle, "card", c, "waiting for the owner's approval", "", "card")).join("")}`;
 }
@@ -76,7 +76,6 @@ export function queuePage(token, queues, now = Date.now(), agents = []) {
     ${tiles.map((t) => `<div class="run"><i style="background:${TONE[t.tone] ?? STATE_COLORS.idle}"></i><span class="cores">${esc(t.big)}</span><span class="who">${esc(t.title)}<small>${esc(t.line)}</small></span>${progress(t, tiles)}<span class="time">${esc(t.wait ?? t.age)}<small class="sub" style="display:block;font-weight:400">${esc(t.tone === "running" ? "running" : "waiting")}${t.eta ? ` · ${esc(t.eta)}` : ""}</small></span></div>`).join("")}${endedRows(ended)}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>streamdeck queue</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <meta http-equiv="refresh" content="5">
     ${iconLinks(token)}
     <style>${HEADER_CSS}${STYLE}</style></head><body>
     ${iconHeader(token, "queue", "Queue")}
@@ -84,5 +83,16 @@ export function queuePage(token, queues, now = Date.now(), agents = []) {
       <p class="sub">Test runs holding or waiting for cores on your remote hosts, in the order the host will admit them.</p>
       ${queues.length ? queues.map(host).join("") : `<p class="sub">No test run is queued or running, and none ended early in the last day.</p>`}
       ${agents.map((a) => agentsSection(a, now)).join("")}
-    </main></body></html>`;
+    </main>
+    <script type="module">
+    // Swap <main> in place every 5s: no reload, so no flash and the scroll stays.
+    setInterval(async () => {
+      try {
+        const r = await fetch(location.href, { cache: "no-store" });
+        if (!r.ok) return;
+        const next = new DOMParser().parseFromString(await r.text(), "text/html").querySelector("main");
+        if (next) document.querySelector("main").replaceWith(next);
+      } catch {} // daemon restarting: keep what is on screen
+    }, 5000);
+    </script></body></html>`;
 }
