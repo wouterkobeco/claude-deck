@@ -1,7 +1,8 @@
 // Verifies the agent queue: parsing kob-dispatch's `status --json` (text
 // another machine wrote), the key's face, and the queue page's Agents section.
 // Run: node scripts/dispatch-check.mjs
-import { parseDispatchStatus, agentsKey } from "../src/dispatch.mjs";
+import { parseDispatchStatus, agentsKey, deckQueues, deckQueueKey } from "../src/dispatch.mjs";
+import { parseRunlockStatus, queueSummary } from "../src/runlock.mjs";
 import { queuePage } from "../src/queue-page.mjs";
 import { renderQueue } from "../src/render.mjs";
 
@@ -49,6 +50,24 @@ const held = agentsKey(parseDispatchStatus(doc({ leases: [lease(1, "worker")], h
 eq([held.tone, held.line], ["stuck", "HELD"], "held");
 // it draws
 eq((await renderQueue({ width: 72, height: 72, ...busy })).length, 72 * 72 * 4, "renders a key");
+
+// --- the main board's queue keys: one per host, either queue busy ----------------
+const runlockBusy = queueSummary(parseRunlockStatus(JSON.stringify({ schema: 1, host: "BEAST", lanes: [{ lane: "default", capacity: 16, free: 8, holders: [{ requestor: "ci:x", cores: 8, running_s: 60 }], waiters: [] }] })));
+const agentsBusyDoc = parseDispatchStatus(doc({ leases: [lease(1, "worker")] }));
+const agentsIdleDoc = parseDispatchStatus(doc());
+const hosts = (q, a) => deckQueues(q, a).map((e) => [e.host, !!e.summary, !!e.agents]);
+// kills: an agents-only host left off the board (the key existing only while tests run)
+eq(hosts([], [{ host: "beast", doc: agentsBusyDoc }]), [["beast", false, true]], "idle runlock + busy agents: one key");
+// kills: a host busy on both getting two keys
+eq(hosts([{ host: "beast", summary: runlockBusy }], [{ host: "beast", doc: agentsBusyDoc }]), [["beast", true, true]], "both busy: one key");
+// kills: an idle dispatcher taking a key
+eq(hosts([], [{ host: "beast", doc: agentsIdleDoc }]), [], "neither busy: no key");
+eq(hosts([], []), [], "nothing answered: no key");
+// kills: a hold not earning a key
+eq(hosts([], [{ host: "beast", doc: parseDispatchStatus(doc({ hold: { reason: "r" } })) }]).length, 1, "a held dispatcher earns a key");
+// kills: the test queue's face replaced by the agents' while tests run, or an empty test face for agents only
+eq(deckQueueKey(deckQueues([{ host: "beast", summary: runlockBusy }], [{ host: "beast", doc: agentsBusyDoc }])[0]).line, "1 RUNNING", "both busy: the test queue's face");
+eq(deckQueueKey(deckQueues([], [{ host: "beast", doc: agentsBusyDoc }])[0]).title, "AGENTS", "agents only: the agents' face");
 
 // --- the queue page ----------------------------------------------------------
 const now = 1000 * 1000 + 125 * 1000; // two minutes after startedAt

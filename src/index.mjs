@@ -17,7 +17,7 @@ import {
 } from "./sessions.mjs";
 import { codexTreeReader, fetchAccount, fetchDispatch, fetchRunlock, fetchRunlockEnded, fetchSource, fetchTmuxPanes, killTmuxSession, peekTmuxSession } from "./remote-fs.mjs";
 import { classifyTmux, closeTmux, killDetached, reviveTmux } from "./tmux-cleanup.mjs";
-import { agentsKey } from "./dispatch.mjs";
+import { agentsKey, deckQueueKey, deckQueues } from "./dispatch.mjs";
 import { chipsBySession, parseEnded, queueBudget, queueKey, queueSummary, queueTiles, runsBySession } from "./runlock.mjs";
 import { cachedSources, remoteSources, unreachableHosts } from "./remote-hosts.mjs";
 import { openFileIn } from "./vscode-state.mjs";
@@ -297,7 +297,7 @@ let queueChips = new Map();
 // a queue is the one of these that says something is happening right now.
 const EXTRA_KEYS = 3;
 const extraKeys = () => {
-  const q = queues.slice(0, EXTRA_KEYS);
+  const q = deckQs.slice(0, EXTRA_KEYS);
   const u = remoteUsages.slice(0, EXTRA_KEYS - q.length);
   // Left to right: queues, then remote usage keys in reverse, so subscriptions
   // run contiguously leftwards from this machine's own usage key (bottom
@@ -346,6 +346,9 @@ const DISPATCH_ABSENT_MS = 5 * 60 * 1000;
 const dispatches = new Map();
 // [{ host, doc }] for every host whose dispatcher answered, idle ones too.
 let agents = [];
+// The main board's queue keys and the queue board's hosts: one per host whose
+// test queue or agents are busy (deckQueues).
+let deckQs = [];
 function dispatchFor(host) {
   const known = dispatches.get(host);
   const ttl = known && known.doc === null ? DISPATCH_ABSENT_MS : DISPATCH_POLL_MS;
@@ -377,6 +380,7 @@ async function liveSessions() {
   const watched = [...new Set([...remoteHosts, ...queueHosts()])];
   queues = watched.map((host) => ({ host, summary: runlockSummary(host) })).filter((q) => q.summary);
   agents = watched.map((host) => ({ host, doc: dispatchFor(host) })).filter((a) => a.doc);
+  deckQs = deckQueues(queues, agents);
   queueRuns = runsBySession(queues);
   queueChips = chipsBySession(queues);
   liveProjects.clear();
@@ -1679,8 +1683,8 @@ function remoteAccount(host) {
   return known?.account ?? null;
 }
 
-async function drawQueueKey(deck, btn, summary) {
-  const face = queueKey(summary);
+async function drawQueueKey(deck, btn, entry) {
+  const face = deckQueueKey(entry);
   const drawn = `queue ${JSON.stringify(face)}`;
   if (btn.drawn === drawn) return;
   await deck.fillKeyBuffer(btn.index, await renderQueue({ ...btn, ...face }), { format: "rgba" });
@@ -1692,9 +1696,12 @@ async function drawQueueKey(deck, btn, summary) {
 // gone idle, which is the poll loop's cue to leave. Tiles carry no session, so
 // a press on one only leaves the board.
 async function refreshQueue(deck, buttons, statusButton, usageButton, host, page = 0) {
-  const summary = queues.find((q) => q.host === host)?.summary ?? null;
-  if (!summary) return null;
-  const runs = queueTiles(summary);
+  // Open while the host's test queue or its agents are busy; with runlock idle
+  // there are no runs and no lanes, only the AGENTS key.
+  const entry = deckQs.find((q) => q.host === host) ?? null;
+  if (!entry) return null;
+  const summary = entry.summary;
+  const runs = summary ? queueTiles(summary) : [];
   // The detail board's back key, in the detail board's slot. Any key but the
   // status key already leaves, so this only has to be drawn. With three extra
   // keys the status key sits on that slot itself, and there is none.
@@ -1703,11 +1710,11 @@ async function refreshQueue(deck, buttons, statusButton, usageButton, host, page
   // The cores budget never pages. The total (or the only lane) takes the
   // bottom-right key, where the usage key sits on every other board; the lanes
   // take the last session keys. The runs page over the rest.
-  const all = queueBudget(summary);
+  const all = summary ? queueBudget(summary) : [];
   const corner = all.at(-1) ?? null;
   // The host's agent queue, when it has a dispatcher: one fixed key left of
   // the lanes, never paged. Inert like the tiles.
-  const agentsDoc = agents.find((a) => a.host === host)?.doc ?? null;
+  const agentsDoc = entry.agents;
   const fixed = [...(agentsDoc ? [agentsKey(agentsDoc)] : []), ...all.slice(0, -1).slice(-3)].slice(-Math.max(0, Math.min(4, allTileButtons.length - 1)));
   const tileButtons = allTileButtons.slice(0, allTileButtons.length - fixed.length);
   const paging = pageOf(runs, page, tileButtons.length);
@@ -1742,7 +1749,7 @@ async function refreshQueue(deck, buttons, statusButton, usageButton, host, page
     usageButton.drawn = cornerDrawn;
   }
   // The status key names the board: how many runs, on which box.
-  const line = pageLine(paging.page, paging.pages, summary.host);
+  const line = pageLine(paging.page, paging.pages, summary?.host || host);
   const drawn = `queue-status ${tiles.length} ${line}`;
   if (statusButton.drawn !== drawn) {
     statusButton.lastCount = 0;
@@ -3568,7 +3575,7 @@ async function run() {
               b.shows = null;
               return b.drawn === "blank" ? null : renderBlank(b).then((buf) => deck.fillKeyBuffer(b.index, buf, { format: "rgba" })).then(() => (b.drawn = "blank"));
             }
-            if (e.queue) return drawQueueKey(deck, b, e.queue.summary).then(() => (b.shows = e));
+            if (e.queue) return drawQueueKey(deck, b, e.queue).then(() => (b.shows = e));
             b.shows = e;
             const u = e.usage;
             return drawUsageKey(deck, b, { ...u, title: u.id.startsWith("codex") ? u.id : remoteAccount(u.id)?.name ?? u.id });

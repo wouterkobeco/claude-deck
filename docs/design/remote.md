@@ -113,6 +113,9 @@ must be plain positive integers (they become URLs), strings are blanked of
 control characters and bounded, lists capped at 50. Unlike runlock an idle
 dispatcher is still shown: `agentsKey` is one fixed key on that host's queue
 board (busy/capacity, queued, cards; red while held), and the web queue page
-gets an Agents section per host. Not on the main board: its extra-key cap of
-three is shared by busy queues and remote usage keys, and an always-present
-agents key would cost a session slot for good.
+gets an Agents section per host. While an agent works or the dispatcher is
+held, the host's queue key is on the main board even with runlock idle
+(`deckQueues`: one key per host whichever queue is busy, same rank as a busy
+test queue), with the agents' face; its board then holds only the AGENTS key.
+An idle dispatcher takes no main-board key: that would cost a session slot for
+good.

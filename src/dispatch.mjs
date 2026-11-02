@@ -7,6 +7,8 @@
  * `renderQueue`, the page is queue-page.mjs. Checked by scripts/dispatch-check.mjs.
  */
 
+import { queueKey } from "./runlock.mjs";
+
 // Remote output is text another machine wrote, issue titles included: every
 // field is coerced to the type it is shown as and bounded.
 const str = (v, max = 120) => (typeof v === "string" ? v.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, max) : "");
@@ -64,3 +66,22 @@ export function agentsKey(doc) {
     pct: doc.capacity ? Math.min(100, Math.round((busy / doc.capacity) * 100)) : null,
   };
 }
+
+/** Whether a dispatcher has something to show on the main board: an agent at work, or a hold. */
+export const agentsBusy = (doc) => !!doc && (doc.leases.length > 0 || !!doc.hold);
+
+/**
+ * The hosts that earn a queue key on the main board, one per host whichever
+ * queue is busy: `[{ host, summary, agents }]`, busy test queues first in
+ * their order, then hosts whose only news is their agents. `queues` is
+ * `[{ host, summary }]` (busy runlocks), `agents` is `[{ host, doc }]`.
+ */
+export function deckQueues(queues, agents) {
+  const docs = new Map(agents.map((a) => [a.host, a.doc]));
+  const out = queues.map((q) => ({ host: q.host, summary: q.summary, agents: docs.get(q.host) ?? null }));
+  for (const a of agents) if (agentsBusy(a.doc) && !out.some((q) => q.host === a.host)) out.push({ host: a.host, summary: null, agents: a.doc });
+  return out;
+}
+
+/** The main board's face for one of those: the test queue's while it has runs, else the agents'. */
+export const deckQueueKey = (entry) => (entry.summary ? queueKey(entry.summary) : agentsKey(entry.agents));

@@ -48,7 +48,12 @@ The bottom-right two keys leave the rotation, so 13 are session keys:
   queue carries a marker in its key's bottom-right corner: a gold `Q2 4m` block
   covering that quarter of the key while it waits for cores (the number is its
   place in the queue, `Q1` being next), a green `RUN 3m` block once it holds
-  them, counting how long it has run.
+  them, counting how long it has run. When that host also runs kob-dispatch,
+  the queue board carries an `AGENTS` key: agents busy of capacity (`1/2`),
+  how many issues are queued and cards wait for approval, red while the
+  dispatcher is held. While an agent works or the dispatcher is held, the
+  host's queue key shows even with no test runs, with that agents face. The
+  web Queue page lists each agent, queued issue and card, linked to its issue.
 - **Status** (next to it) — one key answering whichever question is live. When
   anything is blocked on you it goes red with the count and how long the worst
   one has waited, and pressing it opens that queue, worst first.
@@ -552,6 +557,7 @@ npm run render-check    # SVG -> key image pipeline, text fitting, sample PNGs
 npm run slots-check     # project grouping / slot assignment / detail layout
 npm run tmux-check      # tmux cleanup: which sessions are hidden copies, and the re-checked close
 npm run runlock-check   # remote test queue: parsing, the key face, the Q-position pill
+npm run dispatch-check  # remote agent queue: parsing, the AGENTS key, one queue key per host, the queue page section
 npm run codex-check     # Codex sessions: open rollouts, tail signals, rate limits
 npm run cmux-check      # cmux sessions: the folder join, and which pane a press resolves to
 npm run history-check   # state log: change-only records, durations, retention
