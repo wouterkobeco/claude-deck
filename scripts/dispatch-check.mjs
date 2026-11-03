@@ -104,6 +104,22 @@ const tail = [
 ].join("\n");
 // kills: reading the tool result or the cut line instead of the last call; an absolute path in full
 eq(parseActivity(tail), "Edit src/data/a.ts", "last tool call");
-eq(parseActivity(asst({ type: "tool_use", name: "Bash", input: { command: "pnpm test\nmore" } })), "Bash : pnpm test", "bash shows the command's first line");
+eq(parseActivity(asst({ type: "tool_use", name: "Bash", input: { command: "pnpm test\nmore" } })), "Bash: pnpm test", "bash shows the command's first line");
 eq(parseActivity(asst({ type: "text", text: "Looking at the schema" })), "Looking at the schema", "falls back to text");
 eq(parseActivity("garbage"), "", "unreadable reads empty");
+
+// --- the feedback link ------------------------------------------------------------
+import { feedbackLink, splitBlocks } from "../src/dispatch.mjs";
+const fb = "https://www.zebracoach.com/admin/system/feedback?open=976f4a8c-930b-4638-8ff4-9d1de901c80c";
+eq(feedbackLink(`see [report](${fb}) here`), fb, "found in text");
+// kills: a lookalike host or a javascript: URL reaching an href
+eq([feedbackLink("https://www.zebracoach.com.evil.io/admin/system/feedback?open=976f4a8c-930b-4638-8ff4-9d1de901c80c"), feedbackLink("javascript:alert(1)"), feedbackLink("")], [null, null, null], "only the exact shape");
+eq([...splitBlocks(`@@5\nabc\n@@7\n`)], [[5, "abc\n"], [7, ""]], "blocks split");
+const withFb = parseDispatchStatus(doc({ leases: [lease(5, "worker")] }));
+withFb.leases[0].feedback = fb;
+const pg = queuePage("tok", [], 2000000, [{ host: "beast", doc: withFb }]);
+eq([pg.includes(`href="${fb}"`), pg.includes("ZebraCoach feedback"), pg.includes("GitHub #5")], [true, true, true], "both links on a running row");
+withFb.leases[0].feedback = 'javascript:"><img>';
+eq(queuePage("tok", [], 2000000, [{ host: "beast", doc: withFb }]).includes("ZebraCoach feedback"), false, "a bad link is not shown");
+console.log("OK: feedback links");
+eq(parseActivity(asst({ type: "tool_use", name: "Bash", input: { command: "python3 - <<'EOF'\nprint(1)\nEOF" } })), "Bash: python3 (script)", "a heredoc reads as its interpreter");

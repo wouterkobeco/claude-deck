@@ -71,14 +71,29 @@ export function parseActivity(text) {
       const p = parts[j];
       if (p?.type === "tool_use") {
         const a = p.input ?? {};
-        const what = a.file_path ? rel(a.file_path) : a.description || a.command || a.pattern || a.prompt || a.path || "";
-        return clip(`${p.name} ${p.name === "Bash" && !a.description ? ": " : ""}${what}`, 100);
+        // A heredoc command reads as its interpreter, not as the opening of a script.
+        const cmd = a.command ? clip(a.command, 200).replace(/\s*<<.*$/, " (script)").replace(/ - \(script\)$/, " (script)") : "";
+        const what = a.file_path ? rel(a.file_path) : a.description || cmd || a.pattern || a.prompt || a.path || "";
+        return clip(`${p.name}${p.name === "Bash" && !a.description ? ":" : ""} ${what}`, 100);
       }
       if (p?.type === "text" && p.text?.trim()) return clip(p.text, 100);
     }
   }
   return "";
 }
+
+/** Output of `echo "@@N"; …` blocks as Map(N → text). */
+export function splitBlocks(text) {
+  const parts = String(text).split(/^@@(\d+)\n/m).slice(1);
+  const out = new Map();
+  for (let i = 0; i < parts.length; i += 2) out.set(Number(parts[i]), parts[i + 1]);
+  return out;
+}
+
+// The only link taken from an issue: its ZebraCoach feedback report. Text from
+// GitHub is not trusted past this exact shape, which goes into an href.
+export const FEEDBACK_URL = /https:\/\/www\.zebracoach\.com\/admin\/system\/feedback\?open=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+export const feedbackLink = (text) => String(text ?? "").match(FEEDBACK_URL)?.[0] ?? null;
 
 const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 

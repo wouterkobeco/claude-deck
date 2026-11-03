@@ -4,7 +4,7 @@
 import { esc } from "./html.mjs";
 import { HEADER_CSS, iconHeader, iconLinks } from "./board-page.mjs";
 import { STATE_COLORS, formatAge } from "./render.mjs";
-import { ISSUE_URL, agentsKey } from "./dispatch.mjs";
+import { ISSUE_URL, agentsKey, feedbackLink } from "./dispatch.mjs";
 
 const STYLE = `
   body { margin: 0; background: #0b0b0b; color: #e0e0e0; font: 14px/1.45 -apple-system, system-ui, sans-serif }
@@ -25,7 +25,8 @@ const STYLE = `
   .ended i { background: ${STATE_COLORS.requires_action} }
   h3 { font-size: 14px; margin: 16px 0 6px; color: #ef9a9a }
   .time { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums }
-  .who a { color: inherit }`;
+  .who a { color: inherit }
+  .links a { margin-right: 10px; padding: 1px 8px; border: 1px solid #333; border-radius: 10px; font-size: 12px; text-decoration: none; color: #9ecbff }`;
 
 // A running job's bar fills toward runlock's estimate; a waiting one says where
 // it stands in line. Nothing when runlock gave no estimate.
@@ -44,7 +45,7 @@ function agentsSection({ host, doc }, now) {
   const face = agentsKey(doc);
   const cell = (colour, big, label) => `<div class="cell" style="background:${colour}"><b>${esc(big)}</b><span>${esc(label)}</span></div>`;
   const row = (colour, kind, it, small, time, under, doing = "") =>
-    `<div class="run"><i style="background:${colour}"></i><span class="cores">${esc(kind)}</span><span class="who"><a href="${ISSUE_URL}${esc(it.n)}">#${esc(it.n)}</a> ${esc(it.title)}<small>${esc(small)}</small>${doing ? `<small>▸ ${esc(doing)}</small>` : ""}</span><span></span><span class="time">${esc(time)}<small class="sub" style="display:block;font-weight:400">${esc(under)}</small></span></div>`;
+    `<div class="run"><i style="background:${colour}"></i><span class="cores">${esc(kind)}</span><span class="who"><a href="${ISSUE_URL}${esc(it.n)}">#${esc(it.n)}</a> ${esc(it.title)}<small>${esc(small)}</small>${doing ? `<small>▸ ${esc(doing)}</small>` : ""}<small class="links"><a href="${ISSUE_URL}${esc(it.n)}" target="_blank" rel="noopener">GitHub #${esc(it.n)} ↗</a>${feedbackLink(it.feedback) ? ` <a href="${esc(it.feedback)}" target="_blank" rel="noopener">ZebraCoach feedback ↗</a>` : ""}</small></span><span></span><span class="time">${esc(time)}<small class="sub" style="display:block;font-weight:400">${esc(under)}</small></span></div>`;
   const tick = doc.lastTickAgeSeconds != null ? ` · last tick ${formatAge(doc.lastTickAgeSeconds) || "0s"} ago` : "";
   return `<h2>Agents · ${esc(host)}</h2>
     <p class="sub">AI agents planning and building issues${esc(tick)}.</p>

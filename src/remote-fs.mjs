@@ -7,7 +7,7 @@ import { HEAD_BYTES, parseHeader } from "./codex.mjs";
 import { CODEX_HEAD_BYTES } from "./tokens.mjs";
 import { accountFrom } from "./usage.mjs";
 import { parseRunlockStatus } from "./runlock.mjs";
-import { parseActivity, parseDispatchStatus } from "./dispatch.mjs";
+import { feedbackLink, parseActivity, parseDispatchStatus, splitBlocks } from "./dispatch.mjs";
 import { PANES_CMD, SAFE_NAME, parsePanes } from "./tmux-cleanup.mjs";
 
 // Where the pid list ends and the tar stream begins. Safe as a delimiter
@@ -693,6 +693,21 @@ export async function fetchRunlock(host, controlPath) {
  */
 const DISPATCH_CMD =
   "[ -f ~/kob-dispatch/bin/dispatch.mjs ] && PATH=$HOME/.nvm/versions/node/v24.20.0/bin:$HOME/.local/bin:/snap/bin:/usr/bin:/bin node ~/kob-dispatch/bin/dispatch.mjs status --json 2>/dev/null";
+// host:issue -> report URL or null. An issue's report link never changes, so each
+// is asked of GitHub once per daemon run (only answered asks are kept).
+const feedbackCache = new Map();
+async function addFeedbackLinks(host, controlPath, doc) {
+  if (!doc) return;
+  const rows = [...doc.leases, ...doc.waiting, ...doc.cards];
+  const todo = [...new Set(rows.map((r) => r.n))].filter((n) => !feedbackCache.has(`${host}:${n}`)).slice(0, 20);
+  if (todo.length) {
+    const cmd = `PATH=$HOME/.local/bin:/snap/bin:/usr/bin:/bin; ${todo.map((n) => `echo "@@${n}"; gh issue view ${n} --repo wouterkobeco/kob-trace --json body,comments -q '.body, (.comments[].body)' 2>/dev/null | grep -o -m1 'https://www.zebracoach.com/admin/system/feedback?open=[0-9a-f-]*'`).join("; ")}`;
+    const out = await run(["ssh", ...sshArgs(host, controlPath), cmd], { timeoutMs: 15000 });
+    if (out) for (const [n, text] of splitBlocks(out.toString("utf8"))) feedbackCache.set(`${host}:${n}`, feedbackLink(text));
+  }
+  for (const r of rows) r.feedback = feedbackCache.get(`${host}:${r.n}`) ?? null;
+}
+
 export async function fetchDispatch(host, controlPath) {
   const buf = await run(["ssh", ...sshArgs(host, controlPath), DISPATCH_CMD], { timeoutMs: 20000 });
   const doc = buf ? parseDispatchStatus(buf.toString("utf8")) : null;
@@ -702,10 +717,11 @@ export async function fetchDispatch(host, controlPath) {
     const cmd = doc.leases.map((l) => `echo "@@${l.n}"; tail -c 300000 "$(ls -t ~/dispatch-logs/card-${l.n}-*.jsonl 2>/dev/null | head -1)" 2>/dev/null`).join("; ");
     const out = await run(["ssh", ...sshArgs(host, controlPath), cmd], { timeoutMs: 8000 });
     if (out) {
-      const by = new Map(out.toString("utf8").split(/^@@(\d+)\n/m).slice(1).reduce((a, x, i, arr) => (i % 2 ? a : [...a, [Number(x), arr[i + 1]]]), []));
+      const by = splitBlocks(out.toString("utf8"));
       for (const l of doc.leases) l.doing = parseActivity(by.get(l.n) ?? "");
     }
   }
+  await addFeedbackLinks(host, controlPath, doc);
   return doc;
 }
 
