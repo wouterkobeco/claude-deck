@@ -1,5 +1,7 @@
 # Claude Deck
 
+> **Moved.** This project now lives in [`wouterkobeco/kob-dispatch`](https://github.com/wouterkobeco/kob-dispatch), folder `deck/`, with its full history. This repository is archived; make changes there.
+
 Your running Claude Code sessions, on a Stream Deck MK.2 **and in any
 browser** — desktop, phone or iPad. One key per session, coloured by what that
 session is doing right now; press a key to jump to its VS Code window.
